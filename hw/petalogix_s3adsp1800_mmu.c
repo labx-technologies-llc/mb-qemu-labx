@@ -43,6 +43,7 @@ static struct
 {
     uint32_t bootstrap_pc;
     uint32_t cmdline;
+    uint32_t initrd;
     uint32_t fdt;
 } boot_info;
 
@@ -52,6 +53,7 @@ static void main_cpu_reset(void *opaque)
 
     cpu_reset(env);
     env->regs[5] = boot_info.cmdline;
+    env->regs[6] = boot_info.initrd;
     env->regs[7] = boot_info.fdt;
     env->sregs[SR_PC] = boot_info.bootstrap_pc;
 }
@@ -122,7 +124,7 @@ petalogix_s3adsp1800_init(ram_addr_t ram_size,
     int kernel_size;
     DriveInfo *dinfo;
     int i;
-    target_phys_addr_t ddr_base = 0x90000000;
+    target_phys_addr_t ddr_base = 0x88000000;
     ram_addr_t phys_lmb_bram;
     ram_addr_t phys_ram;
     ram_addr_t phys_flash;
@@ -148,10 +150,11 @@ petalogix_s3adsp1800_init(ram_addr_t ram_size,
 
     phys_flash = qemu_ram_alloc(NULL, "petalogix_s3adsp1800.flash", FLASH_SIZE);
     dinfo = drive_get(IF_PFLASH, 0, 0);
-    pflash_cfi01_register(0xa0000000, phys_flash,
+    pflash_cfi01_register(0x87000000, phys_flash,
                           dinfo ? dinfo->bdrv : NULL, (64 * 1024),
                           FLASH_SIZE >> 16,
                           1, 0x89, 0x18, 0x0000, 0x0, 1);
+    printf("load of flash = %d to %08X\n", load_image_targphys(initrd_filename, 0x87000000, FLASH_SIZE), (int)phys_flash);
 
     cpu_irq = microblaze_pic_init_cpu(env);
     dev = xilinx_intc_create(0x81800000, cpu_irq[0], 2);
@@ -179,7 +182,7 @@ petalogix_s3adsp1800_init(ram_addr_t ram_size,
                                    1, ELF_MACHINE, 0);
         }
         /* Always boot into physical ram.  */
-        boot_info.bootstrap_pc = ddr_base + (entry & 0x0fffffff);
+        boot_info.bootstrap_pc = ddr_base + (entry & 0x07ffffff);
 
         /* If it wasn't an ELF image, try an u-boot image.  */
         if (kernel_size < 0) {
@@ -197,6 +200,24 @@ petalogix_s3adsp1800_init(ram_addr_t ram_size,
             boot_info.bootstrap_pc = ddr_base;
             high = (ddr_base + kernel_size + 3) & ~3;
         }
+
+	if (initrd_filename)
+	{
+		uint32_t initrd_base = 0x88c00000;
+		uint32_t initrd_size = load_image_targphys(initrd_filename, initrd_base,
+			ram_size - initrd_base);
+		if (initrd_size <= 0) {
+			fprintf(stderr, "qemu: could not load initial ram disk '%s'\n",
+			initrd_filename);
+			exit(1);
+		}
+
+		boot_info.initrd = initrd_base;
+	}
+	else
+	{
+		boot_info.initrd = 0x00000000;
+	}
 
         boot_info.cmdline = high + 4096;
         if (kernel_cmdline && strlen(kernel_cmdline)) {
