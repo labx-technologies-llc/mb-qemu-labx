@@ -23,4 +23,21 @@ int qemu_devtree_setprop_cell(void *fdt, const char *node_path,
 int qemu_devtree_setprop_string(void *fdt, const char *node_path,
                                 const char *property, const char *string);
 
+int qemu_devtree_node_offset(void *fdt, const char *node_path);
+
+int qemu_devtree_subnode_offset_namelen(void *fdt, int parentoffset,
+                                        const char *name, int namelen);
+
+int qemu_devtree_next_child_offset(void *fdt, int parentoffset, int childoffset);
+
+const char *qemu_devtree_get_name(const void *fdt, int nodeoffset, int *lenp);
+
+const void *qemu_devtree_getprop(const void *fdt, int nodeoffset,
+                                 const char *name, int *lenp);
+
+uint32_t qemu_devtree_int_array_index(const void* propval, unsigned int index);
+
+int qemu_devtree_node_check_compatible(const void *fdt, int nodeoffset,
+                                       const char *compatible);
+
 #endif /* __DEVICE_TREE_H__ */

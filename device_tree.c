@@ -26,6 +26,13 @@
 
 #include <libfdt.h>
 
+#define CHECK_HEADER(fdt) \
+    { \
+        int err; \
+        if ((err = fdt_check_header(fdt)) != 0) \
+            return err; \
+    }
+
 void *load_device_tree(const char *filename_path, int *sizep)
 {
     int dt_size;
@@ -108,3 +115,80 @@ int qemu_devtree_setprop_string(void *fdt, const char *node_path,
 
     return fdt_setprop_string(fdt, offset, property, string);
 }
+
+int qemu_devtree_node_offset(void *fdt, const char *node_path)
+{
+    return fdt_path_offset(fdt, node_path);
+}
+
+int qemu_devtree_subnode_offset_namelen(void *fdt, int parentoffset,
+                                        const char *name, int namelen)
+{
+    return fdt_subnode_offset_namelen(fdt, parentoffset, name, namelen);
+}
+
+int qemu_devtree_next_child_offset(void *fdt, int parentoffset, int childoffset)
+{
+    int level = 0;
+    uint32_t tag;
+    int offset, nextoffset;
+
+    CHECK_HEADER(fdt);
+    tag = fdt_next_tag(fdt, parentoffset, &nextoffset);
+    if (tag != FDT_BEGIN_NODE)
+        return -FDT_ERR_BADOFFSET;
+
+    do {
+        offset = nextoffset;
+        tag = fdt_next_tag(fdt, offset, &nextoffset);
+
+        switch (tag) {
+            case FDT_END:
+                return -FDT_ERR_TRUNCATED;
+
+            case FDT_BEGIN_NODE:
+                level++;
+                if (level != 1)
+                    continue;
+                if (offset > childoffset)
+                    return offset;
+                break;
+
+            case FDT_END_NODE:
+                level--;
+                break;
+
+            case FDT_PROP:
+            case FDT_NOP:
+                break;
+
+            default:
+                return -FDT_ERR_BADSTRUCTURE;
+        }
+    } while (level >= 0);
+
+    return -FDT_ERR_NOTFOUND;
+}
+
+const char *qemu_devtree_get_name(const void *fdt, int nodeoffset, int *lenp)
+{
+    return fdt_get_name(fdt, nodeoffset, lenp);
+}
+
+const void *qemu_devtree_getprop(const void *fdt, int nodeoffset,
+                                 const char *name, int *lenp)
+{
+    return fdt_getprop(fdt, nodeoffset, name, lenp);
+}
+
+uint32_t qemu_devtree_int_array_index(const void* propval, unsigned int index)
+{
+    return be32_to_cpu(((uint32_t*)propval)[index]);
+}
+
+int qemu_devtree_node_check_compatible(const void *fdt, int nodeoffset,
+                                       const char *compatible)
+{
+    return fdt_node_check_compatible(fdt, nodeoffset, compatible);
+}
+
