@@ -266,6 +266,7 @@ obj-microblaze-y += xilinx_intc.o
 obj-microblaze-y += xilinx_timer.o
 obj-microblaze-y += xilinx_uartlite.o
 obj-microblaze-y += xilinx_ethlite.o
+obj-microblaze-y += labx_audio_packetizer.o
 
 obj-microblaze-$(CONFIG_FDT) += device_tree.o
 

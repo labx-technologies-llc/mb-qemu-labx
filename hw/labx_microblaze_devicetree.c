@@ -32,6 +32,7 @@
 #include "boards.h"
 #include "device_tree.h"
 #include "xilinx.h"
+#include "labx_devices.h"
 #include "loader.h"
 #include "elf.h"
 #include "blockdev.h"
@@ -267,6 +268,33 @@ devinfo_t xilinx_ethlite_device = {
 };
 
 /*
+ * LabX audio packetizer device
+ */
+static void labx_audio_packetizer_probe(void* fdt, int node)
+{
+    int reglen;
+    const void* reg = qemu_devtree_getprop(fdt, node, "reg", &reglen);
+    uint32_t packetizer_addr = qemu_devtree_int_array_index(reg, 0);
+    int irqLen;
+    const void* irqs = qemu_devtree_getprop(fdt, node, "interrupts", &irqLen);
+    uint32_t packetizer_irq = qemu_devtree_int_array_index(irqs, 0);
+    int clockLen;
+    const void* clocks = qemu_devtree_getprop(fdt, node, "xlnx,num-clock-domains", &clockLen);
+    uint32_t clockDomains = qemu_devtree_int_array_index(clocks, 0);
+    int cacheLen;
+    const void* caches = qemu_devtree_getprop(fdt, node, "xlnx,cache-data-words", &cacheLen);
+    uint32_t cacheWords = qemu_devtree_int_array_index(caches, 0);
+
+    labx_audio_packetizer_create(packetizer_addr, irq[packetizer_irq], clockDomains, cacheWords);
+}
+
+devinfo_t labx_audio_packetizer_device = {
+    .probe = &labx_audio_packetizer_probe,
+    .pass = 1,
+    .compat = (const char*[]){ "xlnx,labx-audio-packetizer-1.00.a", NULL }
+};
+
+/*
  * Table of available devices
  */
 devinfo_t* devices[] = {
@@ -275,6 +303,7 @@ devinfo_t* devices[] = {
     &xilinx_timer_device,
     &xilinx_uartlite_device,
     &xilinx_ethlite_device,
+    &labx_audio_packetizer_device,
     NULL
 };
 
