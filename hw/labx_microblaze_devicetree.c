@@ -295,6 +295,54 @@ devinfo_t labx_audio_packetizer_device = {
 };
 
 /*
+ * LabX audio depacketizer device
+ */
+static void labx_audio_depacketizer_probe(void* fdt, int node)
+{
+    int reglen;
+    const void* reg = qemu_devtree_getprop(fdt, node, "reg", &reglen);
+    uint32_t depacketizer_addr = qemu_devtree_int_array_index(reg, 0);
+    int irqLen;
+    const void* irqs = qemu_devtree_getprop(fdt, node, "interrupts", &irqLen);
+    uint32_t depacketizer_irq = qemu_devtree_int_array_index(irqs, 0);
+    int clockLen;
+    const void* clocks = qemu_devtree_getprop(fdt, node, "xlnx,num-clock-domains", &clockLen);
+    uint32_t clockDomains = qemu_devtree_int_array_index(clocks, 0);
+    int cacheLen;
+    const void* caches = qemu_devtree_getprop(fdt, node, "xlnx,cache-data-words", &cacheLen);
+    uint32_t cacheWords = qemu_devtree_int_array_index(caches, 0);
+    int ifLen;
+    const void* ifType = qemu_devtree_getprop(fdt, node, "xlnx,interface-type", &ifLen);
+    int hasDMA = (0 != strncmp("CACHE_RAM", (const char*)ifType, ifLen));
+
+    labx_audio_depacketizer_create(depacketizer_addr, irq[depacketizer_irq], clockDomains, cacheWords, hasDMA);
+}
+
+devinfo_t labx_audio_depacketizer_device = {
+    .probe = &labx_audio_depacketizer_probe,
+    .pass = 1,
+    .compat = (const char*[]){ "xlnx,labx-audio-depacketizer-1.00.a", NULL }
+};
+
+/*
+ * LabX dma device
+ */
+static void labx_dma_probe(void* fdt, int node)
+{
+    int reglen;
+    const void* reg = qemu_devtree_getprop(fdt, node, "reg", &reglen);
+    uint32_t dma_addr = qemu_devtree_int_array_index(reg, 0);
+
+    labx_dma_create(dma_addr, 1024);
+}
+
+devinfo_t labx_dma_device = {
+    .probe = &labx_dma_probe,
+    .pass = 1,
+    .compat = (const char*[]){ "xlnx,labx-dma-1.00.a", "xlnx,labx-dma-1.01.a", NULL }
+};
+
+/*
  * Table of available devices
  */
 devinfo_t* devices[] = {
@@ -304,6 +352,8 @@ devinfo_t* devices[] = {
     &xilinx_uartlite_device,
     &xilinx_ethlite_device,
     &labx_audio_packetizer_device,
+    &labx_audio_depacketizer_device,
+    &labx_dma_device,
     NULL
 };
 
