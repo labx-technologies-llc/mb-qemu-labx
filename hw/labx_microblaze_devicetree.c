@@ -96,9 +96,11 @@ static int labx_microblaze_load_device_tree(target_phys_addr_t addr,
     if (!fdt)
         return 0;
 
-    r = qemu_devtree_setprop_string(fdt, "/chosen", "bootargs", kernel_cmdline);
-    if (r < 0)
-        fprintf(stderr, "couldn't set /chosen/bootargs\n");
+    if (kernel_cmdline && strlen(kernel_cmdline)) {
+        r = qemu_devtree_setprop_string(fdt, "/chosen", "bootargs", kernel_cmdline);
+        if (r < 0)
+            fprintf(stderr, "couldn't set /chosen/bootargs\n");
+    }
     cpu_physical_memory_write (addr, (void *)fdt, fdt_size);
 
     return fdt_size;
