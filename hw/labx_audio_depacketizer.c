@@ -127,7 +127,7 @@ static uint32_t depacketizer_regs_readl (void *opaque, target_phys_addr_t addr)
 
         case 0xFE: // capabilities b
             retval = ((p->matchArch & 0xFF) << 24) |
-                     ((p->maxStreams & 0xFF) << 8) |
+                     ((p->maxStreams & 0xFF) << 16) |
                      ((p->clockDomains & 0xFF) << 8) |
                      ((min_bits(p->paramWords-1) & 0x0F) << 4) |
                      ((min_bits(p->microcodeWords-1) & 0x0F));
