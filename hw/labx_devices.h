@@ -42,3 +42,28 @@ labx_dma_create(target_phys_addr_t base, int microcodeWords)
     qdev_init_nofail(dev);
     return dev;
 }
+
+/* Ethernet */
+static inline DeviceState *
+labx_ethernet_create(target_phys_addr_t base)
+{
+    DeviceState *dev;
+
+    dev = qdev_create(NULL, "labx,ethernet");
+    qdev_prop_set_uint32(dev, "baseAddress", base);
+    qdev_init_nofail(dev);
+    return dev;
+}
+
+/* PTP */
+static inline DeviceState *
+labx_ptp_create(target_phys_addr_t base)
+{
+    DeviceState *dev;
+
+    dev = qdev_create(NULL, "labx,ptp");
+    qdev_prop_set_uint32(dev, "baseAddress", base);
+    qdev_init_nofail(dev);
+    return dev;
+}
+

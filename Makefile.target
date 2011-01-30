@@ -269,6 +269,8 @@ obj-microblaze-y += xilinx_ethlite.o
 obj-microblaze-y += labx_audio_packetizer.o
 obj-microblaze-y += labx_audio_depacketizer.o
 obj-microblaze-y += labx_dma.o
+obj-microblaze-y += labx_ethernet.o
+obj-microblaze-y += labx_ptp.o
 
 obj-microblaze-$(CONFIG_FDT) += device_tree.o
 

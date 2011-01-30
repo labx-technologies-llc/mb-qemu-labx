@@ -323,7 +323,7 @@ static void labx_audio_depacketizer_probe(void* fdt, int node)
 devinfo_t labx_audio_depacketizer_device = {
     .probe = &labx_audio_depacketizer_probe,
     .pass = 1,
-    .compat = (const char*[]){ "xlnx,labx-audio-depacketizer-1.00.a", NULL }
+    .compat = (const char*[]){ "xlnx,labx-audio-depacketizer-1.00.a", "xlnx,labx-audio-depacketizer-1.01.a", NULL }
 };
 
 /*
@@ -341,7 +341,43 @@ static void labx_dma_probe(void* fdt, int node)
 devinfo_t labx_dma_device = {
     .probe = &labx_dma_probe,
     .pass = 1,
-    .compat = (const char*[]){ "xlnx,labx-dma-1.00.a", "xlnx,labx-dma-1.01.a", NULL }
+    .compat = (const char*[]){ "xlnx,labx-dma-1.00.a", "xlnx,labx-dma-1.01.a", "xlnx,labx-local-audio-1.00.a", NULL }
+};
+
+/*
+ * LabX ethernet device
+ */
+static void labx_ethernet_probe(void* fdt, int node)
+{
+    int reglen;
+    const void* reg = qemu_devtree_getprop(fdt, node, "reg", &reglen);
+    uint32_t ethernet_addr = qemu_devtree_int_array_index(reg, 0);
+
+    labx_ethernet_create(ethernet_addr);
+}
+
+devinfo_t labx_ethernet_device = {
+    .probe = &labx_ethernet_probe,
+    .pass = 1,
+    .compat = (const char*[]){ "xlnx,labx-ethernet-1.00.a", NULL }
+};
+
+/*
+ * LabX ptp device
+ */
+static void labx_ptp_probe(void* fdt, int node)
+{
+    int reglen;
+    const void* reg = qemu_devtree_getprop(fdt, node, "reg", &reglen);
+    uint32_t ptp_addr = qemu_devtree_int_array_index(reg, 0);
+
+    labx_ptp_create(ptp_addr);
+}
+
+devinfo_t labx_ptp_device = {
+    .probe = &labx_ptp_probe,
+    .pass = 1,
+    .compat = (const char*[]){ "xlnx,labx-ptp-1.00.a", NULL }
 };
 
 /*
@@ -356,6 +392,8 @@ devinfo_t* devices[] = {
     &labx_audio_packetizer_device,
     &labx_audio_depacketizer_device,
     &labx_dma_device,
+    &labx_ethernet_device,
+    &labx_ptp_device,
     NULL
 };
 
