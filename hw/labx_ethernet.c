@@ -28,11 +28,14 @@
 #include "net.h"
 
 #define FIFO_RAM_BYTES 2048
+#define LENGTH_FIFO_WORDS 16
 
 struct labx_ethernet
 {
     SysBusDevice busdev;
-    qemu_irq irq;
+    qemu_irq hostIrq;
+    qemu_irq fifoIrq;
+    qemu_irq phyIrq;
     NICState *nic;
     NICConf conf;
 
@@ -40,43 +43,74 @@ struct labx_ethernet
     uint32_t baseAddress;
 
     /* Values set by drivers */
+    uint32_t hostRegs[0x10];
+    uint32_t fifoRegs[0x10];
 
     /* Tx buffers */
     uint32_t* txBuffer;
+    uint32_t txPushIndex;
+    uint32_t txPopIndex;
+
+    uint32_t* txLengthBuffer;
+    uint32_t txLengthPushIndex;
+    uint32_t txLengthPopIndex;
 
     /* Rx buffers */
     uint32_t* rxBuffer;
+    uint32_t rxPushIndex;
+    uint32_t rxPopIndex;
+
+    uint32_t* rxLengthBuffer;
+    uint32_t rxLengthPushIndex;
+    uint32_t rxLengthPopIndex;
 };
 
 /*
  * Legacy ethernet registers
  */
+static void update_host_irq(struct labx_ethernet *p)
+{
+    if ((p->hostRegs[0x03] & p->hostRegs[2]) != 0)
+    {
+        qemu_irq_raise(p->hostIrq);
+    }
+    else
+    {
+        qemu_irq_lower(p->hostIrq);
+    }
+}
+
+static void mdio_xfer(struct labx_ethernet *p, int readWrite, int phyAddr, int regAddr)
+{
+    printf("MDIO %s: addr=%d, reg=%d\n", (readWrite) ? "READ" : "WRITE", phyAddr, regAddr);
+    if (readWrite)
+    {
+        // TODO: PHY info
+        p->hostRegs[0x01] = 0x0000FFFF;
+    }
+    p->hostRegs[0x03] |= 1;
+    update_host_irq(p);
+}
+
 static uint32_t ethernet_regs_readl (void *opaque, target_phys_addr_t addr)
 {
-    //struct labx_ethernet *p = opaque;
+    struct labx_ethernet *p = opaque;
 
     uint32_t retval = 0;
    
     switch ((addr>>2) & 0x0F)
     {
     	case 0x00: // mdio control
-            break;
-
         case 0x01: // mdio data
-            break;
-
         case 0x02: // irq mask
-            break;
-
         case 0x03: // irq flags
-            break;
-
         case 0x04: // vlan mask
+            retval = p->hostRegs[(addr>>2) & 0x0F];
             break;
 
         case 0x0F: // revision
-                retval = 0x00000010;
-                break;
+            retval = 0x00000010;
+            break;
 
         default:
             printf("labx-ethernet: Read of unknown register %08X\n", addr);
@@ -88,20 +122,27 @@ static uint32_t ethernet_regs_readl (void *opaque, target_phys_addr_t addr)
 
 static void ethernet_regs_writel (void *opaque, target_phys_addr_t addr, uint32_t value)
 {
-    //struct labx_ethernet *p = opaque;
+    struct labx_ethernet *p = opaque;
 
     switch ((addr>>2) & 0x0F)
     {
     	case 0x00: // mdio control
+            p->hostRegs[0x00] = (value & 0x000007FF);
+            mdio_xfer(p, (value >> 10) & 1, (value >> 5) & 0x1F, value & 0x1F);
             break;
 
         case 0x01: // mdio data
+            p->hostRegs[0x01] = (value & 0x0000FFFF);
             break;
 
         case 0x02: // irq mask
+            p->hostRegs[0x02] = (value & 0x00000003);
+            update_host_irq(p);
             break;
 
         case 0x03: // irq flags
+            p->hostRegs[0x03] &= ~(value & 0x00000003);
+            update_host_irq(p);
             break;
 
         case 0x04: // vlan mask
@@ -196,42 +237,127 @@ static CPUWriteMemoryFunc * const mac_regs_write[] = {
 /*
  * FIFO registers
  */
+
+#define FIFO_INT_STATUS_ADDRESS   0x0
+#define FIFO_INT_ENABLE_ADDRESS   0x1
+#  define FIFO_INT_RPURE 0x80000000
+#  define FIFO_INT_RPORE 0x40000000
+#  define FIFO_INT_RPUE  0x20000000
+#  define FIFO_INT_TPOE  0x10000000
+#  define FIFO_INT_TC    0x08000000
+#  define FIFO_INT_RC    0x04000000
+#  define FIFO_INT_MASK  0xFC000000
+#define FIFO_TX_RESET_ADDRESS     0x2
+#  define FIFO_RESET_MAGIC 0xA5
+#define FIFO_TX_VACANCY_ADDRESS   0x3
+#define FIFO_TX_DATA_ADDRESS      0x4
+#define FIFO_TX_LENGTH_ADDRESS    0x5
+#define FIFO_RX_RESET_ADDRESS     0x6
+#define FIFO_RX_OCCUPANCY_ADDRESS 0x7
+#define FIFO_RX_DATA_ADDRESS      0x8
+#define FIFO_RX_LENGTH_ADDRESS    0x9
+
+static void update_fifo_irq(struct labx_ethernet *p)
+{
+    if ((p->fifoRegs[FIFO_INT_STATUS_ADDRESS] & p->fifoRegs[FIFO_INT_ENABLE_ADDRESS]) != 0)
+    {
+        qemu_irq_raise(p->fifoIrq);
+    }
+    else
+    {
+        qemu_irq_lower(p->fifoIrq);
+    }
+}
+
+static void send_packet(struct labx_ethernet *p)
+{
+    while (p->txLengthPopIndex != p->txLengthPushIndex)
+    {
+	int i;
+        uint32_t packetBuf[512];
+
+        int length = p->txLengthBuffer[p->txLengthPopIndex];
+        p->txLengthPopIndex = (p->txLengthPopIndex + 1) % LENGTH_FIFO_WORDS;
+
+        for (i=0; i<((length+3)/4); i++)
+        {
+            packetBuf[i] = be32_to_cpu(p->txBuffer[p->txPopIndex]);
+            p->txPopIndex = (p->txPopIndex + 1) % (FIFO_RAM_BYTES/4);
+        }
+
+        qemu_send_packet(&p->nic->nc, (void *)packetBuf, length);
+    }
+
+    p->fifoRegs[FIFO_INT_STATUS_ADDRESS] |= FIFO_INT_TC;
+    update_fifo_irq(p);
+}
+
 static uint32_t fifo_regs_readl (void *opaque, target_phys_addr_t addr)
 {
-    //struct labx_ethernet *p = opaque;
+    struct labx_ethernet *p = opaque;
 
     uint32_t retval = 0;
    
     switch ((addr>>2) & 0x0F)
     {
-    	case 0x00: // fifo int status
+    	case FIFO_INT_STATUS_ADDRESS:
+        case FIFO_INT_ENABLE_ADDRESS:
+        case FIFO_TX_RESET_ADDRESS:
+            retval = p->fifoRegs[(addr>>2) & 0x0F];
             break;
 
-        case 0x01: // fifo int enable
+        case FIFO_TX_VACANCY_ADDRESS:
+            retval = (p->txPopIndex - p->txPushIndex) - 1;
+            if ((int32_t)retval < 0)
+            {
+                retval += (FIFO_RAM_BYTES/4);
+            }
+
+            if (((p->txLengthPushIndex + 1) % LENGTH_FIFO_WORDS) == p->txLengthPopIndex)
+            {
+                // Full length fifo
+                retval = 0;
+            }
             break;
 
-        case 0x02: // fifo tx reset
+        case FIFO_TX_DATA_ADDRESS:
+        case FIFO_TX_LENGTH_ADDRESS:
+        case FIFO_RX_RESET_ADDRESS:
+            retval = p->fifoRegs[(addr>>2) & 0x0F];
             break;
 
-        case 0x03: // fifo tx vacancy
+        case FIFO_RX_OCCUPANCY_ADDRESS:
+            retval = p->rxPushIndex - p->rxPopIndex;
+            if ((int32_t)retval < 0)
+            {
+                retval += (FIFO_RAM_BYTES/4);
+            }
             break;
 
-        case 0x04: // fifo tx data
+        case FIFO_RX_DATA_ADDRESS:
+            retval = p->rxBuffer[p->rxPopIndex];
+            if (p->rxPopIndex != p->rxPushIndex)
+            {
+                p->rxPopIndex = (p->rxPopIndex+1) % (FIFO_RAM_BYTES/4);
+            }
+            else
+            {
+                p->fifoRegs[FIFO_INT_STATUS_ADDRESS] |= FIFO_INT_RPURE;
+                update_fifo_irq(p);
+            }
             break;
 
-        case 0x05: // fifo tx length
-            break;
-
-        case 0x06: // fifo rx reset
-            break;
-
-        case 0x07: // fifo rx occupancy
-            break;
-
-        case 0x08: // fifo rx data
-            break;
-
-        case 0x09: // fifo rx length
+        case FIFO_RX_LENGTH_ADDRESS:
+            retval = p->rxLengthBuffer[p->rxLengthPopIndex];
+            if (p->rxLengthPopIndex != p->rxLengthPushIndex)
+            {
+                p->rxLengthPopIndex = (p->rxLengthPopIndex+1) % LENGTH_FIFO_WORDS;
+            }
+            else
+            {
+                p->fifoRegs[FIFO_INT_STATUS_ADDRESS] |= FIFO_INT_RPURE;
+                update_fifo_irq(p);
+            }
             break;
 
         default:
@@ -239,43 +365,91 @@ static uint32_t fifo_regs_readl (void *opaque, target_phys_addr_t addr)
             break;
     }
 
+    // printf("FIFO REG READ %08X (%d) = %08X\n", addr, (addr>>2) & 0x0F, retval);
+
     return retval;
 }
 
 static void fifo_regs_writel (void *opaque, target_phys_addr_t addr, uint32_t value)
 {
-    //struct labx_ethernet *p = opaque;
+    struct labx_ethernet *p = opaque;
+
+    // printf("FIFO REG WRITE %08X (%d) = %08X\n", addr, (addr>>2) & 0x0F, value);
 
     switch ((addr>>2) & 0x0F)
     {
-    	case 0x00: // fifo int status
+    	case FIFO_INT_STATUS_ADDRESS:
+            p->hostRegs[FIFO_INT_ENABLE_ADDRESS] &= ~(value & FIFO_INT_MASK);
+            update_fifo_irq(p);
             break;
 
-        case 0x01: // fifo int enable
+        case FIFO_INT_ENABLE_ADDRESS:
+            p->fifoRegs[FIFO_INT_ENABLE_ADDRESS] = (value & FIFO_INT_MASK);
+            update_fifo_irq(p);
             break;
 
-        case 0x02: // fifo tx reset
+        case FIFO_TX_RESET_ADDRESS:
+            if (value == FIFO_RESET_MAGIC)
+            {
+                p->txPushIndex = 0;
+                p->txPopIndex = 0;
+                p->txLengthPushIndex = 0;
+                p->txLengthPopIndex = 0;
+            }
             break;
 
-        case 0x03: // fifo tx vacancy
+        case FIFO_TX_VACANCY_ADDRESS:
             break;
 
-        case 0x04: // fifo tx data
+        case FIFO_TX_DATA_ADDRESS:
+            if ((((p->txLengthPushIndex + 1) % LENGTH_FIFO_WORDS) == p->txLengthPopIndex) ||
+                (((p->txPushIndex + 1) % (FIFO_RAM_BYTES/4)) == p->txPopIndex))
+            {
+                // Full length fifo or data fifo
+                p->fifoRegs[FIFO_INT_STATUS_ADDRESS] |= FIFO_INT_TPOE;
+                update_fifo_irq(p);
+            }
+            else
+            {
+                // Push back the data
+                p->txBuffer[p->txPushIndex] = value;
+                p->txPushIndex = (p->txPushIndex + 1) % (FIFO_RAM_BYTES/4);
+            }
             break;
 
-        case 0x05: // fifo tx length
+        case FIFO_TX_LENGTH_ADDRESS:
+            if (((p->txLengthPushIndex + 1) % LENGTH_FIFO_WORDS) == p->txLengthPopIndex)
+            {
+                // Full length fifo
+                p->fifoRegs[FIFO_INT_STATUS_ADDRESS] |= FIFO_INT_TPOE;
+                update_fifo_irq(p);
+            }
+            else
+            {
+                // Push back the length
+                p->txLengthBuffer[p->txLengthPushIndex] = value;
+                p->txLengthPushIndex = (p->txLengthPushIndex + 1) % LENGTH_FIFO_WORDS;
+                send_packet(p);
+            }
             break;
 
-        case 0x06: // fifo rx reset
+        case FIFO_RX_RESET_ADDRESS:
+            if (value == FIFO_RESET_MAGIC)
+            {
+                p->rxPushIndex = 0;
+                p->rxPopIndex = 0;
+                p->rxLengthPushIndex = 0;
+                p->rxLengthPopIndex = 0;
+            }
             break;
 
-        case 0x07: // fifo rx occupancy
+        case FIFO_RX_OCCUPANCY_ADDRESS:
             break;
 
-        case 0x08: // fifo rx data
+        case FIFO_RX_DATA_ADDRESS:
             break;
 
-        case 0x09: // fifo rx length
+        case FIFO_RX_LENGTH_ADDRESS:
             break;
 
         default:
@@ -333,7 +507,18 @@ static int labx_ethernet_init(SysBusDevice *dev)
 
     /* Initialize defaults */
     p->txBuffer = qemu_malloc(FIFO_RAM_BYTES);
+    p->txLengthBuffer = qemu_malloc(LENGTH_FIFO_WORDS*4);
     p->rxBuffer = qemu_malloc(FIFO_RAM_BYTES);
+    p->rxLengthBuffer = qemu_malloc(LENGTH_FIFO_WORDS*4);
+
+    p->txPushIndex = 0;
+    p->txPopIndex = 0;
+    p->txLengthPushIndex = 0;
+    p->txLengthPopIndex = 0;
+    p->rxPushIndex = 0;
+    p->rxPopIndex = 0;
+    p->rxLengthPushIndex = 0;
+    p->rxLengthPopIndex = 0;
 
     /* Set up memory regions */
     ethernet_regs = cpu_register_io_memory(ethernet_regs_read, ethernet_regs_write, p);
@@ -345,11 +530,13 @@ static int labx_ethernet_init(SysBusDevice *dev)
     sysbus_init_mmio(dev, 0x10 * 4, fifo_regs);
 
     sysbus_mmio_map(dev, 0, p->baseAddress);
-    sysbus_mmio_map(dev, 1, p->baseAddress + (1 << (9+2)));
-    sysbus_mmio_map(dev, 2, p->baseAddress + (2 << (9+2)));
+    sysbus_mmio_map(dev, 1, p->baseAddress + (1 << (10+2)));
+    sysbus_mmio_map(dev, 2, p->baseAddress + (2 << (10+2)));
 
-    /* Initialize the irq */
-    sysbus_init_irq(dev, &p->irq);
+    /* Initialize the irqs */
+    sysbus_init_irq(dev, &p->hostIrq);
+    sysbus_init_irq(dev, &p->fifoIrq);
+    sysbus_init_irq(dev, &p->phyIrq);
 
     /* Set up the NIC */
     qemu_macaddr_default_if_unset(&p->conf.macaddr);

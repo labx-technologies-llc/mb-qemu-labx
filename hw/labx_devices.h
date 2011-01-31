@@ -1,4 +1,6 @@
 
+#include <net.h>
+
 /* Audio packetizer  */
 static inline DeviceState *
 labx_audio_packetizer_create(target_phys_addr_t base, qemu_irq irq, int clockDomains, int cacheDataWords)
@@ -45,13 +47,23 @@ labx_dma_create(target_phys_addr_t base, int microcodeWords)
 
 /* Ethernet */
 static inline DeviceState *
-labx_ethernet_create(target_phys_addr_t base)
+labx_ethernet_create(NICInfo *nd, target_phys_addr_t base, qemu_irq hostIrq, qemu_irq fifoIrq, qemu_irq phyIrq)
 {
     DeviceState *dev;
+    SysBusDevice *s;
+
+    qemu_check_nic_model(nd, "labx-ethernet");
 
     dev = qdev_create(NULL, "labx,ethernet");
     qdev_prop_set_uint32(dev, "baseAddress", base);
+    qdev_set_nic_properties(dev, nd);
     qdev_init_nofail(dev);
+
+    s = sysbus_from_qdev(dev);
+    sysbus_connect_irq(s, 0, hostIrq);
+    sysbus_connect_irq(s, 1, fifoIrq);
+    sysbus_connect_irq(s, 2, phyIrq);
+    
     return dev;
 }
 
