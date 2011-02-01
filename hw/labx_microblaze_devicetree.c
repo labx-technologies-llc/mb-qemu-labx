@@ -355,8 +355,8 @@ static void labx_ethernet_probe(void* fdt, int node)
     int irqLen;
     const void* irqs = qemu_devtree_getprop(fdt, node, "interrupts", &irqLen);
     uint32_t host_irq = qemu_devtree_int_array_index(irqs, 0);
-    uint32_t fifo_irq = qemu_devtree_int_array_index(irqs, 1);
-    uint32_t phy_irq  = qemu_devtree_int_array_index(irqs, 2);
+    uint32_t fifo_irq = qemu_devtree_int_array_index(irqs, 2);
+    uint32_t phy_irq  = qemu_devtree_int_array_index(irqs, 4);
 
     labx_ethernet_create(&nd_table[0], ethernet_addr, irq[host_irq], irq[fifo_irq], irq[phy_irq]);
 }

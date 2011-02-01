@@ -379,7 +379,7 @@ static void fifo_regs_writel (void *opaque, target_phys_addr_t addr, uint32_t va
     switch ((addr>>2) & 0x0F)
     {
     	case FIFO_INT_STATUS_ADDRESS:
-            p->hostRegs[FIFO_INT_ENABLE_ADDRESS] &= ~(value & FIFO_INT_MASK);
+            p->fifoRegs[FIFO_INT_STATUS_ADDRESS] &= ~(value & FIFO_INT_MASK);
             update_fifo_irq(p);
             break;
 
@@ -473,14 +473,42 @@ static int eth_can_rx(VLANClientState *nc)
 {
     //struct labx_ethernet *s = DO_UPCAST(NICState, nc, nc)->opaque;
 
-    return 0;
+    return 1;
 }
 
 static ssize_t eth_rx(VLANClientState *nc, const uint8_t *buf, size_t size)
 {
-    // struct labx_ethernet *s = DO_UPCAST(NICState, nc, nc)->opaque;
+    struct labx_ethernet *p = DO_UPCAST(NICState, nc, nc)->opaque;
+    int i;
+    const uint32_t *wbuf = (const uint32_t*)buf;
+    int rxPushIndexStart = p->rxPushIndex;
 
-    return -1;
+    for (i=0; i<((size+3)/4); i++)
+    {
+        p->rxBuffer[p->rxPushIndex] = cpu_to_be32(wbuf[i]);
+        p->rxPushIndex = (p->rxPushIndex + 1) % (FIFO_RAM_BYTES/4);
+        if (p->rxPushIndex == p->rxPopIndex)
+        {
+            // Packet didn't fit
+            p->rxPushIndex = rxPushIndexStart;
+            return -1;
+        }
+    }
+
+    if ((p->rxLengthPushIndex + 1) % LENGTH_FIFO_WORDS == p->rxLengthPopIndex)
+    {
+        // Length didn't fit
+        p->rxPushIndex = rxPushIndexStart;
+        return -1;
+    }
+
+    p->rxLengthBuffer[p->rxLengthPushIndex] = size;
+    p->rxLengthPushIndex = (p->rxLengthPushIndex + 1) % LENGTH_FIFO_WORDS;
+
+    p->fifoRegs[FIFO_INT_STATUS_ADDRESS] |= FIFO_INT_RC;
+    update_fifo_irq(p);
+
+    return size;
 }
 
 static void eth_cleanup(VLANClientState *nc)
