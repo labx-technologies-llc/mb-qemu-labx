@@ -43,13 +43,18 @@ struct CPUMBState;
 
 /* Register aliases. R0 - R15 */
 #define R_SP     1
-#define SR_PC    0
-#define SR_MSR   1
-#define SR_EAR   3
-#define SR_ESR   5
-#define SR_FSR   7
-#define SR_BTR   0xb
-#define SR_EDR   0xd
+
+/* Special purpose registers */
+#define SR_PC    0 /* 0x0000 */
+#define SR_MSR   1 /* 0x0001 */
+#define SR_EAR   2 /* 0x0003 */
+#define SR_ESR   3 /* 0x0004 */
+#define SR_FSR   4 /* 0x0007 */
+#define SR_BTR   5 /* 0x000B */
+#define SR_EDR   6 /* 0x000D */
+#define SR_SLR   7 /* 0x0800 */
+#define SR_SHR   8 /* 0x0802 */
+#define NUM_SR   9
 
 /* MSR flags.  */
 #define MSR_BE  (1<<0) /* 0x001 */
@@ -215,7 +220,8 @@ typedef struct CPUMBState {
 
     uint32_t imm;
     uint32_t regs[33];
-    uint32_t sregs[24];
+    uint32_t sregs[NUM_SR];
+    uint32_t reservation;
     float_status fp_status;
 
     /* Internal flags.  */

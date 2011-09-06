@@ -52,7 +52,8 @@
 static TCGv env_debug;
 static TCGv_ptr cpu_env;
 static TCGv cpu_R[32];
-static TCGv cpu_SR[18];
+static TCGv cpu_SR[NUM_SR];
+static TCGv cpu_RESERVATION;
 static TCGv env_imm;
 static TCGv env_btaken;
 static TCGv env_btarget;
@@ -459,6 +460,12 @@ static void dec_msr(DisasContext *dc)
             case 0x7:
                 tcg_gen_andi_tl(cpu_SR[SR_FSR], cpu_R[dc->ra], 31);
                 break;
+            case 0x800:
+                tcg_gen_mov_tl(cpu_SR[SR_SLR], cpu_R[dc->ra]);
+                break;
+            case 0x802:
+                tcg_gen_mov_tl(cpu_SR[SR_SHR], cpu_R[dc->ra]);
+                break;
             default:
                 cpu_abort(dc->env, "unknown mts reg %x\n", sr);
                 break;
@@ -484,6 +491,12 @@ static void dec_msr(DisasContext *dc)
                 break;
             case 0xb:
                 tcg_gen_mov_tl(cpu_R[dc->rd], cpu_SR[SR_BTR]);
+                break;
+            case 0x800:
+                tcg_gen_mov_tl(cpu_R[dc->rd], cpu_SR[SR_SLR]);
+                break;
+            case 0x802:
+                tcg_gen_mov_tl(cpu_R[dc->rd], cpu_SR[SR_SHR]);
                 break;
             case 0x2000:
             case 0x2001:
@@ -767,16 +780,26 @@ static void dec_imm(DisasContext *dc)
 }
 
 static inline void gen_load(DisasContext *dc, TCGv dst, TCGv addr,
-                            unsigned int size)
+                            unsigned int size, unsigned int lock, unsigned int reverse)
 {
     int mem_index = cpu_mmu_index(dc->env);
+
+    if (lock) {
+        tcg_gen_movi_tl(cpu_RESERVATION, 1);
+    }
 
     if (size == 1) {
         tcg_gen_qemu_ld8u(dst, addr, mem_index);
     } else if (size == 2) {
         tcg_gen_qemu_ld16u(dst, addr, mem_index);
+        if (reverse) {
+            tcg_gen_bswap16_tl(dst, dst);
+        }
     } else if (size == 4) {
         tcg_gen_qemu_ld32u(dst, addr, mem_index);
+        if (reverse) {
+            tcg_gen_bswap32_tl(dst, dst);
+        }
     } else
         cpu_abort(dc->env, "Incorrect load size %d\n", size);
 }
@@ -817,7 +840,7 @@ static inline TCGv *compute_ldst_addr(DisasContext *dc, TCGv *t)
 static void dec_load(DisasContext *dc)
 {
     TCGv t, *addr;
-    unsigned int size;
+    unsigned int size, lock = 0, reverse = 0;
 
     size = 1 << (dc->opcode & 3);
     if (size > 4 && (dc->tb_flags & MSR_EE_FLAG)
@@ -830,6 +853,11 @@ static void dec_load(DisasContext *dc)
     LOG_DIS("l %x %d\n", dc->opcode, size);
     t_sync_flags(dc);
     addr = compute_ldst_addr(dc, &t);
+
+    if ((dc->opcode & 0x3c) == 0x30) {
+        reverse = (dc->ir >> 9) & 1;
+        lock = (dc->ir >> 10) & 1;
+    }
 
     /* If we get a fault on a dslot, the jmpstate better be in sync.  */
     sync_jmpstate(dc);
@@ -844,7 +872,7 @@ static void dec_load(DisasContext *dc)
          * into v. If the load succeeds, we verify alignment of the
          * address and if that succeeds we write into the destination reg.
          */
-        gen_load(dc, v, *addr, size);
+        gen_load(dc, v, *addr, size, lock, reverse);
 
         tcg_gen_movi_tl(cpu_SR[SR_PC], dc->pc);
         gen_helper_memalign(*addr, tcg_const_tl(dc->rd),
@@ -854,9 +882,9 @@ static void dec_load(DisasContext *dc)
         tcg_temp_free(v);
     } else {
         if (dc->rd) {
-            gen_load(dc, cpu_R[dc->rd], *addr, size);
+            gen_load(dc, cpu_R[dc->rd], *addr, size, lock, reverse);
         } else {
-            gen_load(dc, env_imm, *addr, size);
+            gen_load(dc, env_imm, *addr, size, lock, reverse);
         }
     }
 
@@ -865,24 +893,45 @@ static void dec_load(DisasContext *dc)
 }
 
 static void gen_store(DisasContext *dc, TCGv addr, TCGv val,
-                      unsigned int size)
+                      unsigned int size, unsigned int lock, unsigned int reverse)
 {
     int mem_index = cpu_mmu_index(dc->env);
+    int l1;
+
+    if (lock) {
+        l1 = gen_new_label();
+        tcg_gen_ori_tl(cpu_SR[SR_MSR], cpu_SR[SR_MSR], (MSR_C | MSR_CC));
+        tcg_gen_brcondi_tl(TCG_COND_EQ,
+                           cpu_RESERVATION, 0, l1);
+        tcg_gen_andi_tl(cpu_SR[SR_MSR], cpu_SR[SR_MSR], ~(MSR_C | MSR_CC));
+    }
 
     if (size == 1)
         tcg_gen_qemu_st8(val, addr, mem_index);
     else if (size == 2) {
+        if (reverse) {
+            tcg_gen_bswap16_tl(val, val);
+        }
         tcg_gen_qemu_st16(val, addr, mem_index);
     } else if (size == 4) {
+        if (reverse) {
+            tcg_gen_bswap32_tl(val, val);
+        }
         tcg_gen_qemu_st32(val, addr, mem_index);
     } else
         cpu_abort(dc->env, "Incorrect store size %d\n", size);
+
+    if (lock) {
+        gen_set_label(l1);
+        tcg_gen_movi_tl(cpu_RESERVATION, 0);
+    }
+
 }
 
 static void dec_store(DisasContext *dc)
 {
     TCGv t, *addr;
-    unsigned int size;
+    unsigned int size, lock = 0, reverse = 0;
 
     size = 1 << (dc->opcode & 3);
 
@@ -899,7 +948,12 @@ static void dec_store(DisasContext *dc)
     sync_jmpstate(dc);
     addr = compute_ldst_addr(dc, &t);
 
-    gen_store(dc, *addr, cpu_R[dc->rd], size);
+    if ((dc->opcode & 0x3c) == 0x34) {
+        reverse = (dc->ir >> 9) & 1;
+        lock = (dc->ir >> 10) & 1;
+    }
+
+    gen_store(dc, *addr, cpu_R[dc->rd], size, lock, reverse);
 
     /* Verify alignment if needed.  */
     if ((dc->env->pvr.regs[2] & PVR2_UNALIGNED_EXC_MASK) && size > 1) {
@@ -1606,6 +1660,9 @@ CPUState *cpu_mb_init (const char *cpu_model)
                           offsetof(CPUState, sregs[i]),
                           special_regnames[i]);
     }
+    cpu_RESERVATION = tcg_global_mem_new(TCG_AREG0,
+                                  offsetof(CPUState, reservation),
+                                  "reservation");
 #define GEN_HELPER 2
 #include "helper.h"
 
