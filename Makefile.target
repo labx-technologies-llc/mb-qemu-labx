@@ -78,6 +78,7 @@ libobj-y += cpuid.o
 endif
 libobj-$(CONFIG_NEED_MMU) += mmu.o
 libobj-$(TARGET_ARM) += neon_helper.o iwmmxt_helper.o
+libobj-$(TARGET_NIOS2) += instruction.o
 
 libobj-y += disas.o
 
@@ -273,6 +274,22 @@ obj-microblaze-y += labx_ethernet.o
 obj-microblaze-y += labx_ptp.o
 
 obj-microblaze-$(CONFIG_FDT) += device_tree.o
+
+# Altera NiosII peripherals
+obj-nios2-y = labx_nios2_devicetree.o
+
+obj-nios2-y += nios2_pic_cpu.o
+obj-nios2-y += altera_vic.o
+obj-nios2-y += altera_iic.o
+obj-nios2-y += altera_uart.o
+obj-nios2-y += altera_timer.o
+obj-nios2-y += labx_audio_packetizer.o
+obj-nios2-y += labx_audio_depacketizer.o
+obj-nios2-y += labx_dma.o
+obj-nios2-y += labx_ethernet.o
+obj-nios2-y += labx_ptp.o
+
+obj-nios2-$(CONFIG_FDT) += device_tree.o
 
 # Boards
 obj-cris-y = cris_pic_cpu.o

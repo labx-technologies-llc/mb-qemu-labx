@@ -21,6 +21,7 @@ CRIS               Edgar E. Iglesias
 Alpha              ?
 MicroBlaze         Edgar E. Iglesias
 S390               ?
+NiosII             Chris Wulff
 
 Machines (sorted by CPU):
 -------------------------

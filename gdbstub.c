@@ -1247,6 +1247,31 @@ static int cpu_gdb_write_register(CPUState *env, uint8_t *mem_buf, int n)
     }
     return 4;
 }
+
+#elif defined (TARGET_NIOS2)
+
+static int cpu_gdb_read_register(CPUState *env, uint8_t *mem_buf, int n)
+{
+    if (n > NUM_CORE_REGS)
+	return 0;
+
+    GET_REG32(env->regs[n]);
+    return 0;
+}
+
+static int cpu_gdb_write_register(CPUState *env, uint8_t *mem_buf, int n)
+{
+    uint32_t tmp;
+
+    if (n > NUM_CORE_REGS)
+	return 0;
+
+    tmp = ldl_p(mem_buf);
+
+    env->regs[n] = tmp;
+    return 4;
+}
+
 #elif defined (TARGET_CRIS)
 
 #define NUM_CORE_REGS 49
@@ -1730,6 +1755,8 @@ static void gdb_set_cpu_pc(GDBState *s, target_ulong pc)
     }
 #elif defined (TARGET_MICROBLAZE)
     s->c_cpu->sregs[SR_PC] = pc;
+#elif defined (TARGET_NIOS2)
+    s->c_cpu->regs[R_PC] = pc;
 #elif defined (TARGET_CRIS)
     s->c_cpu->pc = pc;
 #elif defined (TARGET_ALPHA)

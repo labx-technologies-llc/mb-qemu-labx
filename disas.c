@@ -213,6 +213,9 @@ void target_disas(FILE *out, target_ulong code, target_ulong size, int flags)
 #elif defined(TARGET_MICROBLAZE)
     disasm_info.mach = bfd_arch_microblaze;
     print_insn = print_insn_microblaze;
+#elif defined(TARGET_NIOS2)
+    disasm_info.mach = bfd_arch_nios2;
+    print_insn = print_insn_nios2;
 #else
     fprintf(out, "0x" TARGET_FMT_lx
 	    ": Asm output not supported on this arch\n", code);

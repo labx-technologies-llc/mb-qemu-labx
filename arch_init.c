@@ -75,6 +75,8 @@ const char arch_config_name[] = CONFIG_QEMU_CONFDIR "/target-" TARGET_ARCH ".con
 #define QEMU_ARCH QEMU_ARCH_SH4
 #elif defined(TARGET_SPARC)
 #define QEMU_ARCH QEMU_ARCH_SPARC
+#elif defined(TARGET_NIOS2)
+#define QEMU_ARCH QEMU_ARCH_NIOS2
 #endif
 
 const uint32_t arch_type = QEMU_ARCH;
