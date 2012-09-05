@@ -243,7 +243,7 @@ enum {
   })
 
 typedef struct DisasContext {
-  CPUState                *env;
+  CPUNios2State           *env;
   TCGv                    *cpu_R;
   int                      is_jmp;
   target_ulong             pc;

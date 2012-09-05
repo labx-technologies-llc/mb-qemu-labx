@@ -53,7 +53,7 @@ static TCGv cpu_R[NUM_CORE_REGS];
 #include "gen-icount.h"
 
 /* generate intermediate code for basic block 'tb'.  */
-static void gen_intermediate_code_internal(CPUState *env, TranslationBlock *tb, int search_pc) {
+static void gen_intermediate_code_internal(CPUNios2State *env, TranslationBlock *tb, int search_pc) {
   DisasContext dc1, *dc = &dc1;
   int num_insns;
   int max_insns;
@@ -172,15 +172,15 @@ static void gen_intermediate_code_internal(CPUState *env, TranslationBlock *tb, 
 #endif
 }
 
-void gen_intermediate_code (CPUState *env, struct TranslationBlock *tb) {
+void gen_intermediate_code (CPUNios2State *env, struct TranslationBlock *tb) {
   gen_intermediate_code_internal(env, tb, 0);
 }
 
-void gen_intermediate_code_pc (CPUState *env, struct TranslationBlock *tb) {
+void gen_intermediate_code_pc (CPUNios2State *env, struct TranslationBlock *tb) {
   gen_intermediate_code_internal(env, tb, 1);
 }
 
-void cpu_dump_state (CPUState *env, FILE *f, fprintf_function cpu_fprintf,
+void cpu_dump_state (CPUNios2State *env, FILE *f, fprintf_function cpu_fprintf,
                      int flags) {
   int i;
 
@@ -195,54 +195,37 @@ void cpu_dump_state (CPUState *env, FILE *f, fprintf_function cpu_fprintf,
     if ((i + 1) % 4 == 0)
       cpu_fprintf(f, "\n");
   }
+  cpu_fprintf(f, " mmu write: VPN=%05X PID %02X TLBACC %08X\n",
+              env->mmu.pteaddr_wr & CR_PTEADDR_VPN_MASK,
+	      (env->mmu.tlbmisc_wr & CR_TLBMISC_PID_MASK) >> 4,
+	      env->mmu.tlbacc_wr);
   cpu_fprintf(f, "\n\n");
 }
 
-CPUState *cpu_nios2_init (const char *cpu_model) {
-  CPUState *env;
+Nios2CPU *cpu_nios2_init (const char *cpu_model) {
+  Nios2CPU *cpu;
   int i;
 
-  env = qemu_mallocz(sizeof(CPUState));
+  cpu = NIOS2_CPU(object_new(TYPE_NIOS2_CPU));
 
-  cpu_exec_init(env);
-  cpu_reset(env);
+  cpu_reset(CPU(cpu));
+  qemu_init_vcpu(&cpu->env);
 
   cpu_env = tcg_global_reg_new_ptr(TCG_AREG0, "env");
 
   for (i = 0; i < NUM_CORE_REGS; i++) {
     cpu_R[i] = tcg_global_mem_new(TCG_AREG0,
-                                  offsetof(CPUState, regs[i]),
+                                  offsetof(CPUNios2State, regs[i]),
                                   regnames[i]);
   }
 
 #define GEN_HELPER 2
 #include "helper.h"
 
-  return env;
+  return cpu;
 }
 
-void cpu_reset (CPUState *env)
-{
-  if (qemu_loglevel_mask(CPU_LOG_RESET)) {
-    qemu_log("CPU Reset (CPU %d)\n", env->cpu_index);
-    log_cpu_state(env, 0);
-  }
-
-  tlb_flush(env, 1);
-
-  memset(env->regs, 0, sizeof(uint32_t) * NUM_CORE_REGS);
-  env->regs[R_PC] = 0xc0000000;
-
-#if defined(CONFIG_USER_ONLY)
-  /* start in user mode with interrupts enabled.  */
-  env->regs[CR_STATUS] = CR_STATUS_U | CR_STATUS_PIE;
-#else
-  mmu_init(&env->mmu);
-#endif
-}
-
-void gen_pc_load(CPUState *env, struct TranslationBlock *tb,
-                 unsigned long searched_pc, int pc_pos, void *puc) {
+void restore_state_to_opc(CPUNios2State *env, TranslationBlock *tb, int pc_pos) {
   env->regs[R_PC] = gen_opc_pc[pc_pos];
 }
 

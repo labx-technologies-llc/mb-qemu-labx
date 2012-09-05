@@ -1396,34 +1396,12 @@ get_opcode_entry (unsigned int insn,
   /* Allocate and clear the opcode-table.  */
   if (opc_table == NULL)
     {
-      opc_table = qemu_malloc (65536 * sizeof (opc_table[0]));
-
-      memset (opc_table, 0, 65536 * sizeof (const struct cris_opcode *));
-
-      dip_prefixes
-	= qemu_malloc (65536 * sizeof (const struct cris_opcode **));
-
-      memset (dip_prefixes, 0, 65536 * sizeof (dip_prefixes[0]));
-
-      bdapq_m1_prefixes
-	= qemu_malloc (65536 * sizeof (const struct cris_opcode **));
-
-      memset (bdapq_m1_prefixes, 0, 65536 * sizeof (bdapq_m1_prefixes[0]));
-
-      bdapq_m2_prefixes
-	= qemu_malloc (65536 * sizeof (const struct cris_opcode **));
-
-      memset (bdapq_m2_prefixes, 0, 65536 * sizeof (bdapq_m2_prefixes[0]));
-
-      bdapq_m4_prefixes
-	= qemu_malloc (65536 * sizeof (const struct cris_opcode **));
-
-      memset (bdapq_m4_prefixes, 0, 65536 * sizeof (bdapq_m4_prefixes[0]));
-
-      rest_prefixes
-	= qemu_malloc (65536 * sizeof (const struct cris_opcode **));
-
-      memset (rest_prefixes, 0, 65536 * sizeof (rest_prefixes[0]));
+      opc_table = g_new0(const struct cris_opcode *, 65536);
+      dip_prefixes = g_new0(const struct cris_opcode *, 65536);
+      bdapq_m1_prefixes = g_new0(const struct cris_opcode *, 65536);
+      bdapq_m2_prefixes = g_new0(const struct cris_opcode *, 65536);
+      bdapq_m4_prefixes = g_new0(const struct cris_opcode *, 65536);
+      rest_prefixes = g_new0(const struct cris_opcode *, 65536);
     }
 
   /* Get the right table if this is a prefix.
@@ -2767,7 +2745,6 @@ print_insn_cris_generic (bfd_vma memaddr,
 }
 
 /* Disassemble, prefixing register names with `$'.  CRIS v0..v10.  */
-#if 0
 static int
 print_insn_cris_with_register_prefix (bfd_vma vma,
 				      disassemble_info *info)
@@ -2777,7 +2754,6 @@ print_insn_cris_with_register_prefix (bfd_vma vma,
     return -1;
   return print_insn_cris_generic (vma, info, true);
 }
-#endif
 /* Disassemble, prefixing register names with `$'.  CRIS v32.  */
 
 static int
@@ -2841,6 +2817,13 @@ print_insn_crisv10_v32_without_register_prefix (bfd_vma vma,
   return print_insn_cris_generic (vma, info, false);
 }
 #endif
+
+int
+print_insn_crisv10 (bfd_vma vma,
+		    disassemble_info *info)
+{
+  return print_insn_cris_with_register_prefix(vma, info);
+}
 
 int
 print_insn_crisv32 (bfd_vma vma,

@@ -1,0 +1,8 @@
+obj-y = 
+
+obj-y += labx_nios2_devicetree.o
+
+obj-y += nios2_pic_cpu.o
+obj-$(CONFIG_FDT) += ../device_tree.o
+
+obj-y := $(addprefix ../,$(obj-y))

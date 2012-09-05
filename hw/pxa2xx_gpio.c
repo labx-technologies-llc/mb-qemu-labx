@@ -8,15 +8,19 @@
  */
 
 #include "hw.h"
+#include "sysbus.h"
 #include "pxa.h"
 
 #define PXA2XX_GPIO_BANKS	4
 
+typedef struct PXA2xxGPIOInfo PXA2xxGPIOInfo;
 struct PXA2xxGPIOInfo {
-    qemu_irq *pic;
+    SysBusDevice busdev;
+    MemoryRegion iomem;
+    qemu_irq irq0, irq1, irqX;
     int lines;
-    CPUState *cpu_env;
-    qemu_irq *in;
+    int ncpu;
+    ARMCPU *cpu;
 
     /* XXX: GNU C vectors are more suitable */
     uint32_t ilevel[PXA2XX_GPIO_BANKS];
@@ -66,19 +70,19 @@ static struct {
 static void pxa2xx_gpio_irq_update(PXA2xxGPIOInfo *s)
 {
     if (s->status[0] & (1 << 0))
-        qemu_irq_raise(s->pic[PXA2XX_PIC_GPIO_0]);
+        qemu_irq_raise(s->irq0);
     else
-        qemu_irq_lower(s->pic[PXA2XX_PIC_GPIO_0]);
+        qemu_irq_lower(s->irq0);
 
     if (s->status[0] & (1 << 1))
-        qemu_irq_raise(s->pic[PXA2XX_PIC_GPIO_1]);
+        qemu_irq_raise(s->irq1);
     else
-        qemu_irq_lower(s->pic[PXA2XX_PIC_GPIO_1]);
+        qemu_irq_lower(s->irq1);
 
     if ((s->status[0] & ~3) | s->status[1] | s->status[2] | s->status[3])
-        qemu_irq_raise(s->pic[PXA2XX_PIC_GPIO_X]);
+        qemu_irq_raise(s->irqX);
     else
-        qemu_irq_lower(s->pic[PXA2XX_PIC_GPIO_X]);
+        qemu_irq_lower(s->irqX);
 }
 
 /* Bitmap of pins used as standby and sleep wake-up sources.  */
@@ -114,8 +118,9 @@ static void pxa2xx_gpio_set(void *opaque, int line, int level)
         pxa2xx_gpio_irq_update(s);
 
     /* Wake-up GPIOs */
-    if (s->cpu_env->halted && (mask & ~s->dir[bank] & pxa2xx_gpio_wake[bank]))
-        cpu_interrupt(s->cpu_env, CPU_INTERRUPT_EXITTB);
+    if (s->cpu->env.halted && (mask & ~s->dir[bank] & pxa2xx_gpio_wake[bank])) {
+        cpu_interrupt(&s->cpu->env, CPU_INTERRUPT_EXITTB);
+    }
 }
 
 static void pxa2xx_gpio_handler_update(PXA2xxGPIOInfo *s) {
@@ -134,7 +139,8 @@ static void pxa2xx_gpio_handler_update(PXA2xxGPIOInfo *s) {
     }
 }
 
-static uint32_t pxa2xx_gpio_read(void *opaque, target_phys_addr_t offset)
+static uint64_t pxa2xx_gpio_read(void *opaque, target_phys_addr_t offset,
+                                 unsigned size)
 {
     PXA2xxGPIOInfo *s = (PXA2xxGPIOInfo *) opaque;
     uint32_t ret;
@@ -185,8 +191,8 @@ static uint32_t pxa2xx_gpio_read(void *opaque, target_phys_addr_t offset)
     return 0;
 }
 
-static void pxa2xx_gpio_write(void *opaque,
-                target_phys_addr_t offset, uint32_t value)
+static void pxa2xx_gpio_write(void *opaque, target_phys_addr_t offset,
+                              uint64_t value, unsigned size)
 {
     PXA2xxGPIOInfo *s = (PXA2xxGPIOInfo *) opaque;
     int bank;
@@ -237,108 +243,107 @@ static void pxa2xx_gpio_write(void *opaque,
     }
 }
 
-static CPUReadMemoryFunc * const pxa2xx_gpio_readfn[] = {
-    pxa2xx_gpio_read,
-    pxa2xx_gpio_read,
-    pxa2xx_gpio_read
+static const MemoryRegionOps pxa_gpio_ops = {
+    .read = pxa2xx_gpio_read,
+    .write = pxa2xx_gpio_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
 };
 
-static CPUWriteMemoryFunc * const pxa2xx_gpio_writefn[] = {
-    pxa2xx_gpio_write,
-    pxa2xx_gpio_write,
-    pxa2xx_gpio_write
-};
-
-static void pxa2xx_gpio_save(QEMUFile *f, void *opaque)
+DeviceState *pxa2xx_gpio_init(target_phys_addr_t base,
+                CPUARMState *env, DeviceState *pic, int lines)
 {
-    PXA2xxGPIOInfo *s = (PXA2xxGPIOInfo *) opaque;
-    int i;
+    DeviceState *dev;
 
-    qemu_put_be32(f, s->lines);
+    dev = qdev_create(NULL, "pxa2xx-gpio");
+    qdev_prop_set_int32(dev, "lines", lines);
+    qdev_prop_set_int32(dev, "ncpu", env->cpu_index);
+    qdev_init_nofail(dev);
 
-    for (i = 0; i < PXA2XX_GPIO_BANKS; i ++) {
-        qemu_put_be32s(f, &s->ilevel[i]);
-        qemu_put_be32s(f, &s->olevel[i]);
-        qemu_put_be32s(f, &s->dir[i]);
-        qemu_put_be32s(f, &s->rising[i]);
-        qemu_put_be32s(f, &s->falling[i]);
-        qemu_put_be32s(f, &s->status[i]);
-        qemu_put_be32s(f, &s->gafr[i * 2 + 0]);
-        qemu_put_be32s(f, &s->gafr[i * 2 + 1]);
+    sysbus_mmio_map(sysbus_from_qdev(dev), 0, base);
+    sysbus_connect_irq(sysbus_from_qdev(dev), 0,
+                    qdev_get_gpio_in(pic, PXA2XX_PIC_GPIO_0));
+    sysbus_connect_irq(sysbus_from_qdev(dev), 1,
+                    qdev_get_gpio_in(pic, PXA2XX_PIC_GPIO_1));
+    sysbus_connect_irq(sysbus_from_qdev(dev), 2,
+                    qdev_get_gpio_in(pic, PXA2XX_PIC_GPIO_X));
 
-        qemu_put_be32s(f, &s->prev_level[i]);
-    }
+    return dev;
 }
 
-static int pxa2xx_gpio_load(QEMUFile *f, void *opaque, int version_id)
+static int pxa2xx_gpio_initfn(SysBusDevice *dev)
 {
-    PXA2xxGPIOInfo *s = (PXA2xxGPIOInfo *) opaque;
-    int i;
-
-    if (qemu_get_be32(f) != s->lines)
-        return -EINVAL;
-
-    for (i = 0; i < PXA2XX_GPIO_BANKS; i ++) {
-        qemu_get_be32s(f, &s->ilevel[i]);
-        qemu_get_be32s(f, &s->olevel[i]);
-        qemu_get_be32s(f, &s->dir[i]);
-        qemu_get_be32s(f, &s->rising[i]);
-        qemu_get_be32s(f, &s->falling[i]);
-        qemu_get_be32s(f, &s->status[i]);
-        qemu_get_be32s(f, &s->gafr[i * 2 + 0]);
-        qemu_get_be32s(f, &s->gafr[i * 2 + 1]);
-
-        qemu_get_be32s(f, &s->prev_level[i]);
-    }
-
-    return 0;
-}
-
-PXA2xxGPIOInfo *pxa2xx_gpio_init(target_phys_addr_t base,
-                CPUState *env, qemu_irq *pic, int lines)
-{
-    int iomemtype;
     PXA2xxGPIOInfo *s;
 
-    s = (PXA2xxGPIOInfo *)
-            qemu_mallocz(sizeof(PXA2xxGPIOInfo));
-    memset(s, 0, sizeof(PXA2xxGPIOInfo));
-    s->pic = pic;
-    s->lines = lines;
-    s->cpu_env = env;
-    s->in = qemu_allocate_irqs(pxa2xx_gpio_set, s, lines);
+    s = FROM_SYSBUS(PXA2xxGPIOInfo, dev);
 
-    iomemtype = cpu_register_io_memory(pxa2xx_gpio_readfn,
-                    pxa2xx_gpio_writefn, s);
-    cpu_register_physical_memory(base, 0x00001000, iomemtype);
+    s->cpu = arm_env_get_cpu(qemu_get_cpu(s->ncpu));
 
-    register_savevm(NULL, "pxa2xx_gpio", 0, 0,
-                    pxa2xx_gpio_save, pxa2xx_gpio_load, s);
+    qdev_init_gpio_in(&dev->qdev, pxa2xx_gpio_set, s->lines);
+    qdev_init_gpio_out(&dev->qdev, s->handler, s->lines);
 
-    return s;
-}
+    memory_region_init_io(&s->iomem, &pxa_gpio_ops, s, "pxa2xx-gpio", 0x1000);
+    sysbus_init_mmio(dev, &s->iomem);
+    sysbus_init_irq(dev, &s->irq0);
+    sysbus_init_irq(dev, &s->irq1);
+    sysbus_init_irq(dev, &s->irqX);
 
-qemu_irq *pxa2xx_gpio_in_get(PXA2xxGPIOInfo *s)
-{
-    return s->in;
-}
-
-void pxa2xx_gpio_out_set(PXA2xxGPIOInfo *s,
-                int line, qemu_irq handler)
-{
-    if (line >= s->lines) {
-        printf("%s: No GPIO pin %i\n", __FUNCTION__, line);
-        return;
-    }
-
-    s->handler[line] = handler;
+    return 0;
 }
 
 /*
  * Registers a callback to notify on GPLR reads.  This normally
  * shouldn't be needed but it is used for the hack on Spitz machines.
  */
-void pxa2xx_gpio_read_notifier(PXA2xxGPIOInfo *s, qemu_irq handler)
+void pxa2xx_gpio_read_notifier(DeviceState *dev, qemu_irq handler)
 {
+    PXA2xxGPIOInfo *s = FROM_SYSBUS(PXA2xxGPIOInfo, sysbus_from_qdev(dev));
     s->read_notify = handler;
 }
+
+static const VMStateDescription vmstate_pxa2xx_gpio_regs = {
+    .name = "pxa2xx-gpio",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .fields = (VMStateField []) {
+        VMSTATE_INT32(lines, PXA2xxGPIOInfo),
+        VMSTATE_UINT32_ARRAY(ilevel, PXA2xxGPIOInfo, PXA2XX_GPIO_BANKS),
+        VMSTATE_UINT32_ARRAY(olevel, PXA2xxGPIOInfo, PXA2XX_GPIO_BANKS),
+        VMSTATE_UINT32_ARRAY(dir, PXA2xxGPIOInfo, PXA2XX_GPIO_BANKS),
+        VMSTATE_UINT32_ARRAY(rising, PXA2xxGPIOInfo, PXA2XX_GPIO_BANKS),
+        VMSTATE_UINT32_ARRAY(falling, PXA2xxGPIOInfo, PXA2XX_GPIO_BANKS),
+        VMSTATE_UINT32_ARRAY(status, PXA2xxGPIOInfo, PXA2XX_GPIO_BANKS),
+        VMSTATE_UINT32_ARRAY(gafr, PXA2xxGPIOInfo, PXA2XX_GPIO_BANKS * 2),
+        VMSTATE_END_OF_LIST(),
+    },
+};
+
+static Property pxa2xx_gpio_properties[] = {
+    DEFINE_PROP_INT32("lines", PXA2xxGPIOInfo, lines, 0),
+    DEFINE_PROP_INT32("ncpu", PXA2xxGPIOInfo, ncpu, 0),
+    DEFINE_PROP_END_OF_LIST(),
+};
+
+static void pxa2xx_gpio_class_init(ObjectClass *klass, void *data)
+{
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+
+    k->init = pxa2xx_gpio_initfn;
+    dc->desc = "PXA2xx GPIO controller";
+    dc->props = pxa2xx_gpio_properties;
+}
+
+static TypeInfo pxa2xx_gpio_info = {
+    .name          = "pxa2xx-gpio",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(PXA2xxGPIOInfo),
+    .class_init    = pxa2xx_gpio_class_init,
+};
+
+static void pxa2xx_gpio_register_types(void)
+{
+    type_register_static(&pxa2xx_gpio_info);
+}
+
+type_init(pxa2xx_gpio_register_types)

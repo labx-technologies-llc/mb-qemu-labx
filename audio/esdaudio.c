@@ -201,7 +201,7 @@ static int qesd_init_out (HWVoiceOut *hw, struct audsettings *as)
     case AUD_FMT_S32:
     case AUD_FMT_U32:
         dolog ("Will use 16 instead of 32 bit samples\n");
-
+        /* fall through */
     case AUD_FMT_S16:
     case AUD_FMT_U16:
     deffmt:
@@ -246,7 +246,7 @@ static int qesd_init_out (HWVoiceOut *hw, struct audsettings *as)
     esd->fd = -1;
 
  fail1:
-    qemu_free (esd->pcm_buf);
+    g_free (esd->pcm_buf);
     esd->pcm_buf = NULL;
     return -1;
 }
@@ -270,7 +270,7 @@ static void qesd_fini_out (HWVoiceOut *hw)
 
     audio_pt_fini (&esd->pt, AUDIO_FUNC);
 
-    qemu_free (esd->pcm_buf);
+    g_free (esd->pcm_buf);
     esd->pcm_buf = NULL;
 }
 
@@ -346,8 +346,7 @@ static void *qesd_thread_in (void *arg)
                 break;
             }
 
-            hw->conv (hw->conv_buf + wpos, buf, nread >> hw->info.shift,
-                      &nominal_volume);
+            hw->conv (hw->conv_buf + wpos, buf, nread >> hw->info.shift);
             wpos = (wpos + chunk) % hw->samples;
             to_grab -= chunk;
         }
@@ -454,7 +453,7 @@ static int qesd_init_in (HWVoiceIn *hw, struct audsettings *as)
     esd->fd = -1;
 
  fail1:
-    qemu_free (esd->pcm_buf);
+    g_free (esd->pcm_buf);
     esd->pcm_buf = NULL;
     return -1;
 }
@@ -478,7 +477,7 @@ static void qesd_fini_in (HWVoiceIn *hw)
 
     audio_pt_fini (&esd->pt, AUDIO_FUNC);
 
-    qemu_free (esd->pcm_buf);
+    g_free (esd->pcm_buf);
     esd->pcm_buf = NULL;
 }
 

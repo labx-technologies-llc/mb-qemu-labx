@@ -55,6 +55,7 @@
 
 struct altera_uart {
   SysBusDevice busdev;
+  MemoryRegion mmio;
   CharDriverState *chr;
   qemu_irq irq;
 
@@ -69,7 +70,7 @@ static void uart_update_irq(struct altera_uart *s) {
   qemu_set_irq(s->irq, irq);
 }
 
-static uint32_t uart_readl (void *opaque, target_phys_addr_t addr) {
+static uint64_t uart_read(void *opaque, target_phys_addr_t addr, unsigned int size) {
   struct altera_uart *s = opaque;
   uint32_t r = 0;
   addr >>= 2;
@@ -97,8 +98,9 @@ static uint32_t uart_readl (void *opaque, target_phys_addr_t addr) {
   return r;
 }
 
-static void uart_writel (void *opaque, target_phys_addr_t addr, uint32_t value) {
+static void uart_write(void *opaque, target_phys_addr_t addr, uint64_t val64, unsigned int size) {
   struct altera_uart *s = opaque;
+  uint32_t value = val64;
   unsigned char ch = value;
 
   addr >>= 2;
@@ -107,7 +109,7 @@ static void uart_writel (void *opaque, target_phys_addr_t addr, uint32_t value) 
   switch (addr) {
     case R_TXDATA:
       if (s->chr) {
-        qemu_chr_write(s->chr, &ch, 1);
+        qemu_chr_fe_write(s->chr, &ch, 1);
       }
 
       s->regs[addr] = value;
@@ -124,18 +126,6 @@ static void uart_writel (void *opaque, target_phys_addr_t addr, uint32_t value) 
     }
     uart_update_irq(s);
 }
-
-static CPUReadMemoryFunc * const uart_read[] = {
-  &uart_readl,
-  &uart_readl,
-  &uart_readl,
-};
-
-static CPUWriteMemoryFunc * const uart_write[] = {
-  &uart_writel,
-  &uart_writel,
-  &uart_writel,
-};
 
 static void uart_rx(void *opaque, const uint8_t *buf, int size) {
   struct altera_uart *s = opaque;
@@ -154,18 +144,27 @@ static int uart_can_rx(void *opaque) {
 static void uart_event(void *opaque, int event) {
 }
 
+static const MemoryRegionOps uart_ops = {
+    .read = uart_read,
+    .write = uart_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+    .valid = {
+        .min_access_size = 1,
+        .max_access_size = 4
+    }
+};
+
 static int altera_uart_init(SysBusDevice *dev) {
   struct altera_uart *s = FROM_SYSBUS(typeof(*s), dev);
-  int uart_regs;
 
   s->regs[R_STATUS] = STATUS_TMT | STATUS_TRDY; /* Always ready to transmit */
 
   sysbus_init_irq(dev, &s->irq);
 
-  uart_regs = cpu_register_io_memory(uart_read, uart_write, s);
-  sysbus_init_mmio(dev, R_MAX * 4, uart_regs);
+  memory_region_init_io(&s->mmio, &uart_ops, s, "altera,uart", R_MAX * sizeof(uint32_t));
+  sysbus_init_mmio(dev, &s->mmio);
 
-  s->chr = qdev_init_chardev(&dev->qdev);
+  s->chr = qemu_char_get_next_serial();
   if (s->chr) {
     qemu_chr_add_handlers(s->chr, uart_can_rx, uart_rx, uart_event, s);
   }
@@ -173,8 +172,28 @@ static int altera_uart_init(SysBusDevice *dev) {
   return 0;
 }
 
-static void altera_uart_register(void) {
-  sysbus_register_dev("altera,uart", sizeof(struct altera_uart), altera_uart_init);
+static Property altera_uart_properties[] = {
+    DEFINE_PROP_END_OF_LIST(),
+};
+
+static void altera_uart_class_init(ObjectClass *klass, void *data) {
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+
+    k->init = altera_uart_init;
+    dc->props = altera_uart_properties;
 }
 
-device_init(altera_uart_register)
+static TypeInfo altera_uart_info = {
+    .name          = "altera,uart",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(struct altera_uart),
+    .class_init    = altera_uart_class_init,
+};
+
+static void altera_uart_register(void) {
+    type_register_static(&altera_uart_info);
+}
+
+type_init(altera_uart_register)
+

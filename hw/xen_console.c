@@ -28,14 +28,12 @@
 #include <termios.h>
 #include <stdarg.h>
 #include <sys/mman.h>
-#include <xs.h>
-#include <xen/io/console.h>
-#include <xenctrl.h>
 
 #include "hw.h"
-#include "sysemu.h"
 #include "qemu-char.h"
 #include "xen_backend.h"
+
+#include <xen/io/console.h>
 
 struct buffer {
     uint8_t *data;
@@ -71,7 +69,7 @@ static void buffer_append(struct XenConsole *con)
 
     if ((buffer->capacity - buffer->size) < size) {
 	buffer->capacity += (size + 1024);
-	buffer->data = qemu_realloc(buffer->data, buffer->capacity);
+	buffer->data = g_realloc(buffer->data, buffer->capacity);
     }
 
     while (cons != prod)
@@ -90,7 +88,7 @@ static void buffer_append(struct XenConsole *con)
 	uint8_t *maxpos = buffer->data + buffer->max_capacity;
 
 	memmove(maxpos - over, maxpos, over);
-	buffer->data = qemu_realloc(buffer->data, buffer->max_capacity);
+	buffer->data = g_realloc(buffer->data, buffer->max_capacity);
 	buffer->size = buffer->capacity = buffer->max_capacity;
 
 	if (buffer->consumed > buffer->max_capacity - over)
@@ -157,7 +155,7 @@ static void xencons_send(struct XenConsole *con)
 
     size = con->buffer.size - con->buffer.consumed;
     if (con->chr)
-        len = qemu_chr_write(con->chr, con->buffer.data + con->buffer.consumed,
+        len = qemu_chr_fe_write(con->chr, con->buffer.data + con->buffer.consumed,
                              size);
     else
         len = size;
@@ -180,7 +178,9 @@ static void xencons_send(struct XenConsole *con)
 static int con_init(struct XenDevice *xendev)
 {
     struct XenConsole *con = container_of(xendev, struct XenConsole, xendev);
-    char *type, *dom;
+    char *type, *dom, label[32];
+    int ret = 0;
+    const char *output;
 
     /* setup */
     dom = xs_get_domain_path(xenstore, con->xendev.dom);
@@ -190,19 +190,28 @@ static int con_init(struct XenDevice *xendev)
     type = xenstore_read_str(con->console, "type");
     if (!type || strcmp(type, "ioemu") != 0) {
 	xen_be_printf(xendev, 1, "not for me (type=%s)\n", type);
-	return -1;
+        ret = -1;
+        goto out;
     }
 
-    if (!serial_hds[con->xendev.dev])
-	xen_be_printf(xendev, 1, "WARNING: serial line %d not configured\n",
-                      con->xendev.dev);
-    else
-        con->chr = serial_hds[con->xendev.dev];
+    output = xenstore_read_str(con->console, "output");
 
-    return 0;
+    /* no Xen override, use qemu output device */
+    if (output == NULL) {
+        con->chr = serial_hds[con->xendev.dev];
+    } else {
+        snprintf(label, sizeof(label), "xencons%d", con->xendev.dev);
+        con->chr = qemu_chr_new(label, output, NULL);
+    }
+
+    xenstore_store_pv_console_info(con->xendev.dev, con->chr);
+
+out:
+    g_free(type);
+    return ret;
 }
 
-static int con_connect(struct XenDevice *xendev)
+static int con_initialise(struct XenDevice *xendev)
 {
     struct XenConsole *con = container_of(xendev, struct XenConsole, xendev);
     int limit;
@@ -238,6 +247,9 @@ static void con_disconnect(struct XenDevice *xendev)
 {
     struct XenConsole *con = container_of(xendev, struct XenConsole, xendev);
 
+    if (!xendev->dev) {
+        return;
+    }
     if (con->chr)
         qemu_chr_add_handlers(con->chr, NULL, NULL, NULL, NULL);
     xen_be_unbind_evtchn(&con->xendev);
@@ -263,7 +275,7 @@ struct XenDevOps xen_console_ops = {
     .size       = sizeof(struct XenConsole),
     .flags      = DEVOPS_FLAG_IGNORE_STATE,
     .init       = con_init,
-    .connect    = con_connect,
+    .initialise = con_initialise,
     .event      = con_event,
     .disconnect = con_disconnect,
 };

@@ -23,13 +23,34 @@
  * Find a nice value for msize
  * XXX if_maxlinkhdr already in mtu
  */
-#define SLIRP_MSIZE (IF_MTU + IF_MAXLINKHDR + sizeof(struct m_hdr ) + 6)
+#define SLIRP_MSIZE (IF_MTU + IF_MAXLINKHDR + offsetof(struct mbuf, m_dat) + 6)
 
 void
 m_init(Slirp *slirp)
 {
     slirp->m_freelist.m_next = slirp->m_freelist.m_prev = &slirp->m_freelist;
     slirp->m_usedlist.m_next = slirp->m_usedlist.m_prev = &slirp->m_usedlist;
+}
+
+void m_cleanup(Slirp *slirp)
+{
+    struct mbuf *m, *next;
+
+    m = slirp->m_usedlist.m_next;
+    while (m != &slirp->m_usedlist) {
+        next = m->m_next;
+        if (m->m_flags & M_EXT) {
+            free(m->m_ext);
+        }
+        free(m);
+        m = next;
+    }
+    m = slirp->m_freelist.m_next;
+    while (m != &slirp->m_freelist) {
+        next = m->m_next;
+        free(m);
+        m = next;
+    }
 }
 
 /*
@@ -65,11 +86,13 @@ m_get(Slirp *slirp)
 	m->m_flags = (flags | M_USEDLIST);
 
 	/* Initialise it */
-	m->m_size = SLIRP_MSIZE - sizeof(struct m_hdr);
+	m->m_size = SLIRP_MSIZE - offsetof(struct mbuf, m_dat);
 	m->m_data = m->m_dat;
 	m->m_len = 0;
         m->m_nextpkt = NULL;
         m->m_prevpkt = NULL;
+        m->arp_requested = false;
+        m->expiration_date = (uint64_t)-1;
 end_error:
 	DEBUG_ARG("m = %lx", (long )m);
 	return m;

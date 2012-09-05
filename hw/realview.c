@@ -4,7 +4,7 @@
  * Copyright (c) 2006-2007 CodeSourcery.
  * Written by Paul Brook
  *
- * This code is licenced under the GPL.
+ * This code is licensed under the GPL.
  */
 
 #include "sysbus.h"
@@ -12,107 +12,22 @@
 #include "primecell.h"
 #include "devices.h"
 #include "pci.h"
-#include "usb-ohci.h"
 #include "net.h"
 #include "sysemu.h"
 #include "boards.h"
-#include "bitbang_i2c.h"
-#include "sysbus.h"
+#include "i2c.h"
 #include "blockdev.h"
+#include "exec-memory.h"
 
 #define SMP_BOOT_ADDR 0xe0000000
-
-typedef struct {
-    SysBusDevice busdev;
-    bitbang_i2c_interface *bitbang;
-    int out;
-    int in;
-} RealViewI2CState;
-
-static uint32_t realview_i2c_read(void *opaque, target_phys_addr_t offset)
-{
-    RealViewI2CState *s = (RealViewI2CState *)opaque;
-
-    if (offset == 0) {
-        return (s->out & 1) | (s->in << 1);
-    } else {
-        hw_error("realview_i2c_read: Bad offset 0x%x\n", (int)offset);
-        return -1;
-    }
-}
-
-static void realview_i2c_write(void *opaque, target_phys_addr_t offset,
-                               uint32_t value)
-{
-    RealViewI2CState *s = (RealViewI2CState *)opaque;
-
-    switch (offset) {
-    case 0:
-        s->out |= value & 3;
-        break;
-    case 4:
-        s->out &= ~value;
-        break;
-    default:
-        hw_error("realview_i2c_write: Bad offset 0x%x\n", (int)offset);
-    }
-    bitbang_i2c_set(s->bitbang, BITBANG_I2C_SCL, (s->out & 1) != 0);
-    s->in = bitbang_i2c_set(s->bitbang, BITBANG_I2C_SDA, (s->out & 2) != 0);
-}
-
-static CPUReadMemoryFunc * const realview_i2c_readfn[] = {
-   realview_i2c_read,
-   realview_i2c_read,
-   realview_i2c_read
-};
-
-static CPUWriteMemoryFunc * const realview_i2c_writefn[] = {
-   realview_i2c_write,
-   realview_i2c_write,
-   realview_i2c_write
-};
-
-static int realview_i2c_init(SysBusDevice *dev)
-{
-    RealViewI2CState *s = FROM_SYSBUS(RealViewI2CState, dev);
-    i2c_bus *bus;
-    int iomemtype;
-
-    bus = i2c_init_bus(&dev->qdev, "i2c");
-    s->bitbang = bitbang_i2c_init(bus);
-    iomemtype = cpu_register_io_memory(realview_i2c_readfn,
-                                       realview_i2c_writefn, s);
-    sysbus_init_mmio(dev, 0x1000, iomemtype);
-    return 0;
-}
-
-static SysBusDeviceInfo realview_i2c_info = {
-    .init = realview_i2c_init,
-    .qdev.name  = "realview_i2c",
-    .qdev.size  = sizeof(RealViewI2CState),
-};
-
-static void realview_register_devices(void)
-{
-    sysbus_register_withprop(&realview_i2c_info);
-}
+#define SMP_BOOTREG_ADDR 0x10000030
 
 /* Board init.  */
 
 static struct arm_boot_info realview_binfo = {
     .smp_loader_start = SMP_BOOT_ADDR,
+    .smp_bootreg_addr = SMP_BOOTREG_ADDR,
 };
-
-static void secondary_cpu_reset(void *opaque)
-{
-  CPUState *env = opaque;
-
-  cpu_reset(env);
-  /* Set entry point for secondary CPUs.  This assumes we're using
-     the init code from arm_boot.c.  Real hardware resets all CPUs
-     the same.  */
-  env->regs[15] = SMP_BOOT_ADDR;
-}
 
 /* The following two lists must be consistent.  */
 enum realview_board_type {
@@ -135,12 +50,18 @@ static void realview_init(ram_addr_t ram_size,
                      const char *initrd_filename, const char *cpu_model,
                      enum realview_board_type board_type)
 {
-    CPUState *env = NULL;
-    ram_addr_t ram_offset;
-    DeviceState *dev;
+    ARMCPU *cpu = NULL;
+    CPUARMState *env;
+    MemoryRegion *sysmem = get_system_memory();
+    MemoryRegion *ram_lo = g_new(MemoryRegion, 1);
+    MemoryRegion *ram_hi = g_new(MemoryRegion, 1);
+    MemoryRegion *ram_alias = g_new(MemoryRegion, 1);
+    MemoryRegion *ram_hack = g_new(MemoryRegion, 1);
+    DeviceState *dev, *sysctl, *gpio2, *pl041;
     SysBusDevice *busdev;
     qemu_irq *irqp;
     qemu_irq pic[64];
+    qemu_irq mmc_irq[2];
     PCIBus *pci_bus;
     NICInfo *nd;
     i2c_bus *i2c;
@@ -168,17 +89,15 @@ static void realview_init(ram_addr_t ram_size,
         break;
     }
     for (n = 0; n < smp_cpus; n++) {
-        env = cpu_init(cpu_model);
-        if (!env) {
+        cpu = cpu_arm_init(cpu_model);
+        if (!cpu) {
             fprintf(stderr, "Unable to find CPU definition\n");
             exit(1);
         }
-        irqp = arm_pic_init_cpu(env);
+        irqp = arm_pic_init_cpu(cpu);
         cpu_irq[n] = irqp[ARM_PIC_CPU_IRQ];
-        if (n > 0) {
-            qemu_register_reset(secondary_cpu_reset, env);
-        }
     }
+    env = &cpu->env;
     if (arm_feature(env, ARM_FEATURE_V7)) {
         if (is_mpcore) {
             proc_id = 0x0c000000;
@@ -197,42 +116,52 @@ static void realview_init(ram_addr_t ram_size,
         /* Core tile RAM.  */
         low_ram_size = ram_size - 0x20000000;
         ram_size = 0x20000000;
-        ram_offset = qemu_ram_alloc(NULL, "realview.lowmem", low_ram_size);
-        cpu_register_physical_memory(0x20000000, low_ram_size,
-                                     ram_offset | IO_MEM_RAM);
+        memory_region_init_ram(ram_lo, "realview.lowmem", low_ram_size);
+        vmstate_register_ram_global(ram_lo);
+        memory_region_add_subregion(sysmem, 0x20000000, ram_lo);
     }
 
-    ram_offset = qemu_ram_alloc(NULL, "realview.highmem", ram_size);
+    memory_region_init_ram(ram_hi, "realview.highmem", ram_size);
+    vmstate_register_ram_global(ram_hi);
     low_ram_size = ram_size;
     if (low_ram_size > 0x10000000)
       low_ram_size = 0x10000000;
     /* SDRAM at address zero.  */
-    cpu_register_physical_memory(0, low_ram_size, ram_offset | IO_MEM_RAM);
+    memory_region_init_alias(ram_alias, "realview.alias",
+                             ram_hi, 0, low_ram_size);
+    memory_region_add_subregion(sysmem, 0, ram_alias);
     if (is_pb) {
         /* And again at a high address.  */
-        cpu_register_physical_memory(0x70000000, ram_size,
-                                     ram_offset | IO_MEM_RAM);
+        memory_region_add_subregion(sysmem, 0x70000000, ram_hi);
     } else {
         ram_size = low_ram_size;
     }
 
     sys_id = is_pb ? 0x01780500 : 0xc1400400;
-    arm_sysctl_init(0x10000000, sys_id, proc_id);
+    sysctl = qdev_create(NULL, "realview_sysctl");
+    qdev_prop_set_uint32(sysctl, "sys_id", sys_id);
+    qdev_prop_set_uint32(sysctl, "proc_id", proc_id);
+    qdev_init_nofail(sysctl);
+    sysbus_mmio_map(sysbus_from_qdev(sysctl), 0, 0x10000000);
 
     if (is_mpcore) {
+        target_phys_addr_t periphbase;
         dev = qdev_create(NULL, is_pb ? "a9mpcore_priv": "realview_mpcore");
         qdev_prop_set_uint32(dev, "num-cpu", smp_cpus);
         qdev_init_nofail(dev);
         busdev = sysbus_from_qdev(dev);
         if (is_pb) {
-            realview_binfo.smp_priv_base = 0x1f000000;
+            periphbase = 0x1f000000;
         } else {
-            realview_binfo.smp_priv_base = 0x10100000;
+            periphbase = 0x10100000;
         }
-        sysbus_mmio_map(busdev, 0, realview_binfo.smp_priv_base);
+        sysbus_mmio_map(busdev, 0, periphbase);
         for (n = 0; n < smp_cpus; n++) {
             sysbus_connect_irq(busdev, n, cpu_irq[n]);
         }
+        sysbus_create_varargs("l2x0", periphbase + 0x2000, NULL);
+        /* Both A9 and 11MPCore put the GIC CPU i/f at base + 0x100 */
+        realview_binfo.gic_cpu_if_addr = periphbase + 0x100;
     } else {
         uint32_t gic_addr = is_pb ? 0x1e000000 : 0x10040000;
         /* For now just create the nIRQ GIC, and ignore the others.  */
@@ -241,6 +170,12 @@ static void realview_init(ram_addr_t ram_size,
     for (n = 0; n < 64; n++) {
         pic[n] = qdev_get_gpio_in(dev, n);
     }
+
+    pl041 = qdev_create(NULL, "pl041");
+    qdev_prop_set_uint32(pl041, "nc_fifo_depth", 512);
+    qdev_init_nofail(pl041);
+    sysbus_mmio_map(sysbus_from_qdev(pl041), 0, 0x10004000);
+    sysbus_connect_irq(sysbus_from_qdev(pl041), 0, pic[19]);
 
     sysbus_create_simple("pl050_keyboard", 0x10006000, pic[20]);
     sysbus_create_simple("pl050_mouse", 0x10007000, pic[21]);
@@ -256,18 +191,44 @@ static void realview_init(ram_addr_t ram_size,
     sysbus_create_simple("sp804", 0x10011000, pic[4]);
     sysbus_create_simple("sp804", 0x10012000, pic[5]);
 
-    sysbus_create_simple("pl110_versatile", 0x10020000, pic[23]);
+    sysbus_create_simple("pl061", 0x10013000, pic[6]);
+    sysbus_create_simple("pl061", 0x10014000, pic[7]);
+    gpio2 = sysbus_create_simple("pl061", 0x10015000, pic[8]);
 
-    sysbus_create_varargs("pl181", 0x10005000, pic[17], pic[18], NULL);
+    sysbus_create_simple("pl111", 0x10020000, pic[23]);
+
+    dev = sysbus_create_varargs("pl181", 0x10005000, pic[17], pic[18], NULL);
+    /* Wire up MMC card detect and read-only signals. These have
+     * to go to both the PL061 GPIO and the sysctl register.
+     * Note that the PL181 orders these lines (readonly,inserted)
+     * and the PL061 has them the other way about. Also the card
+     * detect line is inverted.
+     */
+    mmc_irq[0] = qemu_irq_split(
+        qdev_get_gpio_in(sysctl, ARM_SYSCTL_GPIO_MMC_WPROT),
+        qdev_get_gpio_in(gpio2, 1));
+    mmc_irq[1] = qemu_irq_split(
+        qdev_get_gpio_in(sysctl, ARM_SYSCTL_GPIO_MMC_CARDIN),
+        qemu_irq_invert(qdev_get_gpio_in(gpio2, 0)));
+    qdev_connect_gpio_out(dev, 0, mmc_irq[0]);
+    qdev_connect_gpio_out(dev, 1, mmc_irq[1]);
 
     sysbus_create_simple("pl031", 0x10017000, pic[10]);
 
     if (!is_pb) {
-        dev = sysbus_create_varargs("realview_pci", 0x60000000,
-                                    pic[48], pic[49], pic[50], pic[51], NULL);
+        dev = qdev_create(NULL, "realview_pci");
+        busdev = sysbus_from_qdev(dev);
+        qdev_init_nofail(dev);
+        sysbus_mmio_map(busdev, 0, 0x61000000); /* PCI self-config */
+        sysbus_mmio_map(busdev, 1, 0x62000000); /* PCI config */
+        sysbus_mmio_map(busdev, 2, 0x63000000); /* PCI I/O */
+        sysbus_connect_irq(busdev, 0, pic[48]);
+        sysbus_connect_irq(busdev, 1, pic[49]);
+        sysbus_connect_irq(busdev, 2, pic[50]);
+        sysbus_connect_irq(busdev, 3, pic[51]);
         pci_bus = (PCIBus *)qdev_get_child_bus(dev, "pci");
         if (usb_enabled) {
-            usb_ohci_init_pci(pci_bus, -1);
+            pci_create_simple(pci_bus, -1, "pci-ohci");
         }
         n = drive_get_max_bus(IF_SCSI);
         while (n >= 0) {
@@ -278,8 +239,8 @@ static void realview_init(ram_addr_t ram_size,
     for(n = 0; n < nb_nics; n++) {
         nd = &nd_table[n];
 
-        if ((!nd->model && !done_nic)
-            || strcmp(nd->model, is_pb ? "lan9118" : "smc91c111") == 0) {
+        if (!done_nic && (!nd->model ||
+                    strcmp(nd->model, is_pb ? "lan9118" : "smc91c111") == 0)) {
             if (is_pb) {
                 lan9118_init(nd, 0x4e000000, pic[28]);
             } else {
@@ -291,7 +252,7 @@ static void realview_init(ram_addr_t ram_size,
         }
     }
 
-    dev = sysbus_create_simple("realview_i2c", 0x10002000, NULL);
+    dev = sysbus_create_simple("versatile_i2c", 0x10002000, NULL);
     i2c = (i2c_bus *)qdev_get_child_bus(dev, "i2c");
     i2c_create_slave(i2c, "ds1338", 0x68);
 
@@ -355,9 +316,9 @@ static void realview_init(ram_addr_t ram_size,
        startup code.  I guess this works on real hardware because the
        BootROM happens to be in ROM/flash or in memory that isn't clobbered
        until after Linux boots the secondary CPUs.  */
-    ram_offset = qemu_ram_alloc(NULL, "realview.hack", 0x1000);
-    cpu_register_physical_memory(SMP_BOOT_ADDR, 0x1000,
-                                 ram_offset | IO_MEM_RAM);
+    memory_region_init_ram(ram_hack, "realview.hack", 0x1000);
+    vmstate_register_ram_global(ram_hack);
+    memory_region_add_subregion(sysmem, SMP_BOOT_ADDR, ram_hack);
 
     realview_binfo.ram_size = ram_size;
     realview_binfo.kernel_filename = kernel_filename;
@@ -366,7 +327,7 @@ static void realview_init(ram_addr_t ram_size,
     realview_binfo.nb_cpus = smp_cpus;
     realview_binfo.board_id = realview_board_id[board_type];
     realview_binfo.loader_start = (board_type == BOARD_PB_A8 ? 0x70000000 : 0);
-    arm_load_kernel(first_cpu, &realview_binfo);
+    arm_load_kernel(arm_env_get_cpu(first_cpu), &realview_binfo);
 }
 
 static void realview_eb_init(ram_addr_t ram_size,
@@ -455,4 +416,3 @@ static void realview_machine_init(void)
 }
 
 machine_init(realview_machine_init);
-device_init(realview_register_devices)

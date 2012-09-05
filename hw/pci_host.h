@@ -29,27 +29,34 @@
 #define PCI_HOST_H
 
 #include "sysbus.h"
-#include "rwhandler.h"
+
+#define TYPE_PCI_HOST_BRIDGE "pci-host-bridge"
+#define PCI_HOST_BRIDGE(obj) \
+    OBJECT_CHECK(PCIHostState, (obj), TYPE_PCI_HOST_BRIDGE)
 
 struct PCIHostState {
     SysBusDevice busdev;
-    ReadWriteHandler conf_noswap_handler;
-    ReadWriteHandler conf_handler;
-    ReadWriteHandler data_noswap_handler;
-    ReadWriteHandler data_handler;
+
+    MemoryRegion conf_mem;
+    MemoryRegion data_mem;
+    MemoryRegion mmcfg;
+    MemoryRegion *address_space;
     uint32_t config_reg;
     PCIBus *bus;
 };
 
+/* common internal helpers for PCI/PCIe hosts, cut off overflows */
+void pci_host_config_write_common(PCIDevice *pci_dev, uint32_t addr,
+                                  uint32_t limit, uint32_t val, uint32_t len);
+uint32_t pci_host_config_read_common(PCIDevice *pci_dev, uint32_t addr,
+                                     uint32_t limit, uint32_t len);
+
 void pci_data_write(PCIBus *s, uint32_t addr, uint32_t val, int len);
 uint32_t pci_data_read(PCIBus *s, uint32_t addr, int len);
 
-/* for mmio */
-int pci_host_conf_register_mmio(PCIHostState *s, int swap);
-int pci_host_data_register_mmio(PCIHostState *s, int swap);
-
-/* for ioio */
-void pci_host_conf_register_ioport(pio_addr_t ioport, PCIHostState *s);
-void pci_host_data_register_ioport(pio_addr_t ioport, PCIHostState *s);
+extern const MemoryRegionOps pci_host_conf_le_ops;
+extern const MemoryRegionOps pci_host_conf_be_ops;
+extern const MemoryRegionOps pci_host_data_le_ops;
+extern const MemoryRegionOps pci_host_data_be_ops;
 
 #endif /* PCI_HOST_H */

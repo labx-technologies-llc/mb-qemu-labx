@@ -176,8 +176,6 @@ int loader_exec(const char * filename, char ** argv, char ** envp,
 
     retval = prepare_binprm(&bprm);
 
-    infop->host_argv = argv;
-
     if(retval>=0) {
         if (bprm.buf[0] == 0x7f
                 && bprm.buf[1] == 'E'
@@ -198,7 +196,7 @@ int loader_exec(const char * filename, char ** argv, char ** envp,
 
     /* Something went wrong, return the inode and free the argument pages*/
     for (i=0 ; i<MAX_ARG_PAGES ; i++) {
-        free(bprm.page[i]);
+        g_free(bprm.page[i]);
     }
     return(retval);
 }

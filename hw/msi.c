@@ -36,6 +36,9 @@
 
 #define PCI_MSI_VECTORS_MAX     32
 
+/* Flag for interrupt controller to declare MSI/MSI-X support */
+bool msi_supported;
+
 /* If we get rid of cap allocator, we won't need this. */
 static inline uint8_t msi_cap_sizeof(uint16_t flags)
 {
@@ -102,6 +105,23 @@ static inline uint8_t msi_pending_off(const PCIDevice* dev, bool msi64bit)
     return dev->msi_cap + (msi64bit ? PCI_MSI_PENDING_64 : PCI_MSI_PENDING_32);
 }
 
+/*
+ * Special API for POWER to configure the vectors through
+ * a side channel. Should never be used by devices.
+ */
+void msi_set_message(PCIDevice *dev, MSIMessage msg)
+{
+    uint16_t flags = pci_get_word(dev->config + msi_flags_off(dev));
+    bool msi64bit = flags & PCI_MSI_FLAGS_64BIT;
+
+    if (msi64bit) {
+        pci_set_quad(dev->config + msi_address_lo_off(dev), msg.address);
+    } else {
+        pci_set_long(dev->config + msi_address_lo_off(dev), msg.address);
+    }
+    pci_set_word(dev->config + msi_data_off(dev, msi64bit), msg.data);
+}
+
 bool msi_enabled(const PCIDevice *dev)
 {
     return msi_present(dev) &&
@@ -116,6 +136,11 @@ int msi_init(struct PCIDevice *dev, uint8_t offset,
     uint16_t flags;
     uint8_t cap_size;
     int config_offset;
+
+    if (!msi_supported) {
+        return -ENOTSUP;
+    }
+
     MSI_DEV_PRINTF(dev,
                    "init offset: 0x%"PRIx8" vector: %"PRId8
                    " 64bit %d mask %d\n",
@@ -155,7 +180,7 @@ int msi_init(struct PCIDevice *dev, uint8_t offset,
     pci_set_word(dev->wmask + msi_data_off(dev, msi64bit), 0xffff);
 
     if (msi_per_vector_mask) {
-        /* Make mask bits 0 to nr_vectors - 1 writeable. */
+        /* Make mask bits 0 to nr_vectors - 1 writable. */
         pci_set_long(dev->wmask + msi_mask_off(dev, msi64bit),
                      0xffffffff >> (PCI_MSI_VECTORS_MAX - nr_vectors));
     }
@@ -164,9 +189,17 @@ int msi_init(struct PCIDevice *dev, uint8_t offset,
 
 void msi_uninit(struct PCIDevice *dev)
 {
-    uint16_t flags = pci_get_word(dev->config + msi_flags_off(dev));
-    uint8_t cap_size = msi_cap_sizeof(flags);
-    pci_del_capability(dev, PCI_CAP_ID_MSIX, cap_size);
+    uint16_t flags;
+    uint8_t cap_size;
+
+    if (!msi_present(dev)) {
+        return;
+    }
+    flags = pci_get_word(dev->config + msi_flags_off(dev));
+    cap_size = msi_cap_sizeof(flags);
+    pci_del_capability(dev, PCI_CAP_ID_MSI, cap_size);
+    dev->cap_present &= ~QEMU_PCI_CAP_MSI;
+
     MSI_DEV_PRINTF(dev, "uninit\n");
 }
 
@@ -174,6 +207,10 @@ void msi_reset(PCIDevice *dev)
 {
     uint16_t flags;
     bool msi64bit;
+
+    if (!msi_present(dev)) {
+        return;
+    }
 
     flags = pci_get_word(dev->config + msi_flags_off(dev));
     flags &= ~(PCI_MSI_FLAGS_QSIZE | PCI_MSI_FLAGS_ENABLE);
@@ -241,10 +278,10 @@ void msi_notify(PCIDevice *dev, unsigned int vector)
                    "notify vector 0x%x"
                    " address: 0x%"PRIx64" data: 0x%"PRIx32"\n",
                    vector, address, data);
-    stl_phys(address, data);
+    stl_le_phys(address, data);
 }
 
-/* call this function after updating configs by pci_default_write_config(). */
+/* Normally called by pci_default_write_config(). */
 void msi_write_config(PCIDevice *dev, uint32_t addr, uint32_t val, int len)
 {
     uint16_t flags = pci_get_word(dev->config + msi_flags_off(dev));
@@ -255,9 +292,9 @@ void msi_write_config(PCIDevice *dev, uint32_t addr, uint32_t val, int len)
     uint8_t log_max_vecs;
     unsigned int vector;
     uint32_t pending;
-    int i;
 
-    if (!ranges_overlap(addr, len, dev->msi_cap, msi_cap_sizeof(flags))) {
+    if (!msi_present(dev) ||
+        !ranges_overlap(addr, len, dev->msi_cap, msi_cap_sizeof(flags))) {
         return;
     }
 
@@ -296,9 +333,7 @@ void msi_write_config(PCIDevice *dev, uint32_t addr, uint32_t val, int len)
      *   from using its INTx# pin (if implemented) to request
      *   service (MSI, MSI-X, and INTx# are mutually exclusive).
      */
-    for (i = 0; i < PCI_NUM_PINS; ++i) {
-        qemu_set_irq(dev->irq[i], 0);
-    }
+    pci_device_deassert_intx(dev);
 
     /*
      * nr_vectors might be set bigger than capable. So clamp it.

@@ -24,6 +24,7 @@
 #include "sysbus.h"
 #include "sysemu.h"
 #include "qemu-timer.h"
+#include "ptimer.h"
 
 #define D(x)
 
@@ -43,6 +44,7 @@
 
 struct etrax_timer {
     SysBusDevice busdev;
+    MemoryRegion mmio;
     qemu_irq irq;
     qemu_irq nmi;
 
@@ -72,7 +74,8 @@ struct etrax_timer {
     uint32_t r_masked_intr;
 };
 
-static uint32_t timer_readl (void *opaque, target_phys_addr_t addr)
+static uint64_t
+timer_read(void *opaque, target_phys_addr_t addr, unsigned int size)
 {
     struct etrax_timer *t = opaque;
     uint32_t r = 0;
@@ -85,7 +88,7 @@ static uint32_t timer_readl (void *opaque, target_phys_addr_t addr)
         r = ptimer_get_count(t->ptimer_t1);
         break;
     case R_TIME:
-        r = qemu_get_clock(vm_clock) / 10;
+        r = qemu_get_clock_ns(vm_clock) / 10;
         break;
     case RW_INTR_MASK:
         r = t->rw_intr_mask;
@@ -100,7 +103,6 @@ static uint32_t timer_readl (void *opaque, target_phys_addr_t addr)
     return r;
 }
 
-#define TIMER_SLOWDOWN 1
 static void update_ctrl(struct etrax_timer *t, int tnum)
 {
     unsigned int op;
@@ -142,9 +144,6 @@ static void update_ctrl(struct etrax_timer *t, int tnum)
     }
 
     D(printf ("freq_hz=%d div=%d\n", freq_hz, div));
-    div = div * TIMER_SLOWDOWN;
-    div /= 1000;
-    freq_hz /= 1000;
     ptimer_set_freq(timer, freq_hz);
     ptimer_set_limit(timer, div, 0);
 
@@ -243,9 +242,11 @@ static inline void timer_watchdog_update(struct etrax_timer *t, uint32_t value)
 }
 
 static void
-timer_writel (void *opaque, target_phys_addr_t addr, uint32_t value)
+timer_write(void *opaque, target_phys_addr_t addr,
+            uint64_t val64, unsigned int size)
 {
     struct etrax_timer *t = opaque;
+    uint32_t value = val64;
 
     switch (addr)
     {
@@ -285,14 +286,14 @@ timer_writel (void *opaque, target_phys_addr_t addr, uint32_t value)
     }
 }
 
-static CPUReadMemoryFunc * const timer_read[] = {
-    NULL, NULL,
-    &timer_readl,
-};
-
-static CPUWriteMemoryFunc * const timer_write[] = {
-    NULL, NULL,
-    &timer_writel,
+static const MemoryRegionOps timer_ops = {
+    .read = timer_read,
+    .write = timer_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .valid = {
+        .min_access_size = 4,
+        .max_access_size = 4
+    }
 };
 
 static void etraxfs_timer_reset(void *opaque)
@@ -311,7 +312,6 @@ static void etraxfs_timer_reset(void *opaque)
 static int etraxfs_timer_init(SysBusDevice *dev)
 {
     struct etrax_timer *t = FROM_SYSBUS(typeof (*t), dev);
-    int timer_regs;
 
     t->bh_t0 = qemu_bh_new(timer0_hit, t);
     t->bh_t1 = qemu_bh_new(timer1_hit, t);
@@ -323,17 +323,29 @@ static int etraxfs_timer_init(SysBusDevice *dev)
     sysbus_init_irq(dev, &t->irq);
     sysbus_init_irq(dev, &t->nmi);
 
-    timer_regs = cpu_register_io_memory(timer_read, timer_write, t);
-    sysbus_init_mmio(dev, 0x5c, timer_regs);
-
+    memory_region_init_io(&t->mmio, &timer_ops, t, "etraxfs-timer", 0x5c);
+    sysbus_init_mmio(dev, &t->mmio);
     qemu_register_reset(etraxfs_timer_reset, t);
     return 0;
 }
 
-static void etraxfs_timer_register(void)
+static void etraxfs_timer_class_init(ObjectClass *klass, void *data)
 {
-    sysbus_register_dev("etraxfs,timer", sizeof (struct etrax_timer),
-                        etraxfs_timer_init);
+    SysBusDeviceClass *sdc = SYS_BUS_DEVICE_CLASS(klass);
+
+    sdc->init = etraxfs_timer_init;
 }
 
-device_init(etraxfs_timer_register)
+static TypeInfo etraxfs_timer_info = {
+    .name          = "etraxfs,timer",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof (struct etrax_timer),
+    .class_init    = etraxfs_timer_class_init,
+};
+
+static void etraxfs_timer_register_types(void)
+{
+    type_register_static(&etraxfs_timer_info);
+}
+
+type_init(etraxfs_timer_register_types)

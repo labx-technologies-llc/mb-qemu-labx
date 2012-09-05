@@ -61,6 +61,22 @@ static void illegal_instruction(DisasContext *dc, uint32_t code __attribute__((u
   t_gen_helper_raise_exception(dc, EXCP_ILLEGAL);
 }
 
+static void gen_check_supervisor(DisasContext *dc, int label) {
+  int l1 = gen_new_label();
+
+  TCGv_i32 tmp = tcg_temp_new();
+  tcg_gen_andi_tl(tmp, dc->cpu_R[CR_STATUS], CR_STATUS_U);
+  tcg_gen_brcond_tl(TCG_COND_EQ, dc->cpu_R[R_ZERO], tmp, l1);
+  t_gen_helper_raise_exception(dc, EXCP_SUPERI);
+  tcg_gen_br(label);
+
+  gen_set_label(l1);
+  tcg_temp_free_i32(tmp);
+
+  // If we aren't taking the exception, update the PC to the next instruction
+  tcg_gen_movi_tl(dc->cpu_R[R_PC], dc->pc+4);
+}
+
 static inline void gen_load_u(DisasContext *dc, TCGv dst, TCGv addr,
                               unsigned int size) {
   int mem_index = cpu_mmu_index(dc->env);
@@ -139,6 +155,14 @@ static void nop(DisasContext *dc __attribute__((unused)), uint32_t code __attrib
  */
 static void call(DisasContext *dc, uint32_t code) {
   J_TYPE(instr, code);
+
+#ifdef CALL_TRACING
+  TCGv_i32 tmp = tcg_const_i32(dc->pc);
+  TCGv_i32 tmp2 = tcg_const_i32((dc->pc & 0xF0000000) | (instr->imm26 * 4));
+  gen_helper_call_status(tmp, tmp2);
+  tcg_temp_free_i32(tmp);
+  tcg_temp_free_i32(tmp2);
+#endif
 
   tcg_gen_movi_tl(dc->cpu_R[R_RA], dc->pc + 4);
   tcg_gen_movi_tl(dc->cpu_R[R_PC], (dc->pc & 0xF0000000) | (instr->imm26 * 4));
@@ -714,6 +738,12 @@ static struct instruction i_type_instructions[I_TYPE_COUNT] = {
  * PC <- ea
  */
 static void eret(DisasContext *dc, uint32_t code __attribute__((unused))) {
+#ifdef CALL_TRACING
+  TCGv_i32 tmp = tcg_const_i32(dc->pc);
+  gen_helper_eret_status(tmp);
+  tcg_temp_free_i32(tmp);
+#endif
+
   tcg_gen_mov_tl(dc->cpu_R[CR_STATUS], dc->cpu_R[CR_ESTATUS]);
   tcg_gen_mov_tl(dc->cpu_R[R_PC], dc->cpu_R[R_EA]);
 
@@ -758,6 +788,12 @@ static void flushp(DisasContext *dc __attribute__((unused)), uint32_t code __att
 
 /* PC <- ra */
 static void ret(DisasContext *dc, uint32_t code __attribute__((unused))) {
+#ifdef CALL_TRACING
+  TCGv_i32 tmp = tcg_const_i32(dc->pc);
+  gen_helper_ret_status(tmp);
+  tcg_temp_free_i32(tmp);
+#endif
+
   tcg_gen_mov_tl(dc->cpu_R[R_PC], dc->cpu_R[R_RA]);
 
   dc->is_jmp = DISAS_JUMP;
@@ -951,6 +987,12 @@ static void nextpc(DisasContext *dc, uint32_t code) {
 static void callr(DisasContext *dc, uint32_t code) {
   R_TYPE(instr, code);
 
+#ifdef CALL_TRACING
+  TCGv_i32 tmp = tcg_const_i32(dc->pc);
+  gen_helper_call_status(tmp, dc->cpu_R[instr->a]);
+  tcg_temp_free_i32(tmp);
+#endif
+
   tcg_gen_movi_tl(dc->cpu_R[R_RA], dc->pc + 4);
   tcg_gen_mov_tl(dc->cpu_R[R_PC], dc->cpu_R[instr->a]);
 
@@ -1014,23 +1056,26 @@ static void _div(DisasContext *dc, uint32_t code) {
 static void rdctl(DisasContext *dc, uint32_t code) {
   R_TYPE(instr, code);
 
-#if 0 // TODO: Check supervisor mode
-	/* Instruction only allowed in supervisor mode */
-	if (!nios2_in_supervisor_mode(cpu))
-		return EXCEPTION(cpu, NIOS2_EX_SUPERVISOR_ONLY_I);
-#endif
+  int l1 = gen_new_label();
+  gen_check_supervisor(dc, l1);
 
   switch (instr->imm5 + 32) {
     case CR_PTEADDR:
     case CR_TLBACC:
     case CR_TLBMISC:
-      gen_helper_mmu_read(dc->cpu_R[instr->c], tcg_const_tl(instr->imm5 + 32));
+    {
+      TCGv_i32 tmp = tcg_const_i32(instr->imm5 + 32);
+      gen_helper_mmu_read(dc->cpu_R[instr->c], tmp);
+      tcg_temp_free_i32(tmp);
       break;
+    }
 
     default:
       tcg_gen_mov_tl(dc->cpu_R[instr->c], dc->cpu_R[instr->imm5 + 32]);
       break;
   }
+
+  gen_set_label(l1);
 }
 
 /* rC <- (rA * rB))(31..0) */
@@ -1072,23 +1117,26 @@ static void trap(DisasContext *dc, uint32_t code __attribute__((unused))) {
 static void wrctl(DisasContext *dc, uint32_t code) {
   R_TYPE(instr, code);
 
-#if 0 // TODO
-	/* Instruction only allowed in supervisor mode */
-	if (!nios2_in_supervisor_mode(cpu))
-		return EXCEPTION(cpu, NIOS2_EX_SUPERVISOR_ONLY_I);
-#endif
+  int l1 = gen_new_label();
+  gen_check_supervisor(dc, l1);
 
   switch (instr->imm5 + 32) {
     case CR_PTEADDR:
     case CR_TLBACC:
     case CR_TLBMISC:
-      gen_helper_mmu_write(tcg_const_tl(instr->imm5 + 32), dc->cpu_R[instr->a]);
+    {
+      TCGv_i32 tmp = tcg_const_i32(instr->imm5 + 32);
+      gen_helper_mmu_write(tmp, dc->cpu_R[instr->a]);
+      tcg_temp_free_i32(tmp);
       break;
+    }
 
     default:
       tcg_gen_mov_tl(dc->cpu_R[instr->imm5 + 32], dc->cpu_R[instr->a]);
       break;
   }
+
+  gen_set_label(l1);
 }
 
 /*

@@ -3,13 +3,14 @@
  *
  * Copyright (c) 2007 CodeSourcery.
  *
- * This code is licenced under the GPL
+ * This code is licensed under the GPL
  */
 #include "hw.h"
 #include "net.h"
 #include "mcf.h"
 /* For crc32 */
 #include <zlib.h>
+#include "exec-memory.h"
 
 //#define DEBUG_FEC 1
 
@@ -23,8 +24,9 @@ do { printf("mcf_fec: " fmt , ## __VA_ARGS__); } while (0)
 #define FEC_MAX_FRAME_SIZE 2032
 
 typedef struct {
+    MemoryRegion *sysmem;
+    MemoryRegion iomem;
     qemu_irq *irq;
-    int mmio_index;
     NICState *nic;
     NICConf conf;
     uint32_t irq_state;
@@ -214,7 +216,8 @@ static void mcf_fec_reset(mcf_fec_state *s)
     s->rfsr = 0x500;
 }
 
-static uint32_t mcf_fec_read(void *opaque, target_phys_addr_t addr)
+static uint64_t mcf_fec_read(void *opaque, target_phys_addr_t addr,
+                             unsigned size)
 {
     mcf_fec_state *s = (mcf_fec_state *)opaque;
     switch (addr & 0x3ff) {
@@ -251,7 +254,8 @@ static uint32_t mcf_fec_read(void *opaque, target_phys_addr_t addr)
     }
 }
 
-static void mcf_fec_write(void *opaque, target_phys_addr_t addr, uint32_t value)
+static void mcf_fec_write(void *opaque, target_phys_addr_t addr,
+                          uint64_t value, unsigned size)
 {
     mcf_fec_state *s = (mcf_fec_state *)opaque;
     switch (addr & 0x3ff) {
@@ -347,13 +351,13 @@ static void mcf_fec_write(void *opaque, target_phys_addr_t addr, uint32_t value)
     mcf_fec_update(s);
 }
 
-static int mcf_fec_can_receive(VLANClientState *nc)
+static int mcf_fec_can_receive(NetClientState *nc)
 {
     mcf_fec_state *s = DO_UPCAST(NICState, nc, nc)->opaque;
     return s->rx_enabled;
 }
 
-static ssize_t mcf_fec_receive(VLANClientState *nc, const uint8_t *buf, size_t size)
+static ssize_t mcf_fec_receive(NetClientState *nc, const uint8_t *buf, size_t size)
 {
     mcf_fec_state *s = DO_UPCAST(NICState, nc, nc)->opaque;
     mcf_fec_bd bd;
@@ -429,49 +433,45 @@ static ssize_t mcf_fec_receive(VLANClientState *nc, const uint8_t *buf, size_t s
     return size;
 }
 
-static CPUReadMemoryFunc * const mcf_fec_readfn[] = {
-   mcf_fec_read,
-   mcf_fec_read,
-   mcf_fec_read
+static const MemoryRegionOps mcf_fec_ops = {
+    .read = mcf_fec_read,
+    .write = mcf_fec_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
 };
 
-static CPUWriteMemoryFunc * const mcf_fec_writefn[] = {
-   mcf_fec_write,
-   mcf_fec_write,
-   mcf_fec_write
-};
-
-static void mcf_fec_cleanup(VLANClientState *nc)
+static void mcf_fec_cleanup(NetClientState *nc)
 {
     mcf_fec_state *s = DO_UPCAST(NICState, nc, nc)->opaque;
 
-    cpu_unregister_io_memory(s->mmio_index);
+    memory_region_del_subregion(s->sysmem, &s->iomem);
+    memory_region_destroy(&s->iomem);
 
-    qemu_free(s);
+    g_free(s);
 }
 
 static NetClientInfo net_mcf_fec_info = {
-    .type = NET_CLIENT_TYPE_NIC,
+    .type = NET_CLIENT_OPTIONS_KIND_NIC,
     .size = sizeof(NICState),
     .can_receive = mcf_fec_can_receive,
     .receive = mcf_fec_receive,
     .cleanup = mcf_fec_cleanup,
 };
 
-void mcf_fec_init(NICInfo *nd, target_phys_addr_t base, qemu_irq *irq)
+void mcf_fec_init(MemoryRegion *sysmem, NICInfo *nd,
+                  target_phys_addr_t base, qemu_irq *irq)
 {
     mcf_fec_state *s;
 
     qemu_check_nic_model(nd, "mcf_fec");
 
-    s = (mcf_fec_state *)qemu_mallocz(sizeof(mcf_fec_state));
+    s = (mcf_fec_state *)g_malloc0(sizeof(mcf_fec_state));
+    s->sysmem = sysmem;
     s->irq = irq;
-    s->mmio_index = cpu_register_io_memory(mcf_fec_readfn,
-                                           mcf_fec_writefn, s);
-    cpu_register_physical_memory(base, 0x400, s->mmio_index);
 
-    memcpy(s->conf.macaddr.a, nd->macaddr, sizeof(nd->macaddr));
-    s->conf.vlan = nd->vlan;
+    memory_region_init_io(&s->iomem, &mcf_fec_ops, s, "fec", 0x400);
+    memory_region_add_subregion(sysmem, base, &s->iomem);
+
+    s->conf.macaddr = nd->macaddr;
     s->conf.peer = nd->netdev;
 
     s->nic = qemu_new_nic(&net_mcf_fec_info, &s->conf, nd->model, nd->name, s);

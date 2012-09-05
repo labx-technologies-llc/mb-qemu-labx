@@ -136,7 +136,7 @@ static void alsa_fini_poll (struct pollhlp *hlp)
         for (i = 0; i < hlp->count; ++i) {
             qemu_set_fd_handler (pfds[i].fd, NULL, NULL, NULL);
         }
-        qemu_free (pfds);
+        g_free (pfds);
     }
     hlp->pfds = NULL;
     hlp->count = 0;
@@ -260,7 +260,7 @@ static int alsa_poll_helper (snd_pcm_t *handle, struct pollhlp *hlp, int mask)
     if (err < 0) {
         alsa_logerr (err, "Could not initialize poll mode\n"
                      "Could not obtain poll descriptors\n");
-        qemu_free (pfds);
+        g_free (pfds);
         return -1;
     }
 
@@ -288,7 +288,7 @@ static int alsa_poll_helper (snd_pcm_t *handle, struct pollhlp *hlp, int mask)
             while (i--) {
                 qemu_set_fd_handler (pfds[i].fd, NULL, NULL, NULL);
             }
-            qemu_free (pfds);
+            g_free (pfds);
             return -1;
         }
     }
@@ -318,7 +318,7 @@ static int alsa_write (SWVoiceOut *sw, void *buf, int len)
     return audio_pcm_sw_write (sw, buf, len);
 }
 
-static snd_pcm_format_t aud_to_alsafmt (audfmt_e fmt)
+static snd_pcm_format_t aud_to_alsafmt (audfmt_e fmt, int endianness)
 {
     switch (fmt) {
     case AUD_FMT_S8:
@@ -328,16 +328,36 @@ static snd_pcm_format_t aud_to_alsafmt (audfmt_e fmt)
         return SND_PCM_FORMAT_U8;
 
     case AUD_FMT_S16:
-        return SND_PCM_FORMAT_S16_LE;
+        if (endianness) {
+            return SND_PCM_FORMAT_S16_BE;
+        }
+        else {
+            return SND_PCM_FORMAT_S16_LE;
+        }
 
     case AUD_FMT_U16:
-        return SND_PCM_FORMAT_U16_LE;
+        if (endianness) {
+            return SND_PCM_FORMAT_U16_BE;
+        }
+        else {
+            return SND_PCM_FORMAT_U16_LE;
+        }
 
     case AUD_FMT_S32:
-        return SND_PCM_FORMAT_S32_LE;
+        if (endianness) {
+            return SND_PCM_FORMAT_S32_BE;
+        }
+        else {
+            return SND_PCM_FORMAT_S32_LE;
+        }
 
     case AUD_FMT_U32:
-        return SND_PCM_FORMAT_U32_LE;
+        if (endianness) {
+            return SND_PCM_FORMAT_U32_BE;
+        }
+        else {
+            return SND_PCM_FORMAT_U32_LE;
+        }
 
     default:
         dolog ("Internal logic error: Bad audio format %d\n", fmt);
@@ -796,7 +816,7 @@ static void alsa_fini_out (HWVoiceOut *hw)
     alsa_anal_close (&alsa->handle, &alsa->pollhlp);
 
     if (alsa->pcm_buf) {
-        qemu_free (alsa->pcm_buf);
+        g_free (alsa->pcm_buf);
         alsa->pcm_buf = NULL;
     }
 }
@@ -809,7 +829,7 @@ static int alsa_init_out (HWVoiceOut *hw, struct audsettings *as)
     snd_pcm_t *handle;
     struct audsettings obt_as;
 
-    req.fmt = aud_to_alsafmt (as->fmt);
+    req.fmt = aud_to_alsafmt (as->fmt, as->endianness);
     req.freq = as->freq;
     req.nchannels = as->nchannels;
     req.period_size = conf.period_size_out;
@@ -918,7 +938,7 @@ static int alsa_init_in (HWVoiceIn *hw, struct audsettings *as)
     snd_pcm_t *handle;
     struct audsettings obt_as;
 
-    req.fmt = aud_to_alsafmt (as->fmt);
+    req.fmt = aud_to_alsafmt (as->fmt, as->endianness);
     req.freq = as->freq;
     req.nchannels = as->nchannels;
     req.period_size = conf.period_size_in;
@@ -959,7 +979,7 @@ static void alsa_fini_in (HWVoiceIn *hw)
     alsa_anal_close (&alsa->handle, &alsa->pollhlp);
 
     if (alsa->pcm_buf) {
-        qemu_free (alsa->pcm_buf);
+        g_free (alsa->pcm_buf);
         alsa->pcm_buf = NULL;
     }
 }
@@ -1077,7 +1097,7 @@ static int alsa_run_in (HWVoiceIn *hw)
                 }
             }
 
-            hw->conv (dst, src, nread, &nominal_volume);
+            hw->conv (dst, src, nread);
 
             src = advance (src, nread << hwshift);
             dst += nread;

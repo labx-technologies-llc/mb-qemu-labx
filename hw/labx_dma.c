@@ -34,6 +34,9 @@ struct labx_dma
 {
     SysBusDevice busdev;
 
+    MemoryRegion  mmio_dma;
+    MemoryRegion  mmio_microcode;
+
     /* Device Configuration */
     uint32_t baseAddress;
     uint32_t paramWords;
@@ -51,7 +54,7 @@ struct labx_dma
 /*
  * DMA registers
  */
-static uint32_t dma_regs_readl (void *opaque, target_phys_addr_t addr)
+static uint64_t dma_regs_read(void *opaque, target_phys_addr_t addr, unsigned int size)
 {
     struct labx_dma *p = opaque;
 
@@ -104,9 +107,10 @@ static uint32_t dma_regs_readl (void *opaque, target_phys_addr_t addr)
     return retval;
 }
 
-static void dma_regs_writel (void *opaque, target_phys_addr_t addr, uint32_t value)
+static void dma_regs_write(void *opaque, target_phys_addr_t addr, uint64_t val64, unsigned int size)
 {
     //struct labx_dma *p = opaque;
+    uint32_t value = val64;
 
     if ((addr>>2) & 0x80)
     {
@@ -147,59 +151,57 @@ static void dma_regs_writel (void *opaque, target_phys_addr_t addr, uint32_t val
     }
 }
 
-static CPUReadMemoryFunc * const dma_regs_read[] = {
-    NULL, NULL,
-    &dma_regs_readl,
-};
-
-static CPUWriteMemoryFunc * const dma_regs_write[] = {
-    NULL, NULL,
-    &dma_regs_writel,
+static const MemoryRegionOps dma_regs_ops = {
+    .read = dma_regs_read,
+    .write = dma_regs_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+    .valid = {
+        .min_access_size = 4,
+        .max_access_size = 4
+    }
 };
 
 
 /*
  * Microcode RAM
  */
-static uint32_t microcode_ram_readl (void *opaque, target_phys_addr_t addr)
-{
+static uint64_t microcode_ram_read(void *opaque, target_phys_addr_t addr, unsigned int size) {
     struct labx_dma *p = opaque;
 
     return p->microcodeRam[RAM_INDEX(addr, p->microcodeWords)];
 }
 
-static void microcode_ram_writel (void *opaque, target_phys_addr_t addr, uint32_t value)
-{
+static void microcode_ram_write(void *opaque, target_phys_addr_t addr, uint64_t val64, unsigned int size) {
     struct labx_dma *p = opaque;
+    uint32_t value = val64;
 
     p->microcodeRam[RAM_INDEX(addr, p->microcodeWords)] = value;
 }
 
-static CPUReadMemoryFunc * const microcode_ram_read[] = {
-    NULL, NULL,
-    &microcode_ram_readl,
+static const MemoryRegionOps microcode_ram_ops = {
+    .read = microcode_ram_read,
+    .write = microcode_ram_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+    .valid = {
+        .min_access_size = 4,
+        .max_access_size = 4
+    }
 };
 
-static CPUWriteMemoryFunc * const microcode_ram_write[] = {
-    NULL, NULL,
-    &microcode_ram_writel,
-};
 
 static int labx_dma_init(SysBusDevice *dev)
 {
     struct labx_dma *p = FROM_SYSBUS(typeof (*p), dev);
-    int dma_regs;
-    int microcode_ram;
 
     /* Initialize defaults */
-    p->microcodeRam = qemu_malloc(p->microcodeWords*4);
+    p->microcodeRam = g_malloc0(p->microcodeWords*4);
 
     /* Set up memory regions */
-    dma_regs = cpu_register_io_memory(dma_regs_read, dma_regs_write, p);
-    microcode_ram = cpu_register_io_memory(microcode_ram_read, microcode_ram_write, p);
+    memory_region_init_io(&p->mmio_dma,       &dma_regs_ops,      p, "labx,dma-regs",      0x100 * 4);
+    memory_region_init_io(&p->mmio_microcode, &microcode_ram_ops, p, "labx,dma-microcode", 4 * p->microcodeWords);
 
-    sysbus_init_mmio(dev, 0x100 * 4, dma_regs);
-    sysbus_init_mmio(dev, 4 * p->microcodeWords, microcode_ram);
+    sysbus_init_mmio(dev, &p->mmio_dma);
+    sysbus_init_mmio(dev, &p->mmio_microcode);
 
     sysbus_mmio_map(dev, 0, p->baseAddress);
     sysbus_mmio_map(dev, 1, p->baseAddress + (1 << (min_bits(p->microcodeWords-1)+2)));
@@ -207,25 +209,34 @@ static int labx_dma_init(SysBusDevice *dev)
     return 0;
 }
 
-static SysBusDeviceInfo labx_dma_info = {
-    .init = labx_dma_init,
-    .qdev.name  = "labx,dma",
-    .qdev.size  = sizeof(struct labx_dma),
-    .qdev.props = (Property[]) {
-        DEFINE_PROP_UINT32("baseAddress",        struct labx_dma, baseAddress,        0),
-        DEFINE_PROP_UINT32("paramWords",         struct labx_dma, paramWords,         1024),
-        DEFINE_PROP_UINT32("microcodeWords",     struct labx_dma, microcodeWords,     1024),
-        DEFINE_PROP_UINT32("numIndexRegs",       struct labx_dma, numIndexRegs,       4),
-        DEFINE_PROP_UINT32("numChannels",        struct labx_dma, numChannels,        1),
-        DEFINE_PROP_UINT32("numAlus",            struct labx_dma, numAlus,            1),
-        DEFINE_PROP_END_OF_LIST(),
-    }
+static Property labx_dma_properties[] = {
+    DEFINE_PROP_UINT32("baseAddress",        struct labx_dma, baseAddress,        0),
+    DEFINE_PROP_UINT32("paramWords",         struct labx_dma, paramWords,         1024),
+    DEFINE_PROP_UINT32("microcodeWords",     struct labx_dma, microcodeWords,     1024),
+    DEFINE_PROP_UINT32("numIndexRegs",       struct labx_dma, numIndexRegs,       4),
+    DEFINE_PROP_UINT32("numChannels",        struct labx_dma, numChannels,        1),
+    DEFINE_PROP_UINT32("numAlus",            struct labx_dma, numAlus,            1),
+    DEFINE_PROP_END_OF_LIST(),
 };
 
-static void labx_dma_register(void)
-{
-    sysbus_register_withprop(&labx_dma_info);
+static void labx_dma_class_init(ObjectClass *klass, void *data) {
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+
+    k->init = labx_dma_init;
+    dc->props = labx_dma_properties;
 }
 
-device_init(labx_dma_register)
+static TypeInfo labx_dma_info = {
+    .name          = "labx,dma",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(struct labx_dma),
+    .class_init    = labx_dma_class_init,
+};
+
+static void labx_dma_register(void) {
+    type_register_static(&labx_dma_info);
+}
+
+type_init(labx_dma_register)
 

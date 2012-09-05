@@ -6,6 +6,9 @@
  * Written by Andrzej Zaborowski <balrog@zabor.org>
  *
  * This code is licensed under the GNU GPL v2.
+ *
+ * Contributions after 2012-01-13 are licensed under the terms of the
+ * GNU GPL, version 2 or (at your option) any later version.
  */
 
 #include "hw.h"
@@ -74,18 +77,15 @@ void ecc_reset(ECCState *s)
 }
 
 /* Save/restore */
-void ecc_put(QEMUFile *f, ECCState *s)
-{
-    qemu_put_8s(f, &s->cp);
-    qemu_put_be16s(f, &s->lp[0]);
-    qemu_put_be16s(f, &s->lp[1]);
-    qemu_put_be16s(f, &s->count);
-}
-
-void ecc_get(QEMUFile *f, ECCState *s)
-{
-    qemu_get_8s(f, &s->cp);
-    qemu_get_be16s(f, &s->lp[0]);
-    qemu_get_be16s(f, &s->lp[1]);
-    qemu_get_be16s(f, &s->count);
-}
+VMStateDescription vmstate_ecc_state = {
+    .name = "ecc-state",
+    .version_id = 0,
+    .minimum_version_id = 0,
+    .minimum_version_id_old = 0,
+    .fields = (VMStateField []) {
+        VMSTATE_UINT8(cp, ECCState),
+        VMSTATE_UINT16_ARRAY(lp, ECCState, 2),
+        VMSTATE_UINT16(count, ECCState),
+        VMSTATE_END_OF_LIST(),
+    },
+};

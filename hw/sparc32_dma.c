@@ -44,6 +44,9 @@
 /* We need the mask, because one instance of the device is not page
    aligned (ledma, start address 0x0010) */
 #define DMA_MASK (DMA_SIZE - 1)
+/* OBP says 0x20 bytes for ledma, the extras are aliased to espdma */
+#define DMA_ETH_SIZE (8 * sizeof(uint32_t))
+#define DMA_MAX_REG_OFFSET (2 * DMA_SIZE - 1)
 
 #define DMA_VER 0xa0000000
 #define DMA_INTR 1
@@ -61,10 +64,12 @@ typedef struct DMAState DMAState;
 
 struct DMAState {
     SysBusDevice busdev;
+    MemoryRegion iomem;
     uint32_t dmaregs[DMA_REGS];
     qemu_irq irq;
     void *iommu;
     qemu_irq gpio[2];
+    uint32_t is_ledma;
 };
 
 enum {
@@ -160,21 +165,34 @@ void espdma_memory_write(void *opaque, uint8_t *buf, int len)
     s->dmaregs[1] += len;
 }
 
-static uint32_t dma_mem_readl(void *opaque, target_phys_addr_t addr)
+static uint64_t dma_mem_read(void *opaque, target_phys_addr_t addr,
+                             unsigned size)
 {
     DMAState *s = opaque;
     uint32_t saddr;
 
+    if (s->is_ledma && (addr > DMA_MAX_REG_OFFSET)) {
+        /* aliased to espdma, but we can't get there from here */
+        /* buggy driver if using undocumented behavior, just return 0 */
+        trace_sparc32_dma_mem_readl(addr, 0);
+        return 0;
+    }
     saddr = (addr & DMA_MASK) >> 2;
     trace_sparc32_dma_mem_readl(addr, s->dmaregs[saddr]);
     return s->dmaregs[saddr];
 }
 
-static void dma_mem_writel(void *opaque, target_phys_addr_t addr, uint32_t val)
+static void dma_mem_write(void *opaque, target_phys_addr_t addr,
+                          uint64_t val, unsigned size)
 {
     DMAState *s = opaque;
     uint32_t saddr;
 
+    if (s->is_ledma && (addr > DMA_MAX_REG_OFFSET)) {
+        /* aliased to espdma, but we can't get there from here */
+        trace_sparc32_dma_mem_writel(addr, 0, val);
+        return;
+    }
     saddr = (addr & DMA_MASK) >> 2;
     trace_sparc32_dma_mem_writel(addr, s->dmaregs[saddr], val);
     switch (saddr) {
@@ -219,16 +237,14 @@ static void dma_mem_writel(void *opaque, target_phys_addr_t addr, uint32_t val)
     }
 }
 
-static CPUReadMemoryFunc * const dma_mem_read[3] = {
-    NULL,
-    NULL,
-    dma_mem_readl,
-};
-
-static CPUWriteMemoryFunc * const dma_mem_write[3] = {
-    NULL,
-    NULL,
-    dma_mem_writel,
+static const MemoryRegionOps dma_mem_ops = {
+    .read = dma_mem_read,
+    .write = dma_mem_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+    .valid = {
+        .min_access_size = 4,
+        .max_access_size = 4,
+    },
 };
 
 static void dma_reset(DeviceState *d)
@@ -253,12 +269,13 @@ static const VMStateDescription vmstate_dma = {
 static int sparc32_dma_init1(SysBusDevice *dev)
 {
     DMAState *s = FROM_SYSBUS(DMAState, dev);
-    int dma_io_memory;
+    int reg_size;
 
     sysbus_init_irq(dev, &s->irq);
 
-    dma_io_memory = cpu_register_io_memory(dma_mem_read, dma_mem_write, s);
-    sysbus_init_mmio(dev, DMA_SIZE, dma_io_memory);
+    reg_size = s->is_ledma ? DMA_ETH_SIZE : DMA_SIZE;
+    memory_region_init_io(&s->iomem, &dma_mem_ops, s, "dma", reg_size);
+    sysbus_init_mmio(dev, &s->iomem);
 
     qdev_init_gpio_in(&dev->qdev, dma_set_irq, 1);
     qdev_init_gpio_out(&dev->qdev, s->gpio, 2);
@@ -266,21 +283,33 @@ static int sparc32_dma_init1(SysBusDevice *dev)
     return 0;
 }
 
-static SysBusDeviceInfo sparc32_dma_info = {
-    .init = sparc32_dma_init1,
-    .qdev.name  = "sparc32_dma",
-    .qdev.size  = sizeof(DMAState),
-    .qdev.vmsd  = &vmstate_dma,
-    .qdev.reset = dma_reset,
-    .qdev.props = (Property[]) {
-        DEFINE_PROP_PTR("iommu_opaque", DMAState, iommu),
-        DEFINE_PROP_END_OF_LIST(),
-    }
+static Property sparc32_dma_properties[] = {
+    DEFINE_PROP_PTR("iommu_opaque", DMAState, iommu),
+    DEFINE_PROP_UINT32("is_ledma", DMAState, is_ledma, 0),
+    DEFINE_PROP_END_OF_LIST(),
 };
 
-static void sparc32_dma_register_devices(void)
+static void sparc32_dma_class_init(ObjectClass *klass, void *data)
 {
-    sysbus_register_withprop(&sparc32_dma_info);
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+
+    k->init = sparc32_dma_init1;
+    dc->reset = dma_reset;
+    dc->vmsd = &vmstate_dma;
+    dc->props = sparc32_dma_properties;
 }
 
-device_init(sparc32_dma_register_devices)
+static TypeInfo sparc32_dma_info = {
+    .name          = "sparc32_dma",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(DMAState),
+    .class_init    = sparc32_dma_class_init,
+};
+
+static void sparc32_dma_register_types(void)
+{
+    type_register_static(&sparc32_dma_info);
+}
+
+type_init(sparc32_dma_register_types)

@@ -12,19 +12,24 @@
  * Use accessor function in pci.h, pci_bridge.h
  */
 
-extern struct BusInfo pci_bus_info;
+#define TYPE_PCI_BUS "PCI"
+#define PCI_BUS(obj) OBJECT_CHECK(PCIBus, (obj), TYPE_PCI_BUS)
 
 struct PCIBus {
     BusState qbus;
-    int devfn_min;
+    PCIDMAContextFunc dma_context_fn;
+    void *dma_context_opaque;
+    uint8_t devfn_min;
     pci_set_irq_fn set_irq;
     pci_map_irq_fn map_irq;
+    pci_route_irq_fn route_intx_to_irq;
     pci_hotplug_fn hotplug;
     DeviceState *hotplug_qdev;
     void *irq_opaque;
-    PCIDevice *devices[256];
+    PCIDevice *devices[PCI_SLOT_MAX * PCI_FUNC_MAX];
     PCIDevice *parent_dev;
-    target_phys_addr_t mem_base;
+    MemoryRegion *address_space_mem;
+    MemoryRegion *address_space_io;
 
     QLIST_HEAD(, PCIBus) child; /* this will be replaced by qdev later */
     QLIST_ENTRY(PCIBus) sibling;/* this will be replaced by qdev later */
@@ -40,6 +45,24 @@ struct PCIBridge {
 
     /* private member */
     PCIBus sec_bus;
+    /*
+     * Memory regions for the bridge's address spaces.  These regions are not
+     * directly added to system_memory/system_io or its descendants.
+     * Bridge's secondary bus points to these, so that devices
+     * under the bridge see these regions as its address spaces.
+     * The regions are as large as the entire address space -
+     * they don't take into account any windows.
+     */
+    MemoryRegion address_space_mem;
+    MemoryRegion address_space_io;
+    /*
+     * Aliases for each of the address space windows that the bridge
+     * can forward. Mapped into the bridge's parent's address space,
+     * as subregions.
+     */
+    MemoryRegion alias_pref_mem;
+    MemoryRegion alias_mem;
+    MemoryRegion alias_io;
     pci_map_irq_fn map_irq;
     const char *bus_name;
 };

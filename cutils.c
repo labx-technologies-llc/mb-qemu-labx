@@ -25,6 +25,16 @@
 #include "host-utils.h"
 #include <math.h>
 
+#include "qemu_socket.h"
+#include "iov.h"
+
+void strpadcpy(char *buf, int buf_size, const char *str, char pad)
+{
+    int len = qemu_strnlen(str, buf_size);
+    memcpy(buf, str, len);
+    memset(buf + len, pad, buf_size - len);
+}
+
 void pstrcpy(char *buf, int buf_size, const char *str)
 {
     int c;
@@ -136,7 +146,7 @@ int qemu_fdatasync(int fd)
 
 void qemu_iovec_init(QEMUIOVector *qiov, int alloc_hint)
 {
-    qiov->iov = qemu_malloc(alloc_hint * sizeof(struct iovec));
+    qiov->iov = g_malloc(alloc_hint * sizeof(struct iovec));
     qiov->niov = 0;
     qiov->nalloc = alloc_hint;
     qiov->size = 0;
@@ -160,7 +170,7 @@ void qemu_iovec_add(QEMUIOVector *qiov, void *base, size_t len)
 
     if (qiov->niov == qiov->nalloc) {
         qiov->nalloc = 2 * qiov->nalloc + 1;
-        qiov->iov = qemu_realloc(qiov->iov, qiov->nalloc * sizeof(struct iovec));
+        qiov->iov = g_realloc(qiov->iov, qiov->nalloc * sizeof(struct iovec));
     }
     qiov->iov[qiov->niov].iov_base = base;
     qiov->iov[qiov->niov].iov_len = len;
@@ -169,55 +179,44 @@ void qemu_iovec_add(QEMUIOVector *qiov, void *base, size_t len)
 }
 
 /*
- * Copies iovecs from src to the end of dst. It starts copying after skipping
- * the given number of bytes in src and copies until src is completely copied
- * or the total size of the copied iovec reaches size.The size of the last
- * copied iovec is changed in order to fit the specified total size if it isn't
- * a perfect fit already.
+ * Concatenates (partial) iovecs from src to the end of dst.
+ * It starts copying after skipping `soffset' bytes at the
+ * beginning of src and adds individual vectors from src to
+ * dst copies up to `sbytes' bytes total, or up to the end
+ * of src if it comes first.  This way, it is okay to specify
+ * very large value for `sbytes' to indicate "up to the end
+ * of src".
+ * Only vector pointers are processed, not the actual data buffers.
  */
-void qemu_iovec_copy(QEMUIOVector *dst, QEMUIOVector *src, uint64_t skip,
-    size_t size)
+void qemu_iovec_concat(QEMUIOVector *dst,
+                       QEMUIOVector *src, size_t soffset, size_t sbytes)
 {
     int i;
     size_t done;
-    void *iov_base;
-    uint64_t iov_len;
-
+    struct iovec *siov = src->iov;
     assert(dst->nalloc != -1);
-
-    done = 0;
-    for (i = 0; (i < src->niov) && (done != size); i++) {
-        if (skip >= src->iov[i].iov_len) {
-            /* Skip the whole iov */
-            skip -= src->iov[i].iov_len;
-            continue;
+    assert(src->size >= soffset);
+    for (i = 0, done = 0; done < sbytes && i < src->niov; i++) {
+        if (soffset < siov[i].iov_len) {
+            size_t len = MIN(siov[i].iov_len - soffset, sbytes - done);
+            qemu_iovec_add(dst, siov[i].iov_base + soffset, len);
+            done += len;
+            soffset = 0;
         } else {
-            /* Skip only part (or nothing) of the iov */
-            iov_base = (uint8_t*) src->iov[i].iov_base + skip;
-            iov_len = src->iov[i].iov_len - skip;
-            skip = 0;
+            soffset -= siov[i].iov_len;
         }
-
-        if (done + iov_len > size) {
-            qemu_iovec_add(dst, iov_base, size - done);
-            break;
-        } else {
-            qemu_iovec_add(dst, iov_base, iov_len);
-        }
-        done += iov_len;
     }
-}
-
-void qemu_iovec_concat(QEMUIOVector *dst, QEMUIOVector *src, size_t size)
-{
-    qemu_iovec_copy(dst, src, 0, size);
+    /* return done; */
 }
 
 void qemu_iovec_destroy(QEMUIOVector *qiov)
 {
     assert(qiov->nalloc != -1);
 
-    qemu_free(qiov->iov);
+    qemu_iovec_reset(qiov);
+    g_free(qiov->iov);
+    qiov->nalloc = 0;
+    qiov->iov = NULL;
 }
 
 void qemu_iovec_reset(QEMUIOVector *qiov)
@@ -228,43 +227,57 @@ void qemu_iovec_reset(QEMUIOVector *qiov)
     qiov->size = 0;
 }
 
-void qemu_iovec_to_buffer(QEMUIOVector *qiov, void *buf)
+size_t qemu_iovec_to_buf(QEMUIOVector *qiov, size_t offset,
+                         void *buf, size_t bytes)
 {
-    uint8_t *p = (uint8_t *)buf;
-    int i;
-
-    for (i = 0; i < qiov->niov; ++i) {
-        memcpy(p, qiov->iov[i].iov_base, qiov->iov[i].iov_len);
-        p += qiov->iov[i].iov_len;
-    }
+    return iov_to_buf(qiov->iov, qiov->niov, offset, buf, bytes);
 }
 
-void qemu_iovec_from_buffer(QEMUIOVector *qiov, const void *buf, size_t count)
+size_t qemu_iovec_from_buf(QEMUIOVector *qiov, size_t offset,
+                           const void *buf, size_t bytes)
 {
-    const uint8_t *p = (const uint8_t *)buf;
-    size_t copy;
-    int i;
-
-    for (i = 0; i < qiov->niov && count; ++i) {
-        copy = count;
-        if (copy > qiov->iov[i].iov_len)
-            copy = qiov->iov[i].iov_len;
-        memcpy(qiov->iov[i].iov_base, p, copy);
-        p     += copy;
-        count -= copy;
-    }
+    return iov_from_buf(qiov->iov, qiov->niov, offset, buf, bytes);
 }
 
-void qemu_iovec_memset(QEMUIOVector *qiov, int c, size_t count)
+size_t qemu_iovec_memset(QEMUIOVector *qiov, size_t offset,
+                         int fillc, size_t bytes)
 {
-    size_t n;
-    int i;
+    return iov_memset(qiov->iov, qiov->niov, offset, fillc, bytes);
+}
 
-    for (i = 0; i < qiov->niov && count; ++i) {
-        n = MIN(count, qiov->iov[i].iov_len);
-        memset(qiov->iov[i].iov_base, c, n);
-        count -= n;
+/*
+ * Checks if a buffer is all zeroes
+ *
+ * Attention! The len must be a multiple of 4 * sizeof(long) due to
+ * restriction of optimizations in this function.
+ */
+bool buffer_is_zero(const void *buf, size_t len)
+{
+    /*
+     * Use long as the biggest available internal data type that fits into the
+     * CPU register and unroll the loop to smooth out the effect of memory
+     * latency.
+     */
+
+    size_t i;
+    long d0, d1, d2, d3;
+    const long * const data = buf;
+
+    assert(len % (4 * sizeof(long)) == 0);
+    len /= sizeof(long);
+
+    for (i = 0; i < len; i += 4) {
+        d0 = data[i + 0];
+        d1 = data[i + 1];
+        d2 = data[i + 2];
+        d3 = data[i + 3];
+
+        if (d0 || d1 || d2 || d3) {
+            return false;
+        }
     }
+
+    return true;
 }
 
 #ifndef _WIN32
@@ -284,17 +297,34 @@ int fcntl_setfl(int fd, int flag)
 }
 #endif
 
+static int64_t suffix_mul(char suffix, int64_t unit)
+{
+    switch (qemu_toupper(suffix)) {
+    case STRTOSZ_DEFSUFFIX_B:
+        return 1;
+    case STRTOSZ_DEFSUFFIX_KB:
+        return unit;
+    case STRTOSZ_DEFSUFFIX_MB:
+        return unit * unit;
+    case STRTOSZ_DEFSUFFIX_GB:
+        return unit * unit * unit;
+    case STRTOSZ_DEFSUFFIX_TB:
+        return unit * unit * unit * unit;
+    }
+    return -1;
+}
+
 /*
  * Convert string to bytes, allowing either B/b for bytes, K/k for KB,
- * M/m for MB, G/g for GB or T/t for TB. Default without any postfix
- * is MB. End pointer will be returned in *end, if not NULL. A valid
- * value must be terminated by whitespace, ',' or '\0'. Return -1 on
- * error.
+ * M/m for MB, G/g for GB or T/t for TB. End pointer will be returned
+ * in *end, if not NULL. Return -1 on error.
  */
-ssize_t strtosz(const char *nptr, char **end)
+int64_t strtosz_suffix_unit(const char *nptr, char **end,
+                            const char default_suffix, int64_t unit)
 {
-    ssize_t retval = -1;
-    char *endptr, c;
+    int64_t retval = -1;
+    char *endptr;
+    unsigned char c;
     int mul_required = 0;
     double val, mul, integral, fraction;
 
@@ -303,63 +333,22 @@ ssize_t strtosz(const char *nptr, char **end)
     if (isnan(val) || endptr == nptr || errno != 0) {
         goto fail;
     }
-    integral = modf(val, &fraction);
-    if (integral != 0) {
+    fraction = modf(val, &integral);
+    if (fraction != 0) {
         mul_required = 1;
     }
-    /*
-     * Any whitespace character is fine for terminating the number,
-     * in addition we accept ',' to handle strings where the size is
-     * part of a multi token argument.
-     */
     c = *endptr;
-    if (isspace(c) || c == '\0' || c == ',') {
-        c = 0;
+    mul = suffix_mul(c, unit);
+    if (mul >= 0) {
+        endptr++;
+    } else {
+        mul = suffix_mul(default_suffix, unit);
+        assert(mul >= 0);
     }
-    switch (c) {
-    case 'B':
-    case 'b':
-        mul = 1;
-        if (mul_required) {
-            goto fail;
-        }
-        break;
-    case 'K':
-    case 'k':
-        mul = 1 << 10;
-        break;
-    case 0:
-        if (mul_required) {
-            goto fail;
-        }
-    case 'M':
-    case 'm':
-        mul = 1ULL << 20;
-        break;
-    case 'G':
-    case 'g':
-        mul = 1ULL << 30;
-        break;
-    case 'T':
-    case 't':
-        mul = 1ULL << 40;
-        break;
-    default:
+    if (mul == 1 && mul_required) {
         goto fail;
     }
-    /*
-     * If not terminated by whitespace, ',', or \0, increment endptr
-     * to point to next character, then check that we are terminated
-     * by an appropriate separating character, ie. whitespace, ',', or
-     * \0. If not, we are seeing trailing garbage, thus fail.
-     */
-    if (c != 0) {
-        endptr++;
-        if (!isspace(*endptr) && *endptr != ',' && *endptr != 0) {
-            goto fail;
-        }
-    }
-    if ((val * mul >= ~(size_t)0) || val < 0) {
+    if ((val * mul >= INT64_MAX) || val < 0) {
         goto fail;
     }
     retval = val * mul;
@@ -370,4 +359,73 @@ fail:
     }
 
     return retval;
+}
+
+int64_t strtosz_suffix(const char *nptr, char **end, const char default_suffix)
+{
+    return strtosz_suffix_unit(nptr, end, default_suffix, 1024);
+}
+
+int64_t strtosz(const char *nptr, char **end)
+{
+    return strtosz_suffix(nptr, end, STRTOSZ_DEFSUFFIX_MB);
+}
+
+int qemu_parse_fd(const char *param)
+{
+    int fd;
+    char *endptr = NULL;
+
+    fd = strtol(param, &endptr, 10);
+    if (*endptr || (fd == 0 && param == endptr)) {
+        return -1;
+    }
+    return fd;
+}
+
+int qemu_parse_fdset(const char *param)
+{
+    return qemu_parse_fd(param);
+}
+
+/* round down to the nearest power of 2*/
+int64_t pow2floor(int64_t value)
+{
+    if (!is_power_of_2(value)) {
+        value = 0x8000000000000000ULL >> clz64(value);
+    }
+    return value;
+}
+
+/*
+ * Implementation of  ULEB128 (http://en.wikipedia.org/wiki/LEB128)
+ * Input is limited to 14-bit numbers
+ */
+int uleb128_encode_small(uint8_t *out, uint32_t n)
+{
+    g_assert(n <= 0x3fff);
+    if (n < 0x80) {
+        *out++ = n;
+        return 1;
+    } else {
+        *out++ = (n & 0x7f) | 0x80;
+        *out++ = n >> 7;
+        return 2;
+    }
+}
+
+int uleb128_decode_small(const uint8_t *in, uint32_t *n)
+{
+    if (!(*in & 0x80)) {
+        *n = *in++;
+        return 1;
+    } else {
+        *n = *in++ & 0x7f;
+        /* we exceed 14 bit number */
+        if (*in & 0x80) {
+            return -1;
+        }
+        *n |= *in++ << 7;
+        return 2;
+    }
 }

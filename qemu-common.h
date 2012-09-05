@@ -1,22 +1,24 @@
+
 /* Common header file that is included by all of qemu.  */
 #ifndef QEMU_COMMON_H
 #define QEMU_COMMON_H
 
+#include "compiler.h"
 #include "config-host.h"
 
-#define QEMU_NORETURN __attribute__ ((__noreturn__))
-#ifdef CONFIG_GCC_ATTRIBUTE_WARN_UNUSED_RESULT
-#define QEMU_WARN_UNUSED_RESULT __attribute__((warn_unused_result))
-#else
-#define QEMU_WARN_UNUSED_RESULT
+#if defined(__arm__) || defined(__sparc__) || defined(__mips__) || defined(__hppa__) || defined(__ia64__)
+#define WORDS_ALIGNED
 #endif
 
-#define QEMU_BUILD_BUG_ON(x) typedef char __build_bug_on__##__LINE__[(x)?-1:1];
+#define TFR(expr) do { if ((expr) != -1) break; } while (errno == EINTR)
 
 typedef struct QEMUTimer QEMUTimer;
 typedef struct QEMUFile QEMUFile;
-typedef struct QEMUBH QEMUBH;
 typedef struct DeviceState DeviceState;
+
+struct Monitor;
+typedef struct Monitor Monitor;
+typedef struct MigrationParams MigrationParams;
 
 /* we put basic includes here to avoid repeating them in device drivers */
 #include <stdlib.h>
@@ -33,7 +35,18 @@ typedef struct DeviceState DeviceState;
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <assert.h>
+#include <signal.h>
+#include <glib.h>
+
+#ifdef _WIN32
+#include "qemu-os-win32.h"
+#endif
+
+#ifdef CONFIG_POSIX
+#include "qemu-os-posix.h"
+#endif
 
 #ifndef O_LARGEFILE
 #define O_LARGEFILE 0
@@ -50,6 +63,21 @@ typedef struct DeviceState DeviceState;
 #if !defined(ENOTSUP)
 #define ENOTSUP 4096
 #endif
+#if !defined(ECANCELED)
+#define ECANCELED 4097
+#endif
+#ifndef TIME_MAX
+#define TIME_MAX LONG_MAX
+#endif
+
+/* HOST_LONG_BITS is the size of a native pointer in bits. */
+#if UINTPTR_MAX == UINT32_MAX
+# define HOST_LONG_BITS 32
+#elif UINTPTR_MAX == UINT64_MAX
+# define HOST_LONG_BITS 64
+#else
+# error Unknown pointer size
+#endif
 
 #ifndef CONFIG_IOVEC
 #define CONFIG_IOVEC
@@ -65,47 +93,33 @@ struct iovec {
 #include <sys/uio.h>
 #endif
 
-#if defined __GNUC__
-# if (__GNUC__ < 4) || \
-     defined(__GNUC_MINOR__) && (__GNUC__ == 4) && (__GNUC_MINOR__ < 4)
-   /* gcc versions before 4.4.x don't support gnu_printf, so use printf. */
-#  define GCC_ATTR __attribute__((__unused__, format(printf, 1, 2)))
-#  define GCC_FMT_ATTR(n, m) __attribute__((format(printf, n, m)))
-# else
-   /* Use gnu_printf when supported (qemu uses standard format strings). */
-#  define GCC_ATTR __attribute__((__unused__, format(gnu_printf, 1, 2)))
-#  define GCC_FMT_ATTR(n, m) __attribute__((format(gnu_printf, n, m)))
-# endif
-#else
-#define GCC_ATTR /**/
-#define GCC_FMT_ATTR(n, m)
-#endif
-
 typedef int (*fprintf_function)(FILE *f, const char *fmt, ...)
     GCC_FMT_ATTR(2, 3);
 
 #ifdef _WIN32
 #define fsync _commit
-#define lseek _lseeki64
-extern int qemu_ftruncate64(int, int64_t);
-#define ftruncate qemu_ftruncate64
+#if !defined(lseek)
+# define lseek _lseeki64
+#endif
+int qemu_ftruncate64(int, int64_t);
+#if !defined(ftruncate)
+# define ftruncate qemu_ftruncate64
+#endif
 
 static inline char *realpath(const char *path, char *resolved_path)
 {
     _fullpath(resolved_path, path, _MAX_PATH);
     return resolved_path;
 }
-
-#define PRId64 "I64d"
-#define PRIx64 "I64x"
-#define PRIu64 "I64u"
-#define PRIo64 "I64o"
 #endif
+
+/* icount */
+void configure_icount(const char *option);
+extern int use_icount;
 
 /* FIXME: Remove NEED_CPU_H.  */
 #ifndef NEED_CPU_H
 
-#include <setjmp.h>
 #include "osdep.h"
 #include "bswap.h"
 
@@ -115,32 +129,35 @@ static inline char *realpath(const char *path, char *resolved_path)
 
 #endif /* !defined(NEED_CPU_H) */
 
-/* bottom halves */
-typedef void QEMUBHFunc(void *opaque);
-
-void async_context_push(void);
-void async_context_pop(void);
-int get_async_context_id(void);
-
-QEMUBH *qemu_bh_new(QEMUBHFunc *cb, void *opaque);
-void qemu_bh_schedule(QEMUBH *bh);
-/* Bottom halfs that are scheduled from a bottom half handler are instantly
- * invoked.  This can create an infinite loop if a bottom half handler
- * schedules itself.  qemu_bh_schedule_idle() avoids this infinite loop by
- * ensuring that the bottom half isn't executed until the next main loop
- * iteration.
- */
-void qemu_bh_schedule_idle(QEMUBH *bh);
-void qemu_bh_cancel(QEMUBH *bh);
-void qemu_bh_delete(QEMUBH *bh);
-int qemu_bh_poll(void);
-void qemu_bh_update_timeout(int *timeout);
+/* main function, renamed */
+#if defined(CONFIG_COCOA)
+int qemu_main(int argc, char **argv, char **envp);
+#endif
 
 void qemu_get_timedate(struct tm *tm, int offset);
 int qemu_timedate_diff(struct tm *tm);
 
+/**
+ * is_help_option:
+ * @s: string to test
+ *
+ * Check whether @s is one of the standard strings which indicate
+ * that the user is asking for a list of the valid values for a
+ * command option like -cpu or -M. The current accepted strings
+ * are 'help' and '?'. '?' is deprecated (it is a shell wildcard
+ * which makes it annoying to use in a reliable way) but provided
+ * for backwards compatibility.
+ *
+ * Returns: true if @s is a request for a list.
+ */
+static inline bool is_help_option(const char *s)
+{
+    return !strcmp(s, "?") || !strcmp(s, "help");
+}
+
 /* cutils.c */
 void pstrcpy(char *buf, int buf_size, const char *str);
+void strpadcpy(char *buf, int buf_size, const char *str, char pad);
 char *pstrcat(char *buf, int buf_size, const char *s);
 int strstart(const char *str, const char *val, const char **ptr);
 int stristart(const char *str, const char *val, const char **ptr);
@@ -149,7 +166,25 @@ time_t mktimegm(struct tm *tm);
 int qemu_fls(int i);
 int qemu_fdatasync(int fd);
 int fcntl_setfl(int fd, int flag);
-ssize_t strtosz(const char *nptr, char **end);
+int qemu_parse_fd(const char *param);
+int qemu_parse_fdset(const char *param);
+
+/*
+ * strtosz() suffixes used to specify the default treatment of an
+ * argument passed to strtosz() without an explicit suffix.
+ * These should be defined using upper case characters in the range
+ * A-Z, as strtosz() will use qemu_toupper() on the given argument
+ * prior to comparison.
+ */
+#define STRTOSZ_DEFSUFFIX_TB	'T'
+#define STRTOSZ_DEFSUFFIX_GB	'G'
+#define STRTOSZ_DEFSUFFIX_MB	'M'
+#define STRTOSZ_DEFSUFFIX_KB	'K'
+#define STRTOSZ_DEFSUFFIX_B	'B'
+int64_t strtosz(const char *nptr, char **end);
+int64_t strtosz_suffix(const char *nptr, char **end, const char default_suffix);
+int64_t strtosz_suffix_unit(const char *nptr, char **end,
+                            const char default_suffix, int64_t unit);
 
 /* path.c */
 void init_paths(const char *prefix);
@@ -171,40 +206,31 @@ const char *path(const char *pathname);
 #define qemu_isascii(c)		isascii((unsigned char)(c))
 #define qemu_toascii(c)		toascii((unsigned char)(c))
 
-#ifdef _WIN32
-/* ffs() in oslib-win32.c for WIN32, strings.h for the rest of the world */
-int ffs(int i);
-#endif
-
 void *qemu_oom_check(void *ptr);
-void *qemu_malloc(size_t size);
-void *qemu_realloc(void *ptr, size_t size);
-void *qemu_mallocz(size_t size);
-void qemu_free(void *ptr);
-char *qemu_strdup(const char *str);
-char *qemu_strndup(const char *str, size_t size);
-
-void qemu_mutex_lock_iothread(void);
-void qemu_mutex_unlock_iothread(void);
 
 int qemu_open(const char *name, int flags, ...);
+int qemu_close(int fd);
 ssize_t qemu_write_full(int fd, const void *buf, size_t count)
     QEMU_WARN_UNUSED_RESULT;
-void qemu_set_cloexec(int fd);
+ssize_t qemu_send_full(int fd, const void *buf, size_t count, int flags)
+    QEMU_WARN_UNUSED_RESULT;
+ssize_t qemu_recv_full(int fd, void *buf, size_t count, int flags)
+    QEMU_WARN_UNUSED_RESULT;
 
 #ifndef _WIN32
 int qemu_eventfd(int pipefd[2]);
 int qemu_pipe(int pipefd[2]);
 #endif
 
+#ifdef _WIN32
+#define qemu_recv(sockfd, buf, len, flags) recv(sockfd, (void *)buf, len, flags)
+#else
+#define qemu_recv(sockfd, buf, len, flags) recv(sockfd, buf, len, flags)
+#endif
+
 /* Error handling.  */
 
 void QEMU_NORETURN hw_error(const char *fmt, ...) GCC_FMT_ATTR(1, 2);
-
-/* IO callbacks.  */
-typedef void IOReadHandler(void *opaque, const uint8_t *buf, int size);
-typedef int IOCanReadHandler(void *opaque);
-typedef void IOHandler(void *opaque);
 
 struct ParallelIOArg {
     void *buffer;
@@ -229,10 +255,10 @@ typedef struct TextConsole TextConsole;
 typedef TextConsole QEMUConsole;
 typedef struct CharDriverState CharDriverState;
 typedef struct MACAddr MACAddr;
-typedef struct VLANState VLANState;
-typedef struct VLANClientState VLANClientState;
+typedef struct NetClientState NetClientState;
 typedef struct i2c_bus i2c_bus;
-typedef struct i2c_slave i2c_slave;
+typedef struct ISABus ISABus;
+typedef struct ISADevice ISADevice;
 typedef struct SMBusDevice SMBusDevice;
 typedef struct PCIHostState PCIHostState;
 typedef struct PCIExpressHost PCIExpressHost;
@@ -240,8 +266,12 @@ typedef struct PCIBus PCIBus;
 typedef struct PCIDevice PCIDevice;
 typedef struct PCIExpressDevice PCIExpressDevice;
 typedef struct PCIBridge PCIBridge;
+typedef struct PCIEAERMsg PCIEAERMsg;
+typedef struct PCIEAERLog PCIEAERLog;
+typedef struct PCIEAERErr PCIEAERErr;
 typedef struct PCIEPort PCIEPort;
 typedef struct PCIESlot PCIESlot;
+typedef struct MSIMessage MSIMessage;
 typedef struct SerialState SerialState;
 typedef struct IRQState *qemu_irq;
 typedef struct PCMCIACardState PCMCIACardState;
@@ -251,30 +281,39 @@ typedef struct I2SCodec I2SCodec;
 typedef struct SSIBus SSIBus;
 typedef struct EventNotifier EventNotifier;
 typedef struct VirtIODevice VirtIODevice;
+typedef struct QEMUSGList QEMUSGList;
+typedef struct SHPCDevice SHPCDevice;
 
 typedef uint64_t pcibus_t;
 
-typedef enum {
-    IF_NONE,
-    IF_IDE, IF_SCSI, IF_FLOPPY, IF_PFLASH, IF_MTD, IF_SD, IF_VIRTIO, IF_XEN,
-    IF_COUNT
-} BlockInterfaceType;
+typedef enum LostTickPolicy {
+    LOST_TICK_DISCARD,
+    LOST_TICK_DELAY,
+    LOST_TICK_MERGE,
+    LOST_TICK_SLEW,
+    LOST_TICK_MAX
+} LostTickPolicy;
 
-void cpu_exec_init_all(unsigned long tb_size);
+typedef struct PCIHostDeviceAddress {
+    unsigned int domain;
+    unsigned int bus;
+    unsigned int slot;
+    unsigned int function;
+} PCIHostDeviceAddress;
+
+void tcg_exec_init(unsigned long tb_size);
+bool tcg_enabled(void);
+
+void cpu_exec_init_all(void);
 
 /* CPU save/load.  */
 void cpu_save(QEMUFile *f, void *opaque);
 int cpu_load(QEMUFile *f, void *opaque, int version_id);
 
-/* Force QEMU to stop what it's doing and service IO */
-void qemu_service_io(void);
-
-/* Force QEMU to process pending events */
-void qemu_notify_event(void);
-
 /* Unblock cpu */
 void qemu_cpu_kick(void *env);
-int qemu_cpu_self(void *env);
+void qemu_cpu_kick_self(void);
+int qemu_cpu_is_self(void *env);
 
 /* work queue */
 struct qemu_work_item {
@@ -290,6 +329,30 @@ struct qemu_work_item {
 void qemu_init_vcpu(void *env);
 #endif
 
+
+/**
+ * Sends a (part of) iovec down a socket, yielding when the socket is full, or
+ * Receives data into a (part of) iovec from a socket,
+ * yielding when there is no data in the socket.
+ * The same interface as qemu_sendv_recvv(), with added yielding.
+ * XXX should mark these as coroutine_fn
+ */
+ssize_t qemu_co_sendv_recvv(int sockfd, struct iovec *iov, unsigned iov_cnt,
+                            size_t offset, size_t bytes, bool do_send);
+#define qemu_co_recvv(sockfd, iov, iov_cnt, offset, bytes) \
+  qemu_co_sendv_recvv(sockfd, iov, iov_cnt, offset, bytes, false)
+#define qemu_co_sendv(sockfd, iov, iov_cnt, offset, bytes) \
+  qemu_co_sendv_recvv(sockfd, iov, iov_cnt, offset, bytes, true)
+
+/**
+ * The same as above, but with just a single buffer
+ */
+ssize_t qemu_co_send_recv(int sockfd, void *buf, size_t bytes, bool do_send);
+#define qemu_co_recv(sockfd, buf, bytes) \
+  qemu_co_send_recv(sockfd, buf, bytes, false)
+#define qemu_co_send(sockfd, buf, bytes) \
+  qemu_co_send_recv(sockfd, buf, bytes, true)
+
 typedef struct QEMUIOVector {
     struct iovec *iov;
     int niov;
@@ -300,17 +363,33 @@ typedef struct QEMUIOVector {
 void qemu_iovec_init(QEMUIOVector *qiov, int alloc_hint);
 void qemu_iovec_init_external(QEMUIOVector *qiov, struct iovec *iov, int niov);
 void qemu_iovec_add(QEMUIOVector *qiov, void *base, size_t len);
-void qemu_iovec_copy(QEMUIOVector *dst, QEMUIOVector *src, uint64_t skip,
-    size_t size);
-void qemu_iovec_concat(QEMUIOVector *dst, QEMUIOVector *src, size_t size);
+void qemu_iovec_concat(QEMUIOVector *dst,
+                       QEMUIOVector *src, size_t soffset, size_t sbytes);
 void qemu_iovec_destroy(QEMUIOVector *qiov);
 void qemu_iovec_reset(QEMUIOVector *qiov);
-void qemu_iovec_to_buffer(QEMUIOVector *qiov, void *buf);
-void qemu_iovec_from_buffer(QEMUIOVector *qiov, const void *buf, size_t count);
-void qemu_iovec_memset(QEMUIOVector *qiov, int c, size_t count);
+size_t qemu_iovec_to_buf(QEMUIOVector *qiov, size_t offset,
+                         void *buf, size_t bytes);
+size_t qemu_iovec_from_buf(QEMUIOVector *qiov, size_t offset,
+                           const void *buf, size_t bytes);
+size_t qemu_iovec_memset(QEMUIOVector *qiov, size_t offset,
+                         int fillc, size_t bytes);
 
-struct Monitor;
-typedef struct Monitor Monitor;
+bool buffer_is_zero(const void *buf, size_t len);
+
+void qemu_progress_init(int enabled, float min_skip);
+void qemu_progress_end(void);
+void qemu_progress_print(float delta, int max);
+const char *qemu_get_vm_name(void);
+
+#define QEMU_FILE_TYPE_BIOS   0
+#define QEMU_FILE_TYPE_KEYMAP 1
+char *qemu_find_file(int type, const char *name);
+
+/* OS specific functions */
+void os_setup_early_signal_handling(void);
+char *os_find_datadir(const char *argv0);
+void os_parse_cmd_args(int index, const char *optarg);
+void os_pidfile_error(void);
 
 /* Convert a byte between binary and BCD.  */
 static inline uint8_t to_bcd(uint8_t val)
@@ -347,6 +426,32 @@ static inline uint64_t muldiv64(uint64_t a, uint32_t b, uint32_t c)
     return res.ll;
 }
 
+/* Round number down to multiple */
+#define QEMU_ALIGN_DOWN(n, m) ((n) / (m) * (m))
+
+/* Round number up to multiple */
+#define QEMU_ALIGN_UP(n, m) QEMU_ALIGN_DOWN((n) + (m) - 1, (m))
+
+static inline bool is_power_of_2(uint64_t value)
+{
+    if (!value) {
+        return 0;
+    }
+
+    return !(value & (value - 1));
+}
+
+/* round down to the nearest power of 2*/
+int64_t pow2floor(int64_t value);
+
 #include "module.h"
+
+/*
+ * Implementation of ULEB128 (http://en.wikipedia.org/wiki/LEB128)
+ * Input is limited to 14-bit numbers
+ */
+
+int uleb128_encode_small(uint8_t *out, uint32_t n);
+int uleb128_decode_small(const uint8_t *in, uint32_t *n);
 
 #endif

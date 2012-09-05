@@ -23,6 +23,7 @@
 
 /* GP timers */
 struct omap_gp_timer_s {
+    MemoryRegion iomem;
     qemu_irq irq;
     qemu_irq wkup;
     qemu_irq in;
@@ -102,7 +103,7 @@ static inline uint32_t omap_gp_timer_read(struct omap_gp_timer_s *timer)
     uint64_t distance;
 
     if (timer->st && timer->rate) {
-        distance = qemu_get_clock(vm_clock) - timer->time;
+        distance = qemu_get_clock_ns(vm_clock) - timer->time;
         distance = muldiv64(distance, timer->rate, timer->ticks_per_sec);
 
         if (distance >= 0xffffffff - timer->val)
@@ -117,7 +118,7 @@ static inline void omap_gp_timer_sync(struct omap_gp_timer_s *timer)
 {
     if (timer->st) {
         timer->val = omap_gp_timer_read(timer);
-        timer->time = qemu_get_clock(vm_clock);
+        timer->time = qemu_get_clock_ns(vm_clock);
     }
 }
 
@@ -163,7 +164,7 @@ static void omap_gp_timer_tick(void *opaque)
         timer->val = 0;
     } else {
         timer->val = timer->load_val;
-        timer->time = qemu_get_clock(vm_clock);
+        timer->time = qemu_get_clock_ns(vm_clock);
     }
 
     if (timer->trigger == gpt_trigger_overflow ||
@@ -337,12 +338,6 @@ static uint32_t omap_gp_timer_readh(void *opaque, target_phys_addr_t addr)
     }
 }
 
-static CPUReadMemoryFunc * const omap_gp_timer_readfn[] = {
-    omap_badwidth_read32,
-    omap_gp_timer_readh,
-    omap_gp_timer_readw,
-};
-
 static void omap_gp_timer_write(void *opaque, target_phys_addr_t addr,
                 uint32_t value)
 {
@@ -411,7 +406,7 @@ static void omap_gp_timer_write(void *opaque, target_phys_addr_t addr,
         break;
 
     case 0x28:	/* TCRR */
-        s->time = qemu_get_clock(vm_clock);
+        s->time = qemu_get_clock_ns(vm_clock);
         s->val = value;
         omap_gp_timer_update(s);
         break;
@@ -421,7 +416,7 @@ static void omap_gp_timer_write(void *opaque, target_phys_addr_t addr,
         break;
 
     case 0x30:	/* TTGR */
-        s->time = qemu_get_clock(vm_clock);
+        s->time = qemu_get_clock_ns(vm_clock);
         s->val = s->load_val;
         omap_gp_timer_update(s);
         break;
@@ -454,31 +449,40 @@ static void omap_gp_timer_writeh(void *opaque, target_phys_addr_t addr,
         s->writeh = (uint16_t) value;
 }
 
-static CPUWriteMemoryFunc * const omap_gp_timer_writefn[] = {
-    omap_badwidth_write32,
-    omap_gp_timer_writeh,
-    omap_gp_timer_write,
+static const MemoryRegionOps omap_gp_timer_ops = {
+    .old_mmio = {
+        .read = {
+            omap_badwidth_read32,
+            omap_gp_timer_readh,
+            omap_gp_timer_readw,
+        },
+        .write = {
+            omap_badwidth_write32,
+            omap_gp_timer_writeh,
+            omap_gp_timer_write,
+        },
+    },
+    .endianness = DEVICE_NATIVE_ENDIAN,
 };
 
 struct omap_gp_timer_s *omap_gp_timer_init(struct omap_target_agent_s *ta,
                 qemu_irq irq, omap_clk fclk, omap_clk iclk)
 {
-    int iomemtype;
     struct omap_gp_timer_s *s = (struct omap_gp_timer_s *)
-            qemu_mallocz(sizeof(struct omap_gp_timer_s));
+            g_malloc0(sizeof(struct omap_gp_timer_s));
 
     s->ta = ta;
     s->irq = irq;
     s->clk = fclk;
-    s->timer = qemu_new_timer(vm_clock, omap_gp_timer_tick, s);
-    s->match = qemu_new_timer(vm_clock, omap_gp_timer_match, s);
+    s->timer = qemu_new_timer_ns(vm_clock, omap_gp_timer_tick, s);
+    s->match = qemu_new_timer_ns(vm_clock, omap_gp_timer_match, s);
     s->in = qemu_allocate_irqs(omap_gp_timer_input, s, 1)[0];
     omap_gp_timer_reset(s);
     omap_gp_timer_clk_setup(s);
 
-    iomemtype = l4_register_io_memory(omap_gp_timer_readfn,
-                    omap_gp_timer_writefn, s);
-    omap_l4_attach(ta, 0, iomemtype);
+    memory_region_init_io(&s->iomem, &omap_gp_timer_ops, s, "omap.gptimer",
+                          omap_l4_region_size(ta, 0));
+    omap_l4_attach(ta, 0, &s->iomem);
 
     return s;
 }

@@ -16,30 +16,17 @@
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, see <http://www.gnu.org/licenses/>.
  */
-#include "exec.h"
-#include "helpers.h"
+#include "cpu.h"
+#include "dyngen-exec.h"
+#include "helper.h"
 
 #define SIGNBIT (uint32_t)0x80000000
 #define SIGNBIT64 ((uint64_t)1 << 63)
 
-void raise_exception(int tt)
+static void raise_exception(int tt)
 {
     env->exception_index = tt;
-    cpu_loop_exit();
-}
-
-/* thread support */
-
-static spinlock_t global_cpu_lock = SPIN_LOCK_UNLOCKED;
-
-void cpu_lock(void)
-{
-    spin_lock(&global_cpu_lock);
-}
-
-void cpu_unlock(void)
-{
-    spin_unlock(&global_cpu_lock);
+    cpu_loop_exit(env);
 }
 
 uint32_t HELPER(neon_tbl)(uint32_t ireg, uint32_t def,
@@ -66,6 +53,8 @@ uint32_t HELPER(neon_tbl)(uint32_t ireg, uint32_t def,
 
 #if !defined(CONFIG_USER_ONLY)
 
+#include "softmmu_exec.h"
+
 #define MMUSUFFIX _mmu
 
 #define SHIFT 0
@@ -84,27 +73,24 @@ uint32_t HELPER(neon_tbl)(uint32_t ireg, uint32_t def,
    NULL, it means that the function was called in C code (i.e. not
    from generated code or from helper.c) */
 /* XXX: fix it to restore all registers */
-void tlb_fill (target_ulong addr, int is_write, int mmu_idx, void *retaddr)
+void tlb_fill(CPUARMState *env1, target_ulong addr, int is_write, int mmu_idx,
+              uintptr_t retaddr)
 {
     TranslationBlock *tb;
-    CPUState *saved_env;
-    unsigned long pc;
+    CPUARMState *saved_env;
     int ret;
 
-    /* XXX: hack to restore env in all cases, even if not called from
-       generated code */
     saved_env = env;
-    env = cpu_single_env;
-    ret = cpu_arm_handle_mmu_fault(env, addr, is_write, mmu_idx, 1);
+    env = env1;
+    ret = cpu_arm_handle_mmu_fault(env, addr, is_write, mmu_idx);
     if (unlikely(ret)) {
         if (retaddr) {
             /* now we have a real cpu fault */
-            pc = (unsigned long)retaddr;
-            tb = tb_find_pc(pc);
+            tb = tb_find_pc(retaddr);
             if (tb) {
                 /* the PC is inside the translated code. It means that we have
                    a virtual CPU fault */
-                cpu_restore_state(tb, env, pc, NULL);
+                cpu_restore_state(tb, env, retaddr);
             }
         }
         raise_exception(env->exception_index);
@@ -113,7 +99,7 @@ void tlb_fill (target_ulong addr, int is_write, int mmu_idx, void *retaddr)
 }
 #endif
 
-/* FIXME: Pass an axplicit pointer to QF to CPUState, and move saturating
+/* FIXME: Pass an explicit pointer to QF to CPUARMState, and move saturating
    instructions into helper.c  */
 uint32_t HELPER(add_setq)(uint32_t a, uint32_t b)
 {
@@ -248,13 +234,13 @@ void HELPER(wfi)(void)
 {
     env->exception_index = EXCP_HLT;
     env->halted = 1;
-    cpu_loop_exit();
+    cpu_loop_exit(env);
 }
 
 void HELPER(exception)(uint32_t excp)
 {
     env->exception_index = excp;
-    cpu_loop_exit();
+    cpu_loop_exit(env);
 }
 
 uint32_t HELPER(cpsr_read)(void)
@@ -297,6 +283,46 @@ void HELPER(set_user_reg)(uint32_t regno, uint32_t val)
     } else {
         env->regs[regno] = val;
     }
+}
+
+void HELPER(set_cp_reg)(CPUARMState *env, void *rip, uint32_t value)
+{
+    const ARMCPRegInfo *ri = rip;
+    int excp = ri->writefn(env, ri, value);
+    if (excp) {
+        raise_exception(excp);
+    }
+}
+
+uint32_t HELPER(get_cp_reg)(CPUARMState *env, void *rip)
+{
+    const ARMCPRegInfo *ri = rip;
+    uint64_t value;
+    int excp = ri->readfn(env, ri, &value);
+    if (excp) {
+        raise_exception(excp);
+    }
+    return value;
+}
+
+void HELPER(set_cp_reg64)(CPUARMState *env, void *rip, uint64_t value)
+{
+    const ARMCPRegInfo *ri = rip;
+    int excp = ri->writefn(env, ri, value);
+    if (excp) {
+        raise_exception(excp);
+    }
+}
+
+uint64_t HELPER(get_cp_reg64)(CPUARMState *env, void *rip)
+{
+    const ARMCPRegInfo *ri = rip;
+    uint64_t value;
+    int excp = ri->readfn(env, ri, &value);
+    if (excp) {
+        raise_exception(excp);
+    }
+    return value;
 }
 
 /* ??? Flag setting arithmetic is awkward because we need to do comparisons.
@@ -437,53 +463,4 @@ uint32_t HELPER(ror_cc)(uint32_t x, uint32_t i)
         env->CF = (x >> (shift - 1)) & 1;
         return ((uint32_t)x >> shift) | (x << (32 - shift));
     }
-}
-
-uint64_t HELPER(neon_add_saturate_s64)(uint64_t src1, uint64_t src2)
-{
-    uint64_t res;
-
-    res = src1 + src2;
-    if (((res ^ src1) & SIGNBIT64) && !((src1 ^ src2) & SIGNBIT64)) {
-        env->QF = 1;
-        res = ((int64_t)src1 >> 63) ^ ~SIGNBIT64;
-    }
-    return res;
-}
-
-uint64_t HELPER(neon_add_saturate_u64)(uint64_t src1, uint64_t src2)
-{
-    uint64_t res;
-
-    res = src1 + src2;
-    if (res < src1) {
-        env->QF = 1;
-        res = ~(uint64_t)0;
-    }
-    return res;
-}
-
-uint64_t HELPER(neon_sub_saturate_s64)(uint64_t src1, uint64_t src2)
-{
-    uint64_t res;
-
-    res = src1 - src2;
-    if (((res ^ src1) & SIGNBIT64) && ((src1 ^ src2) & SIGNBIT64)) {
-        env->QF = 1;
-        res = ((int64_t)src1 >> 63) ^ ~SIGNBIT64;
-    }
-    return res;
-}
-
-uint64_t HELPER(neon_sub_saturate_u64)(uint64_t src1, uint64_t src2)
-{
-    uint64_t res;
-
-    if (src1 < src2) {
-        env->QF = 1;
-        res = 0;
-    } else {
-        res = src1 - src2;
-    }
-    return res;
 }

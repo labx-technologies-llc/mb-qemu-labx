@@ -6,9 +6,8 @@
 #include "audio_int.h"
 #include "audio_pt_int.h"
 
-#include <signal.h>
-
-static void logerr (struct audio_pt *pt, int err, const char *fmt, ...)
+static void GCC_FMT_ATTR(3, 4) logerr (struct audio_pt *pt, int err,
+                                       const char *fmt, ...)
 {
     va_list ap;
 

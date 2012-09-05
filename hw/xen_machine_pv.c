@@ -24,7 +24,6 @@
 
 #include "hw.h"
 #include "pc.h"
-#include "sysemu.h"
 #include "boards.h"
 #include "xen_backend.h"
 #include "xen_domainbuild.h"
@@ -37,7 +36,8 @@ static void xen_init_pv(ram_addr_t ram_size,
 			const char *initrd_filename,
 			const char *cpu_model)
 {
-    CPUState *env;
+    X86CPU *cpu;
+    CPUX86State *env;
     DriveInfo *dinfo;
     int i;
 
@@ -49,7 +49,8 @@ static void xen_init_pv(ram_addr_t ram_size,
         cpu_model = "qemu32";
 #endif
     }
-    env = cpu_init(cpu_model);
+    cpu = cpu_x86_init(cpu_model);
+    env = &cpu->env;
     env->halted = 1;
 
     /* Initialize backend core & drivers */
@@ -114,6 +115,7 @@ static QEMUMachine xenpv_machine = {
     .desc = "Xen Para-virtualized PC",
     .init = xen_init_pv,
     .max_cpus = 1,
+    .default_machine_opts = "accel=xen",
 };
 
 static void xenpv_machine_init(void)

@@ -2,6 +2,7 @@
  *  Microblaze helper routines.
  *
  *  Copyright (c) 2009 Edgar E. Iglesias <edgar.iglesias@gmail.com>.
+ *  Copyright (c) 2009-2012 PetaLogix Qld Pty Ltd.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -18,13 +19,16 @@
  */
 
 #include <assert.h>
-#include "exec.h"
+#include "cpu.h"
+#include "dyngen-exec.h"
 #include "helper.h"
 #include "host-utils.h"
 
 #define D(x)
 
 #if !defined(CONFIG_USER_ONLY)
+#include "softmmu_exec.h"
+
 #define MMUSUFFIX _mmu
 #define SHIFT 0
 #include "softmmu_template.h"
@@ -39,40 +43,72 @@
    NULL, it means that the function was called in C code (i.e. not
    from generated code or from helper.c) */
 /* XXX: fix it to restore all registers */
-void tlb_fill (target_ulong addr, int is_write, int mmu_idx, void *retaddr)
+void tlb_fill(CPUMBState *env1, target_ulong addr, int is_write, int mmu_idx,
+              uintptr_t retaddr)
 {
     TranslationBlock *tb;
-    CPUState *saved_env;
-    unsigned long pc;
+    CPUMBState *saved_env;
     int ret;
 
-    /* XXX: hack to restore env in all cases, even if not called from
-       generated code */
     saved_env = env;
-    env = cpu_single_env;
+    env = env1;
 
-    ret = cpu_mb_handle_mmu_fault(env, addr, is_write, mmu_idx, 1);
+    ret = cpu_mb_handle_mmu_fault(env, addr, is_write, mmu_idx);
     if (unlikely(ret)) {
         if (retaddr) {
             /* now we have a real cpu fault */
-            pc = (unsigned long)retaddr;
-            tb = tb_find_pc(pc);
+            tb = tb_find_pc(retaddr);
             if (tb) {
                 /* the PC is inside the translated code. It means that we have
                    a virtual CPU fault */
-                cpu_restore_state(tb, env, pc, NULL);
+                cpu_restore_state(tb, env, retaddr);
             }
         }
-        cpu_loop_exit();
+        cpu_loop_exit(env);
     }
     env = saved_env;
 }
 #endif
 
+void helper_put(uint32_t id, uint32_t ctrl, uint32_t data)
+{
+    int test = ctrl & STREAM_TEST;
+    int atomic = ctrl & STREAM_ATOMIC;
+    int control = ctrl & STREAM_CONTROL;
+    int nonblock = ctrl & STREAM_NONBLOCK;
+    int exception = ctrl & STREAM_EXCEPTION;
+
+    qemu_log("Unhandled stream put to stream-id=%d data=%x %s%s%s%s%s\n",
+             id, data,
+             test ? "t" : "",
+             nonblock ? "n" : "",
+             exception ? "e" : "",
+             control ? "c" : "",
+             atomic ? "a" : "");
+}
+
+uint32_t helper_get(uint32_t id, uint32_t ctrl)
+{
+    int test = ctrl & STREAM_TEST;
+    int atomic = ctrl & STREAM_ATOMIC;
+    int control = ctrl & STREAM_CONTROL;
+    int nonblock = ctrl & STREAM_NONBLOCK;
+    int exception = ctrl & STREAM_EXCEPTION;
+
+    qemu_log("Unhandled stream get from stream-id=%d %s%s%s%s%s\n",
+             id,
+             test ? "t" : "",
+             nonblock ? "n" : "",
+             exception ? "e" : "",
+             control ? "c" : "",
+             atomic ? "a" : "");
+    return 0xdead0000 | id;
+}
+
 void helper_raise_exception(uint32_t index)
 {
     env->exception_index = index;
-    cpu_loop_exit();
+    cpu_loop_exit(env);
 }
 
 void helper_debug(void)
@@ -128,48 +164,16 @@ uint32_t helper_cmpu(uint32_t a, uint32_t b)
     return t;
 }
 
-uint32_t helper_addkc(uint32_t a, uint32_t b, uint32_t k, uint32_t c)
+uint32_t helper_clz(uint32_t t0)
 {
-    uint32_t d, cf = 0, ncf;
-
-    if (c)
-        cf = env->sregs[SR_MSR] >> 31;
-    assert(cf == 0 || cf == 1);
-    d = a + b + cf;
-
-    if (!k) {
-        ncf = compute_carry(a, b, cf);
-        assert(ncf == 0 || ncf == 1);
-        if (ncf)
-            env->sregs[SR_MSR] |= MSR_C | MSR_CC;
-        else
-            env->sregs[SR_MSR] &= ~(MSR_C | MSR_CC);
-    }
-    D(qemu_log("%x = %x + %x cf=%d ncf=%d k=%d c=%d\n",
-               d, a, b, cf, ncf, k, c));
-    return d;
+    return clz32(t0);
 }
 
-uint32_t helper_subkc(uint32_t a, uint32_t b, uint32_t k, uint32_t c)
+uint32_t helper_carry(uint32_t a, uint32_t b, uint32_t cf)
 {
-    uint32_t d, cf = 1, ncf;
-
-    if (c)
-        cf = env->sregs[SR_MSR] >> 31; 
-    assert(cf == 0 || cf == 1);
-    d = b + ~a + cf;
-
-    if (!k) {
-        ncf = compute_carry(b, ~a, cf);
-        assert(ncf == 0 || ncf == 1);
-        if (ncf)
-            env->sregs[SR_MSR] |= MSR_C | MSR_CC;
-        else
-            env->sregs[SR_MSR] &= ~(MSR_C | MSR_CC);
-    }
-    D(qemu_log("%x = %x + %x cf=%d ncf=%d k=%d c=%d\n",
-               d, a, b, cf, ncf, k, c));
-    return d;
+    uint32_t ncf;
+    ncf = compute_carry(a, b, cf);
+    return ncf;
 }
 
 static inline int div_prepare(uint32_t a, uint32_t b)
@@ -308,7 +312,7 @@ uint32_t helper_fcmp_un(uint32_t a, uint32_t b)
         r = 1;
     }
 
-    if (float32_is_nan(fa.f) || float32_is_nan(fb.f)) {
+    if (float32_is_quiet_nan(fa.f) || float32_is_quiet_nan(fb.f)) {
         r = 1;
     }
 
@@ -340,7 +344,7 @@ uint32_t helper_fcmp_eq(uint32_t a, uint32_t b)
     set_float_exception_flags(0, &env->fp_status);
     fa.l = a;
     fb.l = b;
-    r = float32_eq(fa.f, fb.f, &env->fp_status);
+    r = float32_eq_quiet(fa.f, fb.f, &env->fp_status);
     flags = get_float_exception_flags(&env->fp_status);
     update_fpu_flags(flags & float_flag_invalid);
 
@@ -386,7 +390,7 @@ uint32_t helper_fcmp_ne(uint32_t a, uint32_t b)
     fa.l = a;
     fb.l = b;
     set_float_exception_flags(0, &env->fp_status);
-    r = !float32_eq(fa.f, fb.f, &env->fp_status);
+    r = !float32_eq_quiet(fa.f, fb.f, &env->fp_status);
     flags = get_float_exception_flags(&env->fp_status);
     update_fpu_flags(flags & float_flag_invalid);
 
@@ -478,6 +482,17 @@ void helper_memalign(uint32_t addr, uint32_t dr, uint32_t wr, uint32_t mask)
     }
 }
 
+void helper_stackprot(uint32_t addr)
+{
+    if (addr < env->slr || addr > env->shr) {
+            qemu_log("Stack protector violation at %x %x %x\n",
+                     addr, env->slr, env->shr);
+            env->sregs[SR_EAR] = addr;
+            env->sregs[SR_ESR] = ESR_EC_STACKPROT;
+            helper_raise_exception(EXCP_HW_EXCP);
+    }
+}
+
 #if !defined(CONFIG_USER_ONLY)
 /* Writes/reads to the MMU's special regs end up here.  */
 uint32_t helper_mmu_read(uint32_t rn)
@@ -490,20 +505,14 @@ void helper_mmu_write(uint32_t rn, uint32_t v)
     mmu_write(env, rn, v);
 }
 
-void do_unassigned_access(target_phys_addr_t addr, int is_write, int is_exec,
-                          int is_asi, int size)
+void cpu_unassigned_access(CPUMBState *env1, target_phys_addr_t addr,
+                           int is_write, int is_exec, int is_asi, int size)
 {
-    CPUState *saved_env;
+    CPUMBState *saved_env;
 
-    if (!cpu_single_env) {
-        /* XXX: ???   */
-        return;
-    }
-
-    /* XXX: hack to restore env in all cases, even if not called from
-       generated code */
     saved_env = env;
-    env = cpu_single_env;
+    env = env1;
+
     qemu_log_mask(CPU_LOG_INT, "Unassigned " TARGET_FMT_plx " wr=%d exe=%d\n",
              addr, is_write, is_exec);
     if (!(env->sregs[SR_MSR] & MSR_EE)) {

@@ -31,7 +31,7 @@ void irq_info(Monitor *mon) {}
 
 static void nios2_pic_cpu_handler(void *opaque, int irq, int level)
 {
-    CPUState *env = (CPUState *)opaque;
+    CPUNios2State *env = (CPUNios2State *)opaque;
     int type = irq ? CPU_INTERRUPT_NMI : CPU_INTERRUPT_HARD;
 
     if (level)
@@ -40,6 +40,6 @@ static void nios2_pic_cpu_handler(void *opaque, int irq, int level)
         cpu_reset_interrupt(env, type);
 }
 
-qemu_irq *nios2_pic_init_cpu(CPUState *env) {
+qemu_irq *nios2_pic_init_cpu(CPUNios2State *env) {
     return qemu_allocate_irqs(nios2_pic_cpu_handler, env, 2);
 }

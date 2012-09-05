@@ -9,19 +9,20 @@
  * This work is licensed under the terms of the GNU GPL, version 2.  See
  * the COPYING file in the top-level directory.
  *
+ * Contributions after 2012-01-13 are licensed under the terms of the
+ * GNU GPL, version 2 or (at your option) any later version.
  */
 
 #include "qemu-common.h"
 #include "monitor.h"
 #include "qemu-timer.h"
 #include "qemu-log.h"
-#include "sysemu.h"
+#include "migration.h"
+#include "main-loop.h"
+#include "qemu_socket.h"
+#include "slirp/libslirp.h"
 
 #include <sys/time.h>
-
-QEMUClock *rt_clock;
-
-FILE *logfile;
 
 struct QEMUBH
 {
@@ -29,8 +30,9 @@ struct QEMUBH
     void *opaque;
 };
 
-void qemu_service_io(void)
+const char *qemu_get_vm_name(void)
 {
+    return NULL;
 }
 
 Monitor *cur_mon;
@@ -56,58 +58,79 @@ void monitor_print_filename(Monitor *mon, const char *filename)
 {
 }
 
-void async_context_push(void)
-{
-}
-
-void async_context_pop(void)
-{
-}
-
-int get_async_context_id(void)
-{
-    return 0;
-}
-
 void monitor_protocol_event(MonitorEvent event, QObject *data)
 {
 }
 
-QEMUBH *qemu_bh_new(QEMUBHFunc *cb, void *opaque)
+int monitor_fdset_get_fd(int64_t fdset_id, int flags)
 {
-    QEMUBH *bh;
-
-    bh = qemu_malloc(sizeof(*bh));
-    bh->cb = cb;
-    bh->opaque = opaque;
-
-    return bh;
+    return -1;
 }
 
-int qemu_bh_poll(void)
+int monitor_fdset_dup_fd_add(int64_t fdset_id, int dup_fd)
 {
-    return 0;
+    return -1;
 }
 
-void qemu_bh_schedule(QEMUBH *bh)
+int monitor_fdset_dup_fd_remove(int dup_fd)
 {
-    bh->cb(bh->opaque);
+    return -1;
 }
 
-void qemu_bh_cancel(QEMUBH *bh)
+int monitor_fdset_dup_fd_find(int dup_fd)
+{
+    return -1;
+}
+
+int64_t cpu_get_clock(void)
+{
+    return qemu_get_clock_ns(rt_clock);
+}
+
+int64_t cpu_get_icount(void)
+{
+    abort();
+}
+
+void qemu_mutex_lock_iothread(void)
 {
 }
 
-void qemu_bh_delete(QEMUBH *bh)
+void qemu_mutex_unlock_iothread(void)
 {
-    qemu_free(bh);
 }
 
-int qemu_set_fd_handler2(int fd,
-                         IOCanReadHandler *fd_read_poll,
-                         IOHandler *fd_read,
-                         IOHandler *fd_write,
-                         void *opaque)
+int use_icount;
+
+void qemu_clock_warp(QEMUClock *clock)
 {
-    return 0;
+}
+
+int qemu_init_main_loop(void)
+{
+    init_clocks();
+    init_timer_alarm();
+    return main_loop_init();
+}
+
+void slirp_update_timeout(uint32_t *timeout)
+{
+}
+
+void slirp_select_fill(int *pnfds, fd_set *readfds,
+                       fd_set *writefds, fd_set *xfds)
+{
+}
+
+void slirp_select_poll(fd_set *readfds, fd_set *writefds,
+                       fd_set *xfds, int select_error)
+{
+}
+
+void migrate_add_blocker(Error *reason)
+{
+}
+
+void migrate_del_blocker(Error *reason)
+{
 }

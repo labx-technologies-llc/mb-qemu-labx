@@ -3117,8 +3117,6 @@ struct mips_arch_choice
 #define bfd_mach_mipsisa64             64
 #define bfd_mach_mipsisa64r2           65
 
-#define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
-
 static const struct mips_arch_choice mips_arch_choices[] =
 {
   { "numeric",	0, 0, 0, 0,
@@ -4843,7 +4841,7 @@ with the -M switch (multiple options should be separated by commas):\n"));
                            Default: based on binary being disassembled.\n"));
 
   fprintf (stream, _("\n\
-  hwr-names=ARCH           Print HWR names according to specified \n\
+  hwr-names=ARCH           Print HWR names according to specified\n\
 			   architecture.\n\
                            Default: based on binary being disassembled.\n"));
 

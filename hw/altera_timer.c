@@ -17,7 +17,7 @@
 
 #include "sysbus.h"
 #include "sysemu.h"
-#include "qemu-timer.h"
+#include "ptimer.h"
 
 #define R_STATUS     0
 #define R_CONTROL    1
@@ -37,6 +37,7 @@
 
 struct altera_timer {
   SysBusDevice  busdev;
+  MemoryRegion  mmio;
   qemu_irq      irq;
   uint32_t      freq_hz;
   QEMUBH       *bh;
@@ -44,7 +45,7 @@ struct altera_timer {
   uint32_t      regs[R_MAX];
 };
 
-static uint32_t timer_readl(void *opaque, target_phys_addr_t addr) {
+static uint64_t timer_read(void *opaque, target_phys_addr_t addr, unsigned int size) {
   struct altera_timer *t = opaque;
   uint32_t r = 0;
 
@@ -73,9 +74,9 @@ static void timer_start(struct altera_timer *t) {
   ptimer_run(t->ptimer, 1);
 }
 
-static void timer_writel(void *opaque, target_phys_addr_t addr, uint32_t value)
-{
+static void timer_write(void *opaque, target_phys_addr_t addr, uint64_t val64, unsigned int size) {
   struct altera_timer *t = opaque;
+  uint32_t value = val64;
   uint32_t count = 0;
 
   addr >>= 2;
@@ -121,16 +122,14 @@ static void timer_writel(void *opaque, target_phys_addr_t addr, uint32_t value)
   qemu_set_irq(t->irq, t->regs[R_STATUS] & t->regs[R_CONTROL] & CONTROL_ITO);
 }
 
-static CPUReadMemoryFunc * const timer_read[] = {
-  &timer_readl,
-  &timer_readl,
-  &timer_readl,
-};
-
-static CPUWriteMemoryFunc * const timer_write[] = {
-  &timer_writel,
-  &timer_writel,
-  &timer_writel,
+static const MemoryRegionOps timer_ops = {
+    .read = timer_read,
+    .write = timer_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+    .valid = {
+        .min_access_size = 1,
+        .max_access_size = 4
+    }
 };
 
 static void timer_hit(void *opaque) {
@@ -145,7 +144,6 @@ static void timer_hit(void *opaque) {
 
 static int altera_timer_init(SysBusDevice *dev) {
   struct altera_timer *t = FROM_SYSBUS(typeof (*t), dev);
-  int timer_regs;
 
   sysbus_init_irq(dev, &t->irq);
 
@@ -153,24 +151,34 @@ static int altera_timer_init(SysBusDevice *dev) {
   t->ptimer = ptimer_init(t->bh);
   ptimer_set_freq(t->ptimer, t->freq_hz);
 
-  timer_regs = cpu_register_io_memory(timer_read, timer_write, t);
-  sysbus_init_mmio(dev, R_MAX * 4, timer_regs);
+  memory_region_init_io(&t->mmio, &timer_ops, t, "altera,timer", R_MAX * sizeof(uint32_t));
+  sysbus_init_mmio(dev, &t->mmio);
   return 0;
 }
 
-static SysBusDeviceInfo altera_timer_info = {
-  .init = altera_timer_init,
-  .qdev.name  = "altera,timer",
-  .qdev.size  = sizeof(struct altera_timer),
-  .qdev.props = (Property[]) {
+static Property altera_timer_properties[] = {
     DEFINE_PROP_UINT32("frequency", struct altera_timer, freq_hz, 0),
     DEFINE_PROP_END_OF_LIST(),
-  }
 };
 
-static void altera_timer_register(void)
-{
-    sysbus_register_withprop(&altera_timer_info);
+static void altera_timer_class_init(ObjectClass *klass, void *data) {
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+
+    k->init = altera_timer_init;
+    dc->props = altera_timer_properties;
 }
 
-device_init(altera_timer_register)
+static TypeInfo altera_timer_info = {
+    .name          = "altera,timer",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(struct altera_timer),
+    .class_init    = altera_timer_class_init,
+};
+
+static void altera_timer_register(void) {
+    type_register_static(&altera_timer_info);
+}
+
+type_init(altera_timer_register)
+

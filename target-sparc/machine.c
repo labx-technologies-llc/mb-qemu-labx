@@ -2,11 +2,11 @@
 #include "hw/boards.h"
 #include "qemu-timer.h"
 
-#include "exec-all.h"
+#include "cpu.h"
 
 void cpu_save(QEMUFile *f, void *opaque)
 {
-    CPUState *env = opaque;
+    CPUSPARCState *env = opaque;
     int i;
     uint32_t tmp;
 
@@ -21,13 +21,9 @@ void cpu_save(QEMUFile *f, void *opaque)
         qemu_put_betls(f, &env->regbase[i]);
 
     /* FPU */
-    for(i = 0; i < TARGET_FPREGS; i++) {
-        union {
-            float32 f;
-            uint32_t i;
-        } u;
-        u.f = env->fpr[i];
-        qemu_put_be32(f, u.i);
+    for (i = 0; i < TARGET_DPREGS; i++) {
+        qemu_put_be32(f, env->fpr[i].l.upper);
+        qemu_put_be32(f, env->fpr[i].l.lower);
     }
 
     qemu_put_betls(f, &env->pc);
@@ -45,6 +41,19 @@ void cpu_save(QEMUFile *f, void *opaque)
     /* MMU */
     for (i = 0; i < 32; i++)
         qemu_put_be32s(f, &env->mmuregs[i]);
+    for (i = 0; i < 4; i++) {
+        qemu_put_be64s(f, &env->mxccdata[i]);
+    }
+    for (i = 0; i < 8; i++) {
+        qemu_put_be64s(f, &env->mxccregs[i]);
+    }
+    qemu_put_be32s(f, &env->mmubpctrv);
+    qemu_put_be32s(f, &env->mmubpctrc);
+    qemu_put_be32s(f, &env->mmubpctrs);
+    qemu_put_be64s(f, &env->mmubpaction);
+    for (i = 0; i < 4; i++) {
+        qemu_put_be64s(f, &env->mmubpregs[i]);
+    }
 #else
     qemu_put_be64s(f, &env->lsu);
     for (i = 0; i < 16; i++) {
@@ -102,7 +111,7 @@ void cpu_save(QEMUFile *f, void *opaque)
 
 int cpu_load(QEMUFile *f, void *opaque, int version_id)
 {
-    CPUState *env = opaque;
+    CPUSPARCState *env = opaque;
     int i;
     uint32_t tmp;
 
@@ -115,13 +124,9 @@ int cpu_load(QEMUFile *f, void *opaque, int version_id)
         qemu_get_betls(f, &env->regbase[i]);
 
     /* FPU */
-    for(i = 0; i < TARGET_FPREGS; i++) {
-        union {
-            float32 f;
-            uint32_t i;
-        } u;
-        u.i = qemu_get_be32(f);
-        env->fpr[i] = u.f;
+    for (i = 0; i < TARGET_DPREGS; i++) {
+        env->fpr[i].l.upper = qemu_get_be32(f);
+        env->fpr[i].l.lower = qemu_get_be32(f);
     }
 
     qemu_get_betls(f, &env->pc);
@@ -141,6 +146,19 @@ int cpu_load(QEMUFile *f, void *opaque, int version_id)
     /* MMU */
     for (i = 0; i < 32; i++)
         qemu_get_be32s(f, &env->mmuregs[i]);
+    for (i = 0; i < 4; i++) {
+        qemu_get_be64s(f, &env->mxccdata[i]);
+    }
+    for (i = 0; i < 8; i++) {
+        qemu_get_be64s(f, &env->mxccregs[i]);
+    }
+    qemu_get_be32s(f, &env->mmubpctrv);
+    qemu_get_be32s(f, &env->mmubpctrc);
+    qemu_get_be32s(f, &env->mmubpctrs);
+    qemu_get_be64s(f, &env->mmubpaction);
+    for (i = 0; i < 4; i++) {
+        qemu_get_be64s(f, &env->mmubpregs[i]);
+    }
 #else
     qemu_get_be64s(f, &env->lsu);
     for (i = 0; i < 16; i++) {

@@ -19,13 +19,17 @@
 #ifndef CPU_NIOS2_H
 #define CPU_NIOS2_H
 
+#include "config.h"
+#include "qemu-common.h"
+
 #define TARGET_LONG_BITS 32
 
-#define CPUState struct CPUNios2State
+#define CPUArchState struct CPUNios2State
 
 #include "cpu-defs.h"
 #include "softfloat.h"
 struct CPUNios2State;
+typedef struct CPUNios2State CPUNios2State;
 #if !defined(CONFIG_USER_ONLY)
 #include "mmu.h"
 #endif
@@ -129,6 +133,8 @@ struct CPUNios2State;
 #define EXCP_MPUI     16
 #define EXCP_MPUD     17
 
+#define CPU_INTERRUPT_NMI       CPU_INTERRUPT_TGT_EXT_3
+
 #define NB_MMU_MODES 2
 
 typedef struct CPUNios2State {
@@ -141,17 +147,27 @@ typedef struct CPUNios2State {
     CPU_COMMON
 } CPUNios2State;
 
-CPUState *cpu_nios2_init(const char *cpu_model);
-int cpu_nios2_exec(CPUState *s);
-void cpu_nios2_close(CPUState *s);
-void do_interrupt(CPUState *env);
+#include "cpu-qom.h"
+
+Nios2CPU *cpu_nios2_init(const char *cpu_model);
+int cpu_nios2_exec(CPUNios2State *s);
+void cpu_nios2_close(CPUNios2State *s);
+void do_interrupt(CPUNios2State *env);
 int cpu_nios2_signal_handler(int host_signum, void *pinfo,
                           void *puc);
 
 #define TARGET_PHYS_ADDR_SPACE_BITS 32
 #define TARGET_VIRT_ADDR_SPACE_BITS 32
 
-#define cpu_init cpu_nios2_init
+static inline CPUNios2State *cpu_init(const char *cpu_model)
+{
+    Nios2CPU *cpu = cpu_nios2_init(cpu_model);
+    if (cpu == NULL) {
+        return NULL;
+    }
+    return &cpu->env;
+}
+
 #define cpu_exec cpu_nios2_exec
 #define cpu_gen_code cpu_nios2_gen_code
 #define cpu_signal_handler cpu_nios2_signal_handler
@@ -166,17 +182,17 @@ int cpu_nios2_signal_handler(int host_signum, void *pinfo,
 #define MMU_SUPERVISOR_IDX  0
 #define MMU_USER_IDX        1
 
-static inline int cpu_mmu_index (CPUState *env)
+static inline int cpu_mmu_index (CPUNios2State *env)
 {
     return (env->regs[CR_STATUS] & CR_STATUS_U) ? MMU_USER_IDX : MMU_SUPERVISOR_IDX;
 }
 
-int cpu_nios2_handle_mmu_fault(CPUState *env, target_ulong address, int rw,
+int cpu_nios2_handle_mmu_fault(CPUNios2State *env, target_ulong address, int rw,
                                int mmu_idx, int is_softmmu);
 #define cpu_handle_mmu_fault cpu_nios2_handle_mmu_fault
 
 #if defined(CONFIG_USER_ONLY)
-static inline void cpu_clone_regs(CPUState *env, target_ulong newsp)
+static inline void cpu_clone_regs(CPUNios2State *env, target_ulong newsp)
 {
     if (newsp)
         env->regs[R_SP] = newsp;
@@ -184,23 +200,23 @@ static inline void cpu_clone_regs(CPUState *env, target_ulong newsp)
 }
 #endif
 
-static inline void cpu_set_tls(CPUState *env, target_ulong newtls)
+static inline void cpu_set_tls(CPUNios2State *env, target_ulong newtls)
 {
 }
 
-static inline int cpu_interrupts_enabled(CPUState *env)
+static inline int cpu_interrupts_enabled(CPUNios2State *env)
 {
     return env->regs[CR_STATUS] & CR_STATUS_PIE;
 }
 
 #include "cpu-all.h"
 
-static inline target_ulong cpu_get_pc(CPUState *env)
+static inline target_ulong cpu_get_pc(CPUNios2State *env)
 {
     return env->regs[R_PC];
 }
 
-static inline void cpu_get_tb_cpu_state(CPUState *env, target_ulong *pc,
+static inline void cpu_get_tb_cpu_state(CPUNios2State *env, target_ulong *pc,
                                         target_ulong *cs_base, int *flags)
 {
     *pc = env->regs[R_PC];
@@ -209,9 +225,21 @@ static inline void cpu_get_tb_cpu_state(CPUState *env, target_ulong *pc,
 }
 
 #if !defined(CONFIG_USER_ONLY)
-void do_unassigned_access(target_phys_addr_t addr, int is_write, int is_exec,
-                          int is_asi, int size);
+void cpu_unassigned_access(CPUNios2State *env1, target_phys_addr_t addr,
+                           int is_write, int is_exec, int is_asi, int size);
 #endif
+
+static inline bool cpu_has_work(CPUNios2State *env)
+{
+    return env->interrupt_request & (CPU_INTERRUPT_HARD | CPU_INTERRUPT_NMI);
+}
+
+#include "exec-all.h"
+
+static inline void cpu_pc_from_tb(CPUNios2State *env, TranslationBlock *tb)
+{
+    env->regs[R_PC] = tb->pc;
+}
 
 #endif // CPU_NIOS2_H
 

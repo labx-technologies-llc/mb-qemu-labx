@@ -39,6 +39,10 @@ struct audio_depacketizer
 {
     SysBusDevice busdev;
 
+    MemoryRegion  mmio_depacketizer;
+    MemoryRegion  mmio_clock_domain;
+    MemoryRegion  mmio_microcode;
+
     /* Device Configuration */
     uint32_t baseAddress;
     uint32_t clockDomains;
@@ -68,7 +72,7 @@ struct audio_depacketizer
 /*
  * Depacketizer registers
  */
-static uint32_t depacketizer_regs_readl (void *opaque, target_phys_addr_t addr)
+static uint64_t depacketizer_regs_read(void *opaque, target_phys_addr_t addr, unsigned int size)
 {
     struct audio_depacketizer *p = opaque;
 
@@ -145,9 +149,10 @@ static uint32_t depacketizer_regs_readl (void *opaque, target_phys_addr_t addr)
     return retval;
 }
 
-static void depacketizer_regs_writel (void *opaque, target_phys_addr_t addr, uint32_t value)
+static void depacketizer_regs_write(void *opaque, target_phys_addr_t addr, uint64_t val64, unsigned int size)
 {
     //struct audio_depacketizer *p = opaque;
+    uint32_t value = val64;
 
     switch ((addr>>2) & 0xFF)
     {
@@ -211,21 +216,21 @@ static void depacketizer_regs_writel (void *opaque, target_phys_addr_t addr, uin
     }
 }
 
-static CPUReadMemoryFunc * const depacketizer_regs_read[] = {
-    NULL, NULL,
-    &depacketizer_regs_readl,
-};
-
-static CPUWriteMemoryFunc * const depacketizer_regs_write[] = {
-    NULL, NULL,
-    &depacketizer_regs_writel,
+static const MemoryRegionOps depacketizer_regs_ops = {
+    .read = depacketizer_regs_read,
+    .write = depacketizer_regs_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+    .valid = {
+        .min_access_size = 4,
+        .max_access_size = 4
+    }
 };
 
 
 /*
  * Clock domain registers
  */
-static uint32_t clock_domain_regs_readl (void *opaque, target_phys_addr_t addr)
+static uint64_t clock_domain_regs_read(void *opaque, target_phys_addr_t addr, unsigned int size)
 {
     struct audio_depacketizer *p = opaque;
 
@@ -257,9 +262,10 @@ static uint32_t clock_domain_regs_readl (void *opaque, target_phys_addr_t addr)
     return retval;
 }
 
-static void clock_domain_regs_writel (void *opaque, target_phys_addr_t addr, uint32_t value)
+static void clock_domain_regs_write(void *opaque, target_phys_addr_t addr, uint64_t val64, unsigned int size)
 {
     struct audio_depacketizer *p = opaque;
+    uint32_t value = val64;
     int domain = (addr>>6) & ((1<<min_bits(p->clockDomains-1))-1);
 
     switch ((addr>>2)&0x10)
@@ -285,66 +291,63 @@ static void clock_domain_regs_writel (void *opaque, target_phys_addr_t addr, uin
     }
 }
 
-static CPUReadMemoryFunc * const clock_domain_regs_read[] = {
-    NULL, NULL,
-    &clock_domain_regs_readl,
-};
-
-static CPUWriteMemoryFunc * const clock_domain_regs_write[] = {
-    NULL, NULL,
-    &clock_domain_regs_writel,
+static const MemoryRegionOps clock_domain_regs_ops = {
+    .read = clock_domain_regs_read,
+    .write = clock_domain_regs_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+    .valid = {
+        .min_access_size = 4,
+        .max_access_size = 4
+    }
 };
 
 
 /*
  * Microcode RAM
  */
-static uint32_t microcode_ram_readl (void *opaque, target_phys_addr_t addr)
-{
+static uint64_t microcode_ram_read(void *opaque, target_phys_addr_t addr, unsigned int size) {
     struct audio_depacketizer *p = opaque;
 
     return p->microcodeRam[RAM_INDEX(addr, p->microcodeWords)];
 }
 
-static void microcode_ram_writel (void *opaque, target_phys_addr_t addr, uint32_t value)
-{
+static void microcode_ram_write(void *opaque, target_phys_addr_t addr, uint64_t val64, unsigned int size) {
     struct audio_depacketizer *p = opaque;
+    uint32_t value = val64;
 
     p->microcodeRam[RAM_INDEX(addr, p->microcodeWords)] = value;
 }
 
-static CPUReadMemoryFunc * const microcode_ram_read[] = {
-    NULL, NULL,
-    &microcode_ram_readl,
+static const MemoryRegionOps microcode_ram_ops = {
+    .read = microcode_ram_read,
+    .write = microcode_ram_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+    .valid = {
+        .min_access_size = 4,
+        .max_access_size = 4
+    }
 };
 
-static CPUWriteMemoryFunc * const microcode_ram_write[] = {
-    NULL, NULL,
-    &microcode_ram_writel,
-};
 
 static int labx_audio_depacketizer_init(SysBusDevice *dev)
 {
     struct audio_depacketizer *p = FROM_SYSBUS(typeof (*p), dev);
-    int depacketizer_regs;
-    int clock_domain_regs;
-    int microcode_ram;
 
     /* Initialize defaults */
-    p->microcodeRam = qemu_malloc(p->microcodeWords*4);
-    p->clockDomainInfo = qemu_malloc(sizeof(struct clock_domain_info)*p->clockDomains);
+    p->microcodeRam = g_malloc0(p->microcodeWords*4);
+    p->clockDomainInfo = g_malloc0(sizeof(struct clock_domain_info)*p->clockDomains);
 
     /* Set up the IRQ */
     sysbus_init_irq(dev, &p->irq);
 
     /* Set up memory regions */
-    depacketizer_regs = cpu_register_io_memory(depacketizer_regs_read, depacketizer_regs_write, p);
-    clock_domain_regs = cpu_register_io_memory(clock_domain_regs_read, clock_domain_regs_write, p);
-    microcode_ram = cpu_register_io_memory(microcode_ram_read, microcode_ram_write, p);
+    memory_region_init_io(&p->mmio_depacketizer, &depacketizer_regs_ops, p, "labx,audio-depacketizer-regs",      0x100 * 4);
+    memory_region_init_io(&p->mmio_clock_domain, &clock_domain_regs_ops, p, "labx,audio-depacketizer-cd-regs",   0x10 * 4 * p->clockDomains);
+    memory_region_init_io(&p->mmio_microcode,    &microcode_ram_ops,     p, "labx,audio-depacketizer-microcode", 4 * p->microcodeWords);
 
-    sysbus_init_mmio(dev, 0x100 * 4, depacketizer_regs);
-    sysbus_init_mmio(dev, 0x10 * 4 * p->clockDomains, clock_domain_regs);
-    sysbus_init_mmio(dev, 4 * p->microcodeWords, microcode_ram);
+    sysbus_init_mmio(dev, &p->mmio_depacketizer);
+    sysbus_init_mmio(dev, &p->mmio_clock_domain);
+    sysbus_init_mmio(dev, &p->mmio_microcode);
 
     sysbus_mmio_map(dev, 0, p->baseAddress);
     sysbus_mmio_map(dev, 1, p->baseAddress + (1 << (min_bits(p->microcodeWords-1)+2)));
@@ -358,28 +361,37 @@ static int labx_audio_depacketizer_init(SysBusDevice *dev)
     return 0;
 }
 
-static SysBusDeviceInfo labx_audio_depacketizer_info = {
-    .init = labx_audio_depacketizer_init,
-    .qdev.name  = "labx,audio-depacketizer",
-    .qdev.size  = sizeof(struct audio_depacketizer),
-    .qdev.props = (Property[]) {
-        DEFINE_PROP_UINT32("baseAddress",        struct audio_depacketizer, baseAddress,        0),
-        DEFINE_PROP_UINT32("clockDomains",       struct audio_depacketizer, clockDomains,       1),
-        DEFINE_PROP_UINT32("cacheDataWords",     struct audio_depacketizer, cacheDataWords,     1024),
-        DEFINE_PROP_UINT32("paramWords",         struct audio_depacketizer, paramWords,         1024),
-        DEFINE_PROP_UINT32("microcodeWords",     struct audio_depacketizer, microcodeWords,     1024),
-        DEFINE_PROP_UINT32("maxStreamSlots",     struct audio_depacketizer, maxStreamSlots,     32),
-        DEFINE_PROP_UINT32("maxStreams",         struct audio_depacketizer, maxStreams,         128),
-        DEFINE_PROP_UINT32("hasDMA",             struct audio_depacketizer, hasDMA,             1),
-        DEFINE_PROP_UINT32("matchArch",          struct audio_depacketizer, matchArch,          255),
-        DEFINE_PROP_END_OF_LIST(),
-    }
+static Property labx_audio_depacketizer_properties[] = {
+    DEFINE_PROP_UINT32("baseAddress",        struct audio_depacketizer, baseAddress,        0),
+    DEFINE_PROP_UINT32("clockDomains",       struct audio_depacketizer, clockDomains,       1),
+    DEFINE_PROP_UINT32("cacheDataWords",     struct audio_depacketizer, cacheDataWords,     1024),
+    DEFINE_PROP_UINT32("paramWords",         struct audio_depacketizer, paramWords,         1024),
+    DEFINE_PROP_UINT32("microcodeWords",     struct audio_depacketizer, microcodeWords,     1024),
+    DEFINE_PROP_UINT32("maxStreamSlots",     struct audio_depacketizer, maxStreamSlots,     32),
+    DEFINE_PROP_UINT32("maxStreams",         struct audio_depacketizer, maxStreams,         128),
+    DEFINE_PROP_UINT32("hasDMA",             struct audio_depacketizer, hasDMA,             1),
+    DEFINE_PROP_UINT32("matchArch",          struct audio_depacketizer, matchArch,          255),
+    DEFINE_PROP_END_OF_LIST(),
 };
 
-static void labx_audio_depacketizer_register(void)
-{
-    sysbus_register_withprop(&labx_audio_depacketizer_info);
+static void labx_audio_depacketizer_class_init(ObjectClass *klass, void *data) {
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+
+    k->init = labx_audio_depacketizer_init;
+    dc->props = labx_audio_depacketizer_properties;
 }
 
-device_init(labx_audio_depacketizer_register)
+static TypeInfo labx_audio_depacketizer_info = {
+    .name          = "labx,audio-depacketizer",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(struct audio_depacketizer),
+    .class_init    = labx_audio_depacketizer_class_init,
+};
+
+static void labx_audio_depacketizer_register(void) {
+    type_register_static(&labx_audio_depacketizer_info);
+}
+
+type_init(labx_audio_depacketizer_register)
 

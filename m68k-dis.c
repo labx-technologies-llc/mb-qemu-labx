@@ -1732,7 +1732,7 @@ match_insn_m68k (bfd_vma memaddr,
   const char *d;
 
   bfd_byte *buffer = priv->the_buffer;
-  fprintf_ftype save_printer = info->fprintf_func;
+  fprintf_function save_printer = info->fprintf_func;
   void (* save_print_address) (bfd_vma, struct disassemble_info *)
     = info->print_address_func;
 
@@ -3518,7 +3518,7 @@ const struct m68k_opcode m68k_opcodes[] =
 
 /* NOTE: The mcf5200 family programmer's reference manual does not
    indicate the byte form of the movea instruction is invalid (as it
-   is on 68000 family cpus).  However, experiments on the 5202 yeild
+   is on 68000 family cpus).  However, experiments on the 5202 yield
    unexpected results.  The value is copied, but it is not sign extended
    (as is done with movea.w) and the top three bytes in the address
    register are not disturbed.  I don't know if this is the intended

@@ -38,6 +38,10 @@ struct labx_ptp
 {
     SysBusDevice busdev;
 
+    MemoryRegion  mmio_ptp;
+    MemoryRegion  mmio_tx;
+    MemoryRegion  mmio_rx;
+
     /* Device Configuration */
     uint32_t baseAddress;
 
@@ -53,7 +57,7 @@ struct labx_ptp
 /*
  * PTP registers
  */
-static uint32_t ptp_regs_readl (void *opaque, target_phys_addr_t addr)
+static uint64_t ptp_regs_read(void *opaque, target_phys_addr_t addr, unsigned int size)
 {
     //struct labx_ptp *p = opaque;
 
@@ -109,9 +113,10 @@ static uint32_t ptp_regs_readl (void *opaque, target_phys_addr_t addr)
     return retval;
 }
 
-static void ptp_regs_writel (void *opaque, target_phys_addr_t addr, uint32_t value)
+static void ptp_regs_write(void *opaque, target_phys_addr_t addr, uint64_t val64, unsigned int size)
 {
     //struct labx_ptp *p = opaque;
+    uint32_t value = val64;
 
     switch ((addr>>2) & 0x0F)
     {
@@ -160,90 +165,91 @@ static void ptp_regs_writel (void *opaque, target_phys_addr_t addr, uint32_t val
     }
 }
 
-static CPUReadMemoryFunc * const ptp_regs_read[] = {
-    NULL, NULL,
-    &ptp_regs_readl,
-};
-
-static CPUWriteMemoryFunc * const ptp_regs_write[] = {
-    NULL, NULL,
-    &ptp_regs_writel,
+static const MemoryRegionOps ptp_regs_ops = {
+    .read = ptp_regs_read,
+    .write = ptp_regs_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+    .valid = {
+        .min_access_size = 4,
+        .max_access_size = 4
+    }
 };
 
 
 /*
  * Tx Ram
  */
-static uint32_t tx_ram_readl (void *opaque, target_phys_addr_t addr)
+static uint64_t tx_ram_read(void *opaque, target_phys_addr_t addr, unsigned int size)
 {
     struct labx_ptp *p = opaque;
 
     return p->txRam[RAM_INDEX(addr, PTP_HOST_RAM_WORDS)];
 }
 
-static void tx_ram_writel (void *opaque, target_phys_addr_t addr, uint32_t value)
+static void tx_ram_write(void *opaque, target_phys_addr_t addr, uint64_t val64, unsigned int size)
 {
     struct labx_ptp *p = opaque;
+    uint32_t value = val64;
 
     p->txRam[RAM_INDEX(addr, PTP_HOST_RAM_WORDS)] = value;
 }
 
-static CPUReadMemoryFunc * const tx_ram_read[] = {
-    NULL, NULL,
-    &tx_ram_readl,
+static const MemoryRegionOps tx_ram_ops = {
+    .read = tx_ram_read,
+    .write = tx_ram_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+    .valid = {
+        .min_access_size = 4,
+        .max_access_size = 4
+    }
 };
 
-static CPUWriteMemoryFunc * const tx_ram_write[] = {
-    NULL, NULL,
-    &tx_ram_writel,
-};
 
 /*
  * Rx Ram
  */
-static uint32_t rx_ram_readl (void *opaque, target_phys_addr_t addr)
+static uint64_t rx_ram_read(void *opaque, target_phys_addr_t addr, unsigned int size)
 {
     struct labx_ptp *p = opaque;
 
     return p->rxRam[RAM_INDEX(addr, PTP_HOST_RAM_WORDS)];
 }
 
-static void rx_ram_writel (void *opaque, target_phys_addr_t addr, uint32_t value)
+static void rx_ram_write(void *opaque, target_phys_addr_t addr, uint64_t val64, unsigned int size)
 {
     struct labx_ptp *p = opaque;
+    uint32_t value = val64;
 
     p->rxRam[RAM_INDEX(addr, PTP_HOST_RAM_WORDS)] = value;
 }
 
-static CPUReadMemoryFunc * const rx_ram_read[] = {
-    NULL, NULL,
-    &rx_ram_readl,
+static const MemoryRegionOps rx_ram_ops = {
+    .read = rx_ram_read,
+    .write = rx_ram_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+    .valid = {
+        .min_access_size = 4,
+        .max_access_size = 4
+    }
 };
 
-static CPUWriteMemoryFunc * const rx_ram_write[] = {
-    NULL, NULL,
-    &rx_ram_writel,
-};
 
 static int labx_ptp_init(SysBusDevice *dev)
 {
     struct labx_ptp *p = FROM_SYSBUS(typeof (*p), dev);
-    int ptp_regs;
-    int tx_ram;
-    int rx_ram;
 
     /* Initialize defaults */
-    p->txRam = qemu_malloc(PTP_RAM_BYTES);
-    p->rxRam = qemu_malloc(PTP_RAM_BYTES);
+    p->txRam = g_malloc0(PTP_RAM_BYTES);
+    p->rxRam = g_malloc0(PTP_RAM_BYTES);
 
     /* Set up memory regions */
-    ptp_regs = cpu_register_io_memory(ptp_regs_read, ptp_regs_write, p);
-    tx_ram = cpu_register_io_memory(tx_ram_read, tx_ram_write, p);
-    rx_ram = cpu_register_io_memory(rx_ram_read, rx_ram_write, p);
+    memory_region_init_io(&p->mmio_ptp, &ptp_regs_ops, p, "labx,ptp-regs", 0x100 * 4);
+    memory_region_init_io(&p->mmio_tx,  &tx_ram_ops,   p, "labx,ptp-tx",   PTP_RAM_BYTES);
+    memory_region_init_io(&p->mmio_rx,  &rx_ram_ops,   p, "labx,ptp-rx",   PTP_RAM_BYTES);
 
-    sysbus_init_mmio(dev, 0x100 * 4, ptp_regs);
-    sysbus_init_mmio(dev, PTP_RAM_BYTES, tx_ram);
-    sysbus_init_mmio(dev, PTP_RAM_BYTES, rx_ram);
+    sysbus_init_mmio(dev, &p->mmio_ptp);
+    sysbus_init_mmio(dev, &p->mmio_tx);
+    sysbus_init_mmio(dev, &p->mmio_rx);
 
     sysbus_mmio_map(dev, 0, p->baseAddress);
     sysbus_mmio_map(dev, 1, p->baseAddress + (1 << min_bits(PTP_RAM_BYTES-1)));
@@ -252,20 +258,29 @@ static int labx_ptp_init(SysBusDevice *dev)
     return 0;
 }
 
-static SysBusDeviceInfo labx_ptp_info = {
-    .init = labx_ptp_init,
-    .qdev.name  = "labx,ptp",
-    .qdev.size  = sizeof(struct labx_ptp),
-    .qdev.props = (Property[]) {
-        DEFINE_PROP_UINT32("baseAddress",        struct labx_ptp, baseAddress,        0),
-        DEFINE_PROP_END_OF_LIST(),
-    }
+static Property labx_ptp_properties[] = {
+    DEFINE_PROP_UINT32("baseAddress",        struct labx_ptp, baseAddress,        0),
+    DEFINE_PROP_END_OF_LIST(),
 };
 
-static void labx_ptp_register(void)
-{
-    sysbus_register_withprop(&labx_ptp_info);
+static void labx_ptp_class_init(ObjectClass *klass, void *data) {
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+
+    k->init = labx_ptp_init;
+    dc->props = labx_ptp_properties;
 }
 
-device_init(labx_ptp_register)
+static TypeInfo labx_ptp_info = {
+    .name          = "labx,ptp",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(struct labx_ptp),
+    .class_init    = labx_ptp_class_init,
+};
+
+static void labx_ptp_register(void) {
+    type_register_static(&labx_ptp_info);
+}
+
+type_init(labx_ptp_register)
 

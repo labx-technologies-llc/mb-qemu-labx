@@ -4,7 +4,7 @@
  * Copyright (c) 2006 CodeSourcery.
  * Written by Paul Brook
  *
- * This code is licenced under the GPL.
+ * This code is licensed under the GPL.
  */
 
 #include "sysbus.h"
@@ -17,11 +17,11 @@
 
 typedef struct {
     SysBusDevice busdev;
+    MemoryRegion iomem;
     uint32_t level;
     uint32_t soft_level;
     uint32_t irq_enable;
     uint32_t fiq_select;
-    uint32_t default_addr;
     uint8_t vect_control[16];
     uint32_t vect_addr[PL190_NUM_PRIO];
     /* Mask containing interrupts with higher priority than this one.  */
@@ -85,7 +85,8 @@ static void pl190_update_vectors(pl190_state *s)
     pl190_update(s);
 }
 
-static uint32_t pl190_read(void *opaque, target_phys_addr_t offset)
+static uint64_t pl190_read(void *opaque, target_phys_addr_t offset,
+                           unsigned size)
 {
     pl190_state *s = (pl190_state *)opaque;
     int i;
@@ -141,7 +142,8 @@ static uint32_t pl190_read(void *opaque, target_phys_addr_t offset)
     }
 }
 
-static void pl190_write(void *opaque, target_phys_addr_t offset, uint32_t val)
+static void pl190_write(void *opaque, target_phys_addr_t offset,
+                        uint64_t val, unsigned size)
 {
     pl190_state *s = (pl190_state *)opaque;
 
@@ -186,7 +188,7 @@ static void pl190_write(void *opaque, target_phys_addr_t offset, uint32_t val)
             s->priority = s->prev_prio[s->priority];
         break;
     case 13: /* DEFVECTADDR */
-        s->default_addr = val;
+        s->vect_addr[16] = val;
         break;
     case 0xc0: /* ITCR */
         if (val) {
@@ -200,20 +202,15 @@ static void pl190_write(void *opaque, target_phys_addr_t offset, uint32_t val)
     pl190_update(s);
 }
 
-static CPUReadMemoryFunc * const pl190_readfn[] = {
-   pl190_read,
-   pl190_read,
-   pl190_read
+static const MemoryRegionOps pl190_ops = {
+    .read = pl190_read,
+    .write = pl190_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
 };
 
-static CPUWriteMemoryFunc * const pl190_writefn[] = {
-   pl190_write,
-   pl190_write,
-   pl190_write
-};
-
-static void pl190_reset(pl190_state *s)
+static void pl190_reset(DeviceState *d)
 {
+  pl190_state *s = DO_UPCAST(pl190_state, busdev.qdev, d);
   int i;
 
   for (i = 0; i < 16; i++)
@@ -230,22 +227,55 @@ static void pl190_reset(pl190_state *s)
 static int pl190_init(SysBusDevice *dev)
 {
     pl190_state *s = FROM_SYSBUS(pl190_state, dev);
-    int iomemtype;
 
-    iomemtype = cpu_register_io_memory(pl190_readfn,
-                                       pl190_writefn, s);
-    sysbus_init_mmio(dev, 0x1000, iomemtype);
+    memory_region_init_io(&s->iomem, &pl190_ops, s, "pl190", 0x1000);
+    sysbus_init_mmio(dev, &s->iomem);
     qdev_init_gpio_in(&dev->qdev, pl190_set_irq, 32);
     sysbus_init_irq(dev, &s->irq);
     sysbus_init_irq(dev, &s->fiq);
-    pl190_reset(s);
-    /* ??? Save/restore.  */
     return 0;
 }
 
-static void pl190_register_devices(void)
+static const VMStateDescription vmstate_pl190 = {
+    .name = "pl190",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .fields = (VMStateField[]) {
+        VMSTATE_UINT32(level, pl190_state),
+        VMSTATE_UINT32(soft_level, pl190_state),
+        VMSTATE_UINT32(irq_enable, pl190_state),
+        VMSTATE_UINT32(fiq_select, pl190_state),
+        VMSTATE_UINT8_ARRAY(vect_control, pl190_state, 16),
+        VMSTATE_UINT32_ARRAY(vect_addr, pl190_state, PL190_NUM_PRIO),
+        VMSTATE_UINT32_ARRAY(prio_mask, pl190_state, PL190_NUM_PRIO+1),
+        VMSTATE_INT32(protected, pl190_state),
+        VMSTATE_INT32(priority, pl190_state),
+        VMSTATE_INT32_ARRAY(prev_prio, pl190_state, PL190_NUM_PRIO),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static void pl190_class_init(ObjectClass *klass, void *data)
 {
-    sysbus_register_dev("pl190", sizeof(pl190_state), pl190_init);
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+
+    k->init = pl190_init;
+    dc->no_user = 1;
+    dc->reset = pl190_reset;
+    dc->vmsd = &vmstate_pl190;
 }
 
-device_init(pl190_register_devices)
+static TypeInfo pl190_info = {
+    .name          = "pl190",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(pl190_state),
+    .class_init    = pl190_class_init,
+};
+
+static void pl190_register_types(void)
+{
+    type_register_static(&pl190_info);
+}
+
+type_init(pl190_register_types)

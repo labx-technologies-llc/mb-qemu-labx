@@ -20,6 +20,8 @@
 
 #include "optionrom.h"
 
+#define BOOT_ROM_PRODUCT "multiboot loader"
+
 #define MULTIBOOT_MAGIC		0x2badb002
 
 #define GS_PROT_JUMP		0
@@ -48,7 +50,7 @@ run_multiboot:
 	shr		$0x4, %ecx
 	mov		%cx, %gs
 
-	/* now push the indirect jump decriptor there */
+	/* now push the indirect jump descriptor there */
 	mov		(prot_jump), %ebx
 	add		%eax, %ebx
 	movl		%ebx, %gs:GS_PROT_JUMP

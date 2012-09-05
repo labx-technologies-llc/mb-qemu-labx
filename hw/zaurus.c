@@ -16,17 +16,19 @@
  * with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 #include "hw.h"
-#include "pxa.h"
 #include "sharpsl.h"
+#include "sysbus.h"
 
 #undef REG_FMT
 #define REG_FMT			"0x%02lx"
 
 /* SCOOP devices */
 
+typedef struct ScoopInfo ScoopInfo;
 struct ScoopInfo {
+    SysBusDevice busdev;
     qemu_irq handler[16];
-    qemu_irq *in;
+    MemoryRegion iomem;
     uint16_t status;
     uint16_t power;
     uint32_t gpio_level;
@@ -66,11 +68,12 @@ static inline void scoop_gpio_handler_update(ScoopInfo *s) {
     s->prev_level = level;
 }
 
-static uint32_t scoop_readb(void *opaque, target_phys_addr_t addr)
+static uint64_t scoop_read(void *opaque, target_phys_addr_t addr,
+                           unsigned size)
 {
     ScoopInfo *s = (ScoopInfo *) opaque;
 
-    switch (addr) {
+    switch (addr & 0x3f) {
     case SCOOP_MCR:
         return s->mcr;
     case SCOOP_CDR:
@@ -99,12 +102,13 @@ static uint32_t scoop_readb(void *opaque, target_phys_addr_t addr)
     return 0;
 }
 
-static void scoop_writeb(void *opaque, target_phys_addr_t addr, uint32_t value)
+static void scoop_write(void *opaque, target_phys_addr_t addr,
+                        uint64_t value, unsigned size)
 {
     ScoopInfo *s = (ScoopInfo *) opaque;
     value &= 0xffff;
 
-    switch (addr) {
+    switch (addr & 0x3f) {
     case SCOOP_MCR:
         s->mcr = value;
         break;
@@ -142,18 +146,13 @@ static void scoop_writeb(void *opaque, target_phys_addr_t addr, uint32_t value)
     }
 }
 
-static CPUReadMemoryFunc * const scoop_readfn[] = {
-    scoop_readb,
-    scoop_readb,
-    scoop_readb,
-};
-static CPUWriteMemoryFunc * const scoop_writefn[] = {
-    scoop_writeb,
-    scoop_writeb,
-    scoop_writeb,
+static const MemoryRegionOps scoop_ops = {
+    .read = scoop_read,
+    .write = scoop_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
 };
 
-void scoop_gpio_set(void *opaque, int line, int level)
+static void scoop_gpio_set(void *opaque, int line, int level)
 {
     ScoopInfo *s = (ScoopInfo *) opaque;
 
@@ -163,83 +162,99 @@ void scoop_gpio_set(void *opaque, int line, int level)
         s->gpio_level &= ~(1 << line);
 }
 
-qemu_irq *scoop_gpio_in_get(ScoopInfo *s)
+static int scoop_init(SysBusDevice *dev)
 {
-    return s->in;
-}
+    ScoopInfo *s = FROM_SYSBUS(ScoopInfo, dev);
 
-void scoop_gpio_out_set(ScoopInfo *s, int line,
-                qemu_irq handler) {
-    if (line >= 16) {
-        fprintf(stderr, "No GPIO pin %i\n", line);
-        exit(-1);
-    }
+    s->status = 0x02;
+    qdev_init_gpio_out(&s->busdev.qdev, s->handler, 16);
+    qdev_init_gpio_in(&s->busdev.qdev, scoop_gpio_set, 16);
+    memory_region_init_io(&s->iomem, &scoop_ops, s, "scoop", 0x1000);
 
-    s->handler[line] = handler;
-}
-
-static void scoop_save(QEMUFile *f, void *opaque)
-{
-    ScoopInfo *s = (ScoopInfo *) opaque;
-    qemu_put_be16s(f, &s->status);
-    qemu_put_be16s(f, &s->power);
-    qemu_put_be32s(f, &s->gpio_level);
-    qemu_put_be32s(f, &s->gpio_dir);
-    qemu_put_be32s(f, &s->prev_level);
-    qemu_put_be16s(f, &s->mcr);
-    qemu_put_be16s(f, &s->cdr);
-    qemu_put_be16s(f, &s->ccr);
-    qemu_put_be16s(f, &s->irr);
-    qemu_put_be16s(f, &s->imr);
-    qemu_put_be16s(f, &s->isr);
-}
-
-static int scoop_load(QEMUFile *f, void *opaque, int version_id)
-{
-    uint16_t dummy;
-    ScoopInfo *s = (ScoopInfo *) opaque;
-    qemu_get_be16s(f, &s->status);
-    qemu_get_be16s(f, &s->power);
-    qemu_get_be32s(f, &s->gpio_level);
-    qemu_get_be32s(f, &s->gpio_dir);
-    qemu_get_be32s(f, &s->prev_level);
-    qemu_get_be16s(f, &s->mcr);
-    qemu_get_be16s(f, &s->cdr);
-    qemu_get_be16s(f, &s->ccr);
-    qemu_get_be16s(f, &s->irr);
-    qemu_get_be16s(f, &s->imr);
-    qemu_get_be16s(f, &s->isr);
-    if (version_id < 1)
-	    qemu_get_be16s(f, &dummy);
+    sysbus_init_mmio(dev, &s->iomem);
 
     return 0;
 }
 
-ScoopInfo *scoop_init(PXA2xxState *cpu,
-		int instance,
-		target_phys_addr_t target_base) {
-    int iomemtype;
-    ScoopInfo *s;
+static int scoop_post_load(void *opaque, int version_id)
+{
+    ScoopInfo *s = (ScoopInfo *) opaque;
+    int i;
+    uint32_t level;
 
-    s = (ScoopInfo *)
-            qemu_mallocz(sizeof(ScoopInfo));
-    memset(s, 0, sizeof(ScoopInfo));
+    level = s->gpio_level & s->gpio_dir;
 
-    s->status = 0x02;
-    s->in = qemu_allocate_irqs(scoop_gpio_set, s, 16);
-    iomemtype = cpu_register_io_memory(scoop_readfn,
-                    scoop_writefn, s);
-    cpu_register_physical_memory(target_base, 0x1000, iomemtype);
-    register_savevm(NULL, "scoop", instance, 1, scoop_save, scoop_load, s);
+    for (i = 0; i < 16; i++) {
+        qemu_set_irq(s->handler[i], (level >> i) & 1);
+    }
 
-    return s;
+    s->prev_level = level;
+
+    return 0;
 }
+
+static bool is_version_0 (void *opaque, int version_id)
+{
+    return version_id == 0;
+}
+
+static const VMStateDescription vmstate_scoop_regs = {
+    .name = "scoop",
+    .version_id = 1,
+    .minimum_version_id = 0,
+    .minimum_version_id_old = 0,
+    .post_load = scoop_post_load,
+    .fields = (VMStateField []) {
+        VMSTATE_UINT16(status, ScoopInfo),
+        VMSTATE_UINT16(power, ScoopInfo),
+        VMSTATE_UINT32(gpio_level, ScoopInfo),
+        VMSTATE_UINT32(gpio_dir, ScoopInfo),
+        VMSTATE_UINT32(prev_level, ScoopInfo),
+        VMSTATE_UINT16(mcr, ScoopInfo),
+        VMSTATE_UINT16(cdr, ScoopInfo),
+        VMSTATE_UINT16(ccr, ScoopInfo),
+        VMSTATE_UINT16(irr, ScoopInfo),
+        VMSTATE_UINT16(imr, ScoopInfo),
+        VMSTATE_UINT16(isr, ScoopInfo),
+        VMSTATE_UNUSED_TEST(is_version_0, 2),
+        VMSTATE_END_OF_LIST(),
+    },
+};
+
+static Property scoop_sysbus_properties[] = {
+    DEFINE_PROP_END_OF_LIST(),
+};
+
+static void scoop_sysbus_class_init(ObjectClass *klass, void *data)
+{
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+
+    k->init = scoop_init;
+    dc->desc = "Scoop2 Sharp custom ASIC";
+    dc->vmsd = &vmstate_scoop_regs;
+    dc->props = scoop_sysbus_properties;
+}
+
+static TypeInfo scoop_sysbus_info = {
+    .name          = "scoop",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(ScoopInfo),
+    .class_init    = scoop_sysbus_class_init,
+};
+
+static void scoop_register_types(void)
+{
+    type_register_static(&scoop_sysbus_info);
+}
+
+type_init(scoop_register_types)
 
 /* Write the bootloader parameters memory area.  */
 
 #define MAGIC_CHG(a, b, c, d)	((d << 24) | (c << 16) | (b << 8) | a)
 
-static struct __attribute__ ((__packed__)) sl_param_info {
+static struct QEMU_PACKED sl_param_info {
     uint32_t comadj_keyword;
     int32_t comadj;
 

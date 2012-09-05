@@ -17,15 +17,8 @@
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, see <http://www.gnu.org/licenses/>.
  */
-#include <stdarg.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-#include <inttypes.h>
 
-#include "config.h"
 #include "cpu.h"
-#include "exec-all.h"
 #include "disas.h"
 #include "tcg-op.h"
 #include "qemu-log.h"
@@ -75,8 +68,8 @@ void m68k_tcg_init(void)
     char *p;
     int i;
 
-#define DEFO32(name,  offset) QREG_##name = tcg_global_mem_new_i32(TCG_AREG0, offsetof(CPUState, offset), #name);
-#define DEFO64(name,  offset) QREG_##name = tcg_global_mem_new_i64(TCG_AREG0, offsetof(CPUState, offset), #name);
+#define DEFO32(name,  offset) QREG_##name = tcg_global_mem_new_i32(TCG_AREG0, offsetof(CPUM68KState, offset), #name);
+#define DEFO64(name,  offset) QREG_##name = tcg_global_mem_new_i64(TCG_AREG0, offsetof(CPUM68KState, offset), #name);
 #define DEFF64(name,  offset) DEFO64(name, offset)
 #include "qregs.def"
 #undef DEFO32
@@ -170,9 +163,6 @@ typedef void (*disas_proc)(DisasContext *, uint16_t);
 #define DISAS_INSN(name) \
   static void disas_##name (DisasContext *s, uint16_t insn)
 #endif
-
-/* FIXME: Remove this.  */
-#define gen_im32(val) tcg_const_i32(val)
 
 /* Generate a load from the specified address.  Narrow values are
    sign extended to full register width.  */
@@ -339,7 +329,7 @@ static TCGv gen_lea_indexed(DisasContext *s, int opsize, TCGv base)
         if ((ext & 0x80) == 0) {
             /* base not suppressed */
             if (IS_NULL_QREG(base)) {
-                base = gen_im32(offset + bd);
+                base = tcg_const_i32(offset + bd);
                 bd = 0;
             }
             if (!IS_NULL_QREG(add)) {
@@ -355,7 +345,7 @@ static TCGv gen_lea_indexed(DisasContext *s, int opsize, TCGv base)
                 add = tmp;
             }
         } else {
-            add = gen_im32(bd);
+            add = tcg_const_i32(bd);
         }
         if ((ext & 3) != 0) {
             /* memory indirect */
@@ -536,15 +526,15 @@ static TCGv gen_lea(DisasContext *s, uint16_t insn, int opsize)
         case 0: /* Absolute short.  */
             offset = ldsw_code(s->pc);
             s->pc += 2;
-            return gen_im32(offset);
+            return tcg_const_i32(offset);
         case 1: /* Absolute long.  */
             offset = read_im32(s);
-            return gen_im32(offset);
+            return tcg_const_i32(offset);
         case 2: /* pc displacement  */
             offset = s->pc;
             offset += ldsw_code(s->pc);
             s->pc += 2;
-            return gen_im32(offset);
+            return tcg_const_i32(offset);
         case 3: /* pc index+displacement.  */
             return gen_lea_indexed(s, opsize, NULL_QREG);
         case 4: /* Immediate.  */
@@ -861,7 +851,7 @@ static void gen_jmp_tb(DisasContext *s, int n, uint32_t dest)
                (s->pc & TARGET_PAGE_MASK) == (dest & TARGET_PAGE_MASK)) {
         tcg_gen_goto_tb(n);
         tcg_gen_movi_i32(QREG_PC, dest);
-        tcg_gen_exit_tb((long)tb + n);
+        tcg_gen_exit_tb((tcg_target_long)tb + n);
     } else {
         gen_jmp_im(s, dest);
         tcg_gen_exit_tb(0);
@@ -1209,16 +1199,16 @@ DISAS_INSN(arith_im)
         break;
     case 2: /* subi */
         tcg_gen_mov_i32(dest, src1);
-        gen_helper_xflag_lt(QREG_CC_X, dest, gen_im32(im));
+        gen_helper_xflag_lt(QREG_CC_X, dest, tcg_const_i32(im));
         tcg_gen_subi_i32(dest, dest, im);
-        gen_update_cc_add(dest, gen_im32(im));
+        gen_update_cc_add(dest, tcg_const_i32(im));
         s->cc_op = CC_OP_SUB;
         break;
     case 3: /* addi */
         tcg_gen_mov_i32(dest, src1);
         tcg_gen_addi_i32(dest, dest, im);
-        gen_update_cc_add(dest, gen_im32(im));
-        gen_helper_xflag_lt(QREG_CC_X, dest, gen_im32(im));
+        gen_update_cc_add(dest, tcg_const_i32(im));
+        gen_helper_xflag_lt(QREG_CC_X, dest, tcg_const_i32(im));
         s->cc_op = CC_OP_ADD;
         break;
     case 5: /* eori */
@@ -1228,7 +1218,7 @@ DISAS_INSN(arith_im)
     case 6: /* cmpi */
         tcg_gen_mov_i32(dest, src1);
         tcg_gen_subi_i32(dest, dest, im);
-        gen_update_cc_add(dest, gen_im32(im));
+        gen_update_cc_add(dest, tcg_const_i32(im));
         s->cc_op = CC_OP_SUB;
         break;
     default:
@@ -1324,8 +1314,8 @@ DISAS_INSN(clr)
     default:
         abort();
     }
-    DEST_EA(insn, opsize, gen_im32(0), NULL);
-    gen_logic_cc(s, gen_im32(0));
+    DEST_EA(insn, opsize, tcg_const_i32(0), NULL);
+    gen_logic_cc(s, tcg_const_i32(0));
 }
 
 static TCGv gen_get_ccr(DisasContext *s)
@@ -1589,7 +1579,7 @@ DISAS_INSN(jump)
     }
     if ((insn & 0x40) == 0) {
         /* jsr */
-        gen_push(s, gen_im32(s->pc));
+        gen_push(s, tcg_const_i32(s->pc));
     }
     gen_jmp(s, tmp);
 }
@@ -1617,7 +1607,7 @@ DISAS_INSN(addsubq)
             tcg_gen_addi_i32(dest, dest, val);
         }
     } else {
-        src2 = gen_im32(val);
+        src2 = tcg_const_i32(val);
         if (insn & 0x0100) {
             gen_helper_xflag_lt(QREG_CC_X, dest, src2);
             tcg_gen_subi_i32(dest, dest, val);
@@ -1666,7 +1656,7 @@ DISAS_INSN(branch)
     }
     if (op == 1) {
         /* bsr */
-        gen_push(s, gen_im32(s->pc));
+        gen_push(s, tcg_const_i32(s->pc));
     }
     gen_flush_cc_op(s);
     if (op > 1) {
@@ -1757,7 +1747,7 @@ DISAS_INSN(mov3q)
     val = (insn >> 9) & 7;
     if (val == 0)
         val = -1;
-    src = gen_im32(val);
+    src = tcg_const_i32(val);
     gen_logic_cc(s, src);
     DEST_EA(insn, OS_LONG, src, NULL);
 }
@@ -1883,7 +1873,7 @@ DISAS_INSN(shift_im)
     tmp = (insn >> 9) & 7;
     if (tmp == 0)
         tmp = 8;
-    shift = gen_im32(tmp);
+    shift = tcg_const_i32(tmp);
     /* No need to flush flags becuse we know we will set C flag.  */
     if (insn & 0x100) {
         gen_helper_shl_cc(reg, cpu_env, reg, shift);
@@ -2191,7 +2181,7 @@ DISAS_INSN(fpu)
         switch ((ext >> 10) & 7) {
         case 4: /* FPCR */
             /* Not implemented.  Always return zero.  */
-            tmp32 = gen_im32(0);
+            tmp32 = tcg_const_i32(0);
             break;
         case 1: /* FPIAR */
         case 2: /* FPSR */
@@ -2592,7 +2582,7 @@ DISAS_INSN(mac)
         /* Skip the accumulate if the value is already saturated.  */
         l1 = gen_new_label();
         tmp = tcg_temp_new();
-        gen_op_and32(tmp, QREG_MACSR, gen_im32(MACSR_PAV0 << acc));
+        gen_op_and32(tmp, QREG_MACSR, tcg_const_i32(MACSR_PAV0 << acc));
         gen_op_jmp_nz32(tmp, l1);
     }
 #endif
@@ -2626,7 +2616,7 @@ DISAS_INSN(mac)
             /* Skip the accumulate if the value is already saturated.  */
             l1 = gen_new_label();
             tmp = tcg_temp_new();
-            gen_op_and32(tmp, QREG_MACSR, gen_im32(MACSR_PAV0 << acc));
+            gen_op_and32(tmp, QREG_MACSR, tcg_const_i32(MACSR_PAV0 << acc));
             gen_op_jmp_nz32(tmp, l1);
         }
 #endif
@@ -2947,7 +2937,7 @@ void register_m68k_insns (CPUM68KState *env)
 
 /* ??? Some of this implementation is not exception safe.  We should always
    write back the result to memory before setting the condition codes.  */
-static void disas_m68k_insn(CPUState * env, DisasContext *s)
+static void disas_m68k_insn(CPUM68KState * env, DisasContext *s)
 {
     uint16_t insn;
 
@@ -2959,7 +2949,7 @@ static void disas_m68k_insn(CPUState * env, DisasContext *s)
 
 /* generate intermediate code for basic block 'tb'.  */
 static inline void
-gen_intermediate_code_internal(CPUState *env, TranslationBlock *tb,
+gen_intermediate_code_internal(CPUM68KState *env, TranslationBlock *tb,
                                int search_pc)
 {
     DisasContext dc1, *dc = &dc1;
@@ -3082,17 +3072,17 @@ gen_intermediate_code_internal(CPUState *env, TranslationBlock *tb,
     //expand_target_qops();
 }
 
-void gen_intermediate_code(CPUState *env, TranslationBlock *tb)
+void gen_intermediate_code(CPUM68KState *env, TranslationBlock *tb)
 {
     gen_intermediate_code_internal(env, tb, 0);
 }
 
-void gen_intermediate_code_pc(CPUState *env, TranslationBlock *tb)
+void gen_intermediate_code_pc(CPUM68KState *env, TranslationBlock *tb)
 {
     gen_intermediate_code_internal(env, tb, 1);
 }
 
-void cpu_dump_state(CPUState *env, FILE *f, fprintf_function cpu_fprintf,
+void cpu_dump_state(CPUM68KState *env, FILE *f, fprintf_function cpu_fprintf,
                     int flags)
 {
     int i;
@@ -3113,8 +3103,7 @@ void cpu_dump_state(CPUState *env, FILE *f, fprintf_function cpu_fprintf,
     cpu_fprintf (f, "FPRESULT = %12g\n", *(double *)&env->fp_result);
 }
 
-void gen_pc_load(CPUState *env, TranslationBlock *tb,
-                unsigned long searched_pc, int pc_pos, void *puc)
+void restore_state_to_opc(CPUM68KState *env, TranslationBlock *tb, int pc_pos)
 {
     env->pc = gen_opc_pc[pc_pos];
 }

@@ -211,10 +211,8 @@ static void kbd_queue(KBDState *s, int b, int aux)
         ps2_queue(s->kbd, b);
 }
 
-static void ioport92_write(void *opaque, uint32_t addr, uint32_t val)
+static void outport_write(KBDState *s, uint32_t val)
 {
-    KBDState *s = opaque;
-
     DPRINTF("kbd: write outport=0x%02x\n", val);
     s->outport = val;
     if (s->a20_out) {
@@ -223,16 +221,6 @@ static void ioport92_write(void *opaque, uint32_t addr, uint32_t val)
     if (!(val & 1)) {
         qemu_system_reset_request();
     }
-}
-
-static uint32_t ioport92_read(void *opaque, uint32_t addr)
-{
-    KBDState *s = opaque;
-    uint32_t ret;
-
-    ret = s->outport;
-    DPRINTF("kbd: read outport=0x%02x\n", ret);
-    return ret;
 }
 
 static void kbd_write_command(void *opaque, uint32_t addr, uint32_t val)
@@ -357,7 +345,7 @@ static void kbd_write_data(void *opaque, uint32_t addr, uint32_t val)
         kbd_queue(s, val, 1);
         break;
     case KBD_CCMD_WRITE_OUTPORT:
-        ioport92_write(s, 0, val);
+        outport_write(s, val);
         break;
     case KBD_CCMD_WRITE_MOUSE:
         ps2_write_mouse(s->mouse, val);
@@ -412,32 +400,27 @@ static void kbd_mm_writeb (void *opaque, target_phys_addr_t addr, uint32_t value
         kbd_write_data(s, 0, value & 0xff);
 }
 
-static CPUReadMemoryFunc * const kbd_mm_read[] = {
-    &kbd_mm_readb,
-    &kbd_mm_readb,
-    &kbd_mm_readb,
-};
-
-static CPUWriteMemoryFunc * const kbd_mm_write[] = {
-    &kbd_mm_writeb,
-    &kbd_mm_writeb,
-    &kbd_mm_writeb,
+static const MemoryRegionOps i8042_mmio_ops = {
+    .endianness = DEVICE_NATIVE_ENDIAN,
+    .old_mmio = {
+        .read = { kbd_mm_readb, kbd_mm_readb, kbd_mm_readb },
+        .write = { kbd_mm_writeb, kbd_mm_writeb, kbd_mm_writeb },
+    },
 };
 
 void i8042_mm_init(qemu_irq kbd_irq, qemu_irq mouse_irq,
-                   target_phys_addr_t base, ram_addr_t size,
+                   MemoryRegion *region, ram_addr_t size,
                    target_phys_addr_t mask)
 {
-    KBDState *s = qemu_mallocz(sizeof(KBDState));
-    int s_io_memory;
+    KBDState *s = g_malloc0(sizeof(KBDState));
 
     s->irq_kbd = kbd_irq;
     s->irq_mouse = mouse_irq;
     s->mask = mask;
 
     vmstate_register(NULL, 0, &vmstate_kbd, s);
-    s_io_memory = cpu_register_io_memory(kbd_mm_read, kbd_mm_write, s);
-    cpu_register_physical_memory(base, size, s_io_memory);
+
+    memory_region_init_io(region, &i8042_mmio_ops, s, "i8042", size);
 
     s->kbd = ps2_kbd_init(kbd_update_kbd_irq, s);
     s->mouse = ps2_mouse_init(kbd_update_aux_irq, s);
@@ -446,7 +429,8 @@ void i8042_mm_init(qemu_irq kbd_irq, qemu_irq mouse_irq,
 
 typedef struct ISAKBDState {
     ISADevice dev;
-    KBDState  kbd;
+    KBDState kbd;
+    MemoryRegion io[2];
 } ISAKBDState;
 
 void i8042_isa_mouse_fake_event(void *opaque)
@@ -475,19 +459,37 @@ static const VMStateDescription vmstate_kbd_isa = {
     }
 };
 
+static const MemoryRegionPortio i8042_data_portio[] = {
+    { 0, 1, 1, .read = kbd_read_data, .write = kbd_write_data },
+    PORTIO_END_OF_LIST()
+};
+
+static const MemoryRegionPortio i8042_cmd_portio[] = {
+    { 0, 1, 1, .read = kbd_read_status, .write = kbd_write_command },
+    PORTIO_END_OF_LIST()
+};
+
+static const MemoryRegionOps i8042_data_ops = {
+    .old_portio = i8042_data_portio
+};
+
+static const MemoryRegionOps i8042_cmd_ops = {
+    .old_portio = i8042_cmd_portio
+};
+
 static int i8042_initfn(ISADevice *dev)
 {
-    KBDState *s = &(DO_UPCAST(ISAKBDState, dev, dev)->kbd);
+    ISAKBDState *isa_s = DO_UPCAST(ISAKBDState, dev, dev);
+    KBDState *s = &isa_s->kbd;
 
     isa_init_irq(dev, &s->irq_kbd, 1);
     isa_init_irq(dev, &s->irq_mouse, 12);
 
-    register_ioport_read(0x60, 1, 1, kbd_read_data, s);
-    register_ioport_write(0x60, 1, 1, kbd_write_data, s);
-    register_ioport_read(0x64, 1, 1, kbd_read_status, s);
-    register_ioport_write(0x64, 1, 1, kbd_write_command, s);
-    register_ioport_read(0x92, 1, 1, ioport92_read, s);
-    register_ioport_write(0x92, 1, 1, ioport92_write, s);
+    memory_region_init_io(isa_s->io + 0, &i8042_data_ops, s, "i8042-data", 1);
+    isa_register_ioport(dev, isa_s->io + 0, 0x60);
+
+    memory_region_init_io(isa_s->io + 1, &i8042_cmd_ops, s, "i8042-cmd", 1);
+    isa_register_ioport(dev, isa_s->io + 1, 0x64);
 
     s->kbd = ps2_kbd_init(kbd_update_kbd_irq, s);
     s->mouse = ps2_mouse_init(kbd_update_aux_irq, s);
@@ -495,16 +497,25 @@ static int i8042_initfn(ISADevice *dev)
     return 0;
 }
 
-static ISADeviceInfo i8042_info = {
-    .qdev.name     = "i8042",
-    .qdev.size     = sizeof(ISAKBDState),
-    .qdev.vmsd     = &vmstate_kbd_isa,
-    .qdev.no_user  = 1,
-    .init          = i8042_initfn,
+static void i8042_class_initfn(ObjectClass *klass, void *data)
+{
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    ISADeviceClass *ic = ISA_DEVICE_CLASS(klass);
+    ic->init = i8042_initfn;
+    dc->no_user = 1;
+    dc->vmsd = &vmstate_kbd_isa;
+}
+
+static TypeInfo i8042_info = {
+    .name          = "i8042",
+    .parent        = TYPE_ISA_DEVICE,
+    .instance_size = sizeof(ISAKBDState),
+    .class_init    = i8042_class_initfn,
 };
 
-static void i8042_register(void)
+static void i8042_register_types(void)
 {
-    isa_qdev_register(&i8042_info);
+    type_register_static(&i8042_info);
 }
-device_init(i8042_register)
+
+type_init(i8042_register_types)

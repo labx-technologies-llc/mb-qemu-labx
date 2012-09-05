@@ -10,7 +10,7 @@
 #include "i2c.h"
 
 typedef struct {
-    i2c_slave i2c;
+    I2CSlave i2c;
     int i2c_command_byte;
     int len;
 
@@ -23,9 +23,9 @@ typedef struct {
     qemu_irq *gpio_in;
 } MAX7310State;
 
-void max7310_reset(i2c_slave *i2c)
+static void max7310_reset(DeviceState *dev)
 {
-    MAX7310State *s = (MAX7310State *) i2c;
+    MAX7310State *s = FROM_I2C_SLAVE(MAX7310State, I2C_SLAVE_FROM_QDEV(dev));
     s->level &= s->direction;
     s->direction = 0xff;
     s->polarity = 0xf0;
@@ -33,7 +33,7 @@ void max7310_reset(i2c_slave *i2c)
     s->command = 0x00;
 }
 
-static int max7310_rx(i2c_slave *i2c)
+static int max7310_rx(I2CSlave *i2c)
 {
     MAX7310State *s = (MAX7310State *) i2c;
 
@@ -68,7 +68,7 @@ static int max7310_rx(i2c_slave *i2c)
     return 0xff;
 }
 
-static int max7310_tx(i2c_slave *i2c, uint8_t data)
+static int max7310_tx(I2CSlave *i2c, uint8_t data)
 {
     MAX7310State *s = (MAX7310State *) i2c;
     uint8_t diff;
@@ -123,7 +123,7 @@ static int max7310_tx(i2c_slave *i2c, uint8_t data)
     return 0;
 }
 
-static void max7310_event(i2c_slave *i2c, enum i2c_event event)
+static void max7310_event(I2CSlave *i2c, enum i2c_event event)
 {
     MAX7310State *s = (MAX7310State *) i2c;
     s->len = 0;
@@ -175,46 +175,39 @@ static void max7310_gpio_set(void *opaque, int line, int level)
 
 /* MAX7310 is SMBus-compatible (can be used with only SMBus protocols),
  * but also accepts sequences that are not SMBus so return an I2C device.  */
-static int max7310_init(i2c_slave *i2c)
+static int max7310_init(I2CSlave *i2c)
 {
     MAX7310State *s = FROM_I2C_SLAVE(MAX7310State, i2c);
 
-    s->gpio_in = qemu_allocate_irqs(max7310_gpio_set, s,
-                    ARRAY_SIZE(s->handler));
-
-    max7310_reset(&s->i2c);
+    qdev_init_gpio_in(&i2c->qdev, max7310_gpio_set, 8);
+    qdev_init_gpio_out(&i2c->qdev, s->handler, 8);
 
     return 0;
 }
 
-qemu_irq *max7310_gpio_in_get(i2c_slave *i2c)
+static void max7310_class_init(ObjectClass *klass, void *data)
 {
-    MAX7310State *s = (MAX7310State *) i2c;
-    return s->gpio_in;
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    I2CSlaveClass *k = I2C_SLAVE_CLASS(klass);
+
+    k->init = max7310_init;
+    k->event = max7310_event;
+    k->recv = max7310_rx;
+    k->send = max7310_tx;
+    dc->reset = max7310_reset;
+    dc->vmsd = &vmstate_max7310;
 }
 
-void max7310_gpio_out_set(i2c_slave *i2c, int line, qemu_irq handler)
-{
-    MAX7310State *s = (MAX7310State *) i2c;
-    if (line >= ARRAY_SIZE(s->handler) || line  < 0)
-        hw_error("bad GPIO line");
-
-    s->handler[line] = handler;
-}
-
-static I2CSlaveInfo max7310_info = {
-    .qdev.name = "max7310",
-    .qdev.size = sizeof(MAX7310State),
-    .qdev.vmsd = &vmstate_max7310,
-    .init = max7310_init,
-    .event = max7310_event,
-    .recv = max7310_rx,
-    .send = max7310_tx
+static TypeInfo max7310_info = {
+    .name          = "max7310",
+    .parent        = TYPE_I2C_SLAVE,
+    .instance_size = sizeof(MAX7310State),
+    .class_init    = max7310_class_init,
 };
 
-static void max7310_register_devices(void)
+static void max7310_register_types(void)
 {
-    i2c_register_slave(&max7310_info);
+    type_register_static(&max7310_info);
 }
 
-device_init(max7310_register_devices)
+type_init(max7310_register_types)

@@ -28,13 +28,13 @@
 
 #if defined(CONFIG_USER_ONLY)
 
-void do_interrupt (CPUState *env)
+void do_interrupt (CPUNios2State *env)
 {
   env->exception_index = -1;
   env->regs[R_EA] = env->regs[R_PC] + 4;
 }
 
-int cpu_nios2_handle_mmu_fault(CPUState * env, target_ulong address, int rw,
+int cpu_nios2_handle_mmu_fault(CPUNios2State * env, target_ulong address, int rw,
                                int mmu_idx, int is_softmmu) {
   env->exception_index = 0xaa;
   cpu_dump_state(env, stderr, fprintf, 0);
@@ -45,7 +45,7 @@ int cpu_nios2_handle_mmu_fault(CPUState * env, target_ulong address, int rw,
 
 bool has_mmu = true;
 
-void do_interrupt(CPUState *env)
+void do_interrupt(CPUNios2State *env)
 {
   switch (env->exception_index) {
     // TODO
@@ -103,6 +103,7 @@ void do_interrupt(CPUState *env)
     case EXCP_TLBW:
     case EXCP_TLBX:
       qemu_log_mask(CPU_LOG_INT, "TLB PERM at pc=%x\n", env->regs[R_PC]);
+      log_cpu_state(env, 0);
 
       env->regs[CR_ESTATUS] = env->regs[CR_STATUS];
       env->regs[CR_STATUS] |= CR_STATUS_EH;
@@ -178,7 +179,7 @@ void do_interrupt(CPUState *env)
   }
 }
 
-static int cpu_nios2_handle_virtual_page(CPUState *env, target_ulong address, int rw, int mmu_idx) {
+static int cpu_nios2_handle_virtual_page(CPUNios2State *env, target_ulong address, int rw, int mmu_idx) {
   target_ulong vaddr, paddr;
   struct nios2_mmu_lookup lu;
   unsigned int hit;
@@ -198,26 +199,27 @@ static int cpu_nios2_handle_virtual_page(CPUState *env, target_ulong address, in
     } else {
       // Permission violation
       env->exception_index = (rw == 0) ? EXCP_TLBR : ((rw == 1) ? EXCP_TLBW : EXCP_TLBX);
-      env->regs[CR_PTEADDR] &= CR_PTEADDR_PTBASE_MASK;
-      env->regs[CR_PTEADDR] |= (address >> 10) & CR_PTEADDR_VPN_MASK;
-      return 1;
     }
   } else {
     //qemu_log("MMU !hit %08x\n", address);
     env->exception_index = EXCP_TLBD; 
-    if (rw == 2) {
-      env->regs[CR_TLBMISC] &= ~CR_TLBMISC_D;
-    } else {
-      env->regs[CR_TLBMISC] |= CR_TLBMISC_D;
-    }
-    env->regs[CR_PTEADDR] &= CR_PTEADDR_PTBASE_MASK;
-    env->regs[CR_PTEADDR] |= (address >> 10) & CR_PTEADDR_VPN_MASK;
-    env->regs[CR_BADADDR] = address;
-    return 1;
   }
+
+  qemu_log("handle virtual page %08X, rw %d\n", address, rw);
+
+  if (rw == 2) {
+    env->regs[CR_TLBMISC] &= ~CR_TLBMISC_D;
+  } else {
+    env->regs[CR_TLBMISC] |= CR_TLBMISC_D;
+  }
+  env->regs[CR_PTEADDR] &= CR_PTEADDR_PTBASE_MASK;
+  env->regs[CR_PTEADDR] |= (address >> 10) & CR_PTEADDR_VPN_MASK;
+  env->mmu.pteaddr_wr = env->regs[CR_PTEADDR];
+  env->regs[CR_BADADDR] = address;
+  return 1;
 }
 
-int cpu_nios2_handle_mmu_fault(CPUState * env, target_ulong address, int rw,
+int cpu_nios2_handle_mmu_fault(CPUNios2State * env, target_ulong address, int rw,
                                int mmu_idx, int is_softmmu) {
   if (has_mmu) {
     if (MMU_SUPERVISOR_IDX == mmu_idx) {
@@ -252,7 +254,7 @@ int cpu_nios2_handle_mmu_fault(CPUState * env, target_ulong address, int rw,
   return 0;
 }
 
-target_phys_addr_t cpu_get_phys_page_debug(CPUState * env, target_ulong addr)
+target_phys_addr_t cpu_get_phys_page_debug(CPUNios2State * env, target_ulong addr)
 {
   target_ulong vaddr, paddr = 0;
   struct nios2_mmu_lookup lu;
@@ -264,8 +266,9 @@ target_phys_addr_t cpu_get_phys_page_debug(CPUState * env, target_ulong addr)
       vaddr = addr & TARGET_PAGE_MASK;
       paddr = lu.paddr + vaddr - lu.vaddr;
     } else {
-      paddr = 0; /* ???.  */
-      cpu_abort(env, "cpu_get_phys_page debug MISS: %08X\n", addr);
+      paddr = -1; /* ???.  */
+      qemu_log("Debug address lookup failure: %08X\n", addr);
+      //cpu_abort(env, "cpu_get_phys_page debug MISS: %08X\n", addr);
     }
   } else {
     paddr = addr & TARGET_PAGE_MASK;

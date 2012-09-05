@@ -37,6 +37,7 @@
 
 struct altera_vic {
     SysBusDevice busdev;
+    MemoryRegion mmio;
     qemu_irq parent_irq;
 
     /* Runtime control registers.  */
@@ -61,7 +62,7 @@ static void update_irq(struct altera_vic *pv) {
   }
 }
 
-static uint32_t pic_readl(void *opaque, target_phys_addr_t addr) {
+static uint64_t pic_read(void *opaque, target_phys_addr_t addr, unsigned int size) {
   struct altera_vic *pv = opaque;
   uint32_t r = 0;
 
@@ -73,9 +74,9 @@ static uint32_t pic_readl(void *opaque, target_phys_addr_t addr) {
   return r;
 }
 
-static void pic_writel(void *opaque, target_phys_addr_t addr, uint32_t value)
-{
+static void pic_write(void *opaque, target_phys_addr_t addr, uint64_t val64, unsigned int size) {
   struct altera_vic *pv = opaque;
+  uint32_t value = val64;
 
   addr >>= 2;
   if (addr < R_INT_ENABLE) {
@@ -114,14 +115,14 @@ static void pic_writel(void *opaque, target_phys_addr_t addr, uint32_t value)
   update_irq(pv);
 }
 
-static CPUReadMemoryFunc * const pic_read[] = {
-    NULL, NULL,
-    &pic_readl,
-};
-
-static CPUWriteMemoryFunc * const pic_write[] = {
-    NULL, NULL,
-    &pic_writel,
+static const MemoryRegionOps pic_ops = {
+    .read = pic_read,
+    .write = pic_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+    .valid = {
+        .min_access_size = 4,
+        .max_access_size = 4
+    }
 };
 
 static void irq_handler(void *opaque, int irq, int level) {
@@ -135,29 +136,38 @@ static void irq_handler(void *opaque, int irq, int level) {
 
 static int altera_vic_init(SysBusDevice *dev) {
   struct altera_vic *pv = FROM_SYSBUS(typeof (*pv), dev);
-  int pic_regs;
 
   qdev_init_gpio_in(&dev->qdev, irq_handler, 32);
   sysbus_init_irq(dev, &pv->parent_irq);
 
   memset(pv->regs, 0, sizeof(uint32_t) * R_MAX);
-  pic_regs = cpu_register_io_memory(pic_read, pic_write, pv);
-  sysbus_init_mmio(dev, R_MAX * sizeof(uint32_t), pic_regs);
+  memory_region_init_io(&pv->mmio, &pic_ops, pv, "altera,vic", R_MAX * sizeof(uint32_t));
+  sysbus_init_mmio(dev, &pv->mmio);
   return 0;
 }
 
-static SysBusDeviceInfo altera_vic_info = {
-  .init = altera_vic_init,
-  .qdev.name  = "altera,vic",
-  .qdev.size  = sizeof(struct altera_vic),
-  .qdev.props = (Property[]) {
+static Property altera_vic_properties[] = {
     DEFINE_PROP_END_OF_LIST(),
-  }
+};
+
+static void altera_vic_class_init(ObjectClass *klass, void *data) {
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+
+    k->init = altera_vic_init;
+    dc->props = altera_vic_properties;
+}
+
+static TypeInfo altera_vic_info = {
+    .name          = "altera,vic",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(struct altera_vic),
+    .class_init    = altera_vic_class_init,
 };
 
 static void altera_vic_register(void) {
-  sysbus_register_withprop(&altera_vic_info);
+    type_register_static(&altera_vic_info);
 }
 
-device_init(altera_vic_register)
+type_init(altera_vic_register)
 

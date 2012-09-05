@@ -31,6 +31,7 @@ extern char *exec_shell;
 extern u_int curtime;
 extern fd_set *global_readfds, *global_writefds, *global_xfds;
 extern struct in_addr loopback_addr;
+extern unsigned long loopback_mask;
 extern char *username;
 extern char *socket_path;
 extern int towrite_max;
@@ -42,5 +43,5 @@ extern int tcp_keepintvl;
 #define PROTO_PPP 0x2
 #endif
 
-void if_encap(Slirp *slirp, const uint8_t *ip_data, int ip_data_len);
+int if_encap(Slirp *slirp, struct mbuf *ifm);
 ssize_t slirp_send(struct socket *so, const void *buf, size_t len, int flags);

@@ -39,6 +39,10 @@ struct labx_ethernet
     NICState *nic;
     NICConf conf;
 
+    MemoryRegion  mmio_ethernet;
+    MemoryRegion  mmio_mac;
+    MemoryRegion  mmio_fifo;
+
     /* Device Configuration */
     uint32_t baseAddress;
 
@@ -92,7 +96,7 @@ static void mdio_xfer(struct labx_ethernet *p, int readWrite, int phyAddr, int r
     update_host_irq(p);
 }
 
-static uint32_t ethernet_regs_readl (void *opaque, target_phys_addr_t addr)
+static uint64_t ethernet_regs_read(void *opaque, target_phys_addr_t addr, unsigned int size)
 {
     struct labx_ethernet *p = opaque;
 
@@ -120,9 +124,10 @@ static uint32_t ethernet_regs_readl (void *opaque, target_phys_addr_t addr)
     return retval;
 }
 
-static void ethernet_regs_writel (void *opaque, target_phys_addr_t addr, uint32_t value)
+static void ethernet_regs_write(void *opaque, target_phys_addr_t addr, uint64_t val64, unsigned int size)
 {
     struct labx_ethernet *p = opaque;
+    uint32_t value = val64;
 
     switch ((addr>>2) & 0x0F)
     {
@@ -157,21 +162,21 @@ static void ethernet_regs_writel (void *opaque, target_phys_addr_t addr, uint32_
     }
 }
 
-static CPUReadMemoryFunc * const ethernet_regs_read[] = {
-    NULL, NULL,
-    &ethernet_regs_readl,
-};
-
-static CPUWriteMemoryFunc * const ethernet_regs_write[] = {
-    NULL, NULL,
-    &ethernet_regs_writel,
+static const MemoryRegionOps ethernet_regs_ops = {
+    .read = ethernet_regs_read,
+    .write = ethernet_regs_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+    .valid = {
+        .min_access_size = 4,
+        .max_access_size = 4
+    }
 };
 
 
 /*
  * MAC registers
  */
-static uint32_t mac_regs_readl (void *opaque, target_phys_addr_t addr)
+static uint64_t mac_regs_read(void *opaque, target_phys_addr_t addr, unsigned int size)
 {
     //struct labx_ethernet *p = opaque;
 
@@ -199,9 +204,10 @@ static uint32_t mac_regs_readl (void *opaque, target_phys_addr_t addr)
     return retval;
 }
 
-static void mac_regs_writel (void *opaque, target_phys_addr_t addr, uint32_t value)
+static void mac_regs_write(void *opaque, target_phys_addr_t addr, uint64_t val64, unsigned int size)
 {
     //struct labx_ethernet *p = opaque;
+    uint32_t value = val64;
 
     switch ((addr>>2) & 0x0F)
     {
@@ -223,14 +229,14 @@ static void mac_regs_writel (void *opaque, target_phys_addr_t addr, uint32_t val
     }
 }
 
-static CPUReadMemoryFunc * const mac_regs_read[] = {
-    NULL, NULL,
-    &mac_regs_readl,
-};
-
-static CPUWriteMemoryFunc * const mac_regs_write[] = {
-    NULL, NULL,
-    &mac_regs_writel,
+static const MemoryRegionOps mac_regs_ops = {
+    .read = mac_regs_read,
+    .write = mac_regs_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+    .valid = {
+        .min_access_size = 4,
+        .max_access_size = 4
+    }
 };
 
 
@@ -292,7 +298,7 @@ static void send_packet(struct labx_ethernet *p)
     update_fifo_irq(p);
 }
 
-static uint32_t fifo_regs_readl (void *opaque, target_phys_addr_t addr)
+static uint64_t fifo_regs_read(void *opaque, target_phys_addr_t addr, unsigned int size)
 {
     struct labx_ethernet *p = opaque;
 
@@ -370,9 +376,10 @@ static uint32_t fifo_regs_readl (void *opaque, target_phys_addr_t addr)
     return retval;
 }
 
-static void fifo_regs_writel (void *opaque, target_phys_addr_t addr, uint32_t value)
+static void fifo_regs_write(void *opaque, target_phys_addr_t addr, uint64_t val64, unsigned int size)
 {
     struct labx_ethernet *p = opaque;
+    uint32_t value = val64;
 
     // printf("FIFO REG WRITE %08X (%d) = %08X\n", addr, (addr>>2) & 0x0F, value);
 
@@ -458,25 +465,25 @@ static void fifo_regs_writel (void *opaque, target_phys_addr_t addr, uint32_t va
     }
 }
 
-static CPUReadMemoryFunc * const fifo_regs_read[] = {
-    NULL, NULL,
-    &fifo_regs_readl,
+static const MemoryRegionOps fifo_regs_ops = {
+    .read = fifo_regs_read,
+    .write = fifo_regs_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+    .valid = {
+        .min_access_size = 4,
+        .max_access_size = 4
+    }
 };
 
-static CPUWriteMemoryFunc * const fifo_regs_write[] = {
-    NULL, NULL,
-    &fifo_regs_writel,
-};
 
-
-static int eth_can_rx(VLANClientState *nc)
+static int eth_can_rx(NetClientState *nc)
 {
     //struct labx_ethernet *s = DO_UPCAST(NICState, nc, nc)->opaque;
 
     return 1;
 }
 
-static ssize_t eth_rx(VLANClientState *nc, const uint8_t *buf, size_t size)
+static ssize_t eth_rx(NetClientState *nc, const uint8_t *buf, size_t size)
 {
     struct labx_ethernet *p = DO_UPCAST(NICState, nc, nc)->opaque;
     int i;
@@ -511,7 +518,7 @@ static ssize_t eth_rx(VLANClientState *nc, const uint8_t *buf, size_t size)
     return size;
 }
 
-static void eth_cleanup(VLANClientState *nc)
+static void eth_cleanup(NetClientState *nc)
 {
     struct labx_ethernet *s = DO_UPCAST(NICState, nc, nc)->opaque;
 
@@ -519,7 +526,7 @@ static void eth_cleanup(VLANClientState *nc)
 }
 
 static NetClientInfo net_labx_ethernet_info = {
-    .type = NET_CLIENT_TYPE_NIC,
+    .type = NET_CLIENT_OPTIONS_KIND_NIC,
     .size = sizeof(NICState),
     .can_receive = eth_can_rx,
     .receive = eth_rx,
@@ -529,15 +536,12 @@ static NetClientInfo net_labx_ethernet_info = {
 static int labx_ethernet_init(SysBusDevice *dev)
 {
     struct labx_ethernet *p = FROM_SYSBUS(typeof (*p), dev);
-    int ethernet_regs;
-    int mac_regs;
-    int fifo_regs;
 
     /* Initialize defaults */
-    p->txBuffer = qemu_malloc(FIFO_RAM_BYTES);
-    p->txLengthBuffer = qemu_malloc(LENGTH_FIFO_WORDS*4);
-    p->rxBuffer = qemu_malloc(FIFO_RAM_BYTES);
-    p->rxLengthBuffer = qemu_malloc(LENGTH_FIFO_WORDS*4);
+    p->txBuffer = g_malloc0(FIFO_RAM_BYTES);
+    p->txLengthBuffer = g_malloc0(LENGTH_FIFO_WORDS*4);
+    p->rxBuffer = g_malloc0(FIFO_RAM_BYTES);
+    p->rxLengthBuffer = g_malloc0(LENGTH_FIFO_WORDS*4);
 
     p->txPushIndex = 0;
     p->txPopIndex = 0;
@@ -549,13 +553,13 @@ static int labx_ethernet_init(SysBusDevice *dev)
     p->rxLengthPopIndex = 0;
 
     /* Set up memory regions */
-    ethernet_regs = cpu_register_io_memory(ethernet_regs_read, ethernet_regs_write, p);
-    mac_regs = cpu_register_io_memory(mac_regs_read, mac_regs_write, p);
-    fifo_regs = cpu_register_io_memory(fifo_regs_read, fifo_regs_write, p);
+    memory_region_init_io(&p->mmio_ethernet, &ethernet_regs_ops, p, "labx,ethernet-regs",      0x10 * 4);
+    memory_region_init_io(&p->mmio_mac,      &mac_regs_ops,      p, "labx,ethernet-mac-regs",  0x10 * 4);
+    memory_region_init_io(&p->mmio_fifo,     &fifo_regs_ops,     p, "labx,ethernet-fifo-regs", 0x10 * 4);
 
-    sysbus_init_mmio(dev, 0x10 * 4, ethernet_regs);
-    sysbus_init_mmio(dev, 0x10 * 4, mac_regs);
-    sysbus_init_mmio(dev, 0x10 * 4, fifo_regs);
+    sysbus_init_mmio(dev, &p->mmio_ethernet);
+    sysbus_init_mmio(dev, &p->mmio_mac);
+    sysbus_init_mmio(dev, &p->mmio_fifo);
 
     sysbus_mmio_map(dev, 0, p->baseAddress);
     sysbus_mmio_map(dev, 1, p->baseAddress + (1 << (10+2)));
@@ -569,26 +573,35 @@ static int labx_ethernet_init(SysBusDevice *dev)
     /* Set up the NIC */
     qemu_macaddr_default_if_unset(&p->conf.macaddr);
     p->nic = qemu_new_nic(&net_labx_ethernet_info, &p->conf,
-                          dev->qdev.info->name, dev->qdev.id, p);
+                          object_get_typename(OBJECT(p)), dev->qdev.id, p);
     qemu_format_nic_info_str(&p->nic->nc, p->conf.macaddr.a);
     return 0;
 }
 
-static SysBusDeviceInfo labx_ethernet_info = {
-    .init = labx_ethernet_init,
-    .qdev.name  = "labx,ethernet",
-    .qdev.size  = sizeof(struct labx_ethernet),
-    .qdev.props = (Property[]) {
-        DEFINE_PROP_UINT32("baseAddress", struct labx_ethernet, baseAddress, 0),
-        DEFINE_NIC_PROPERTIES(struct labx_ethernet, conf),
-        DEFINE_PROP_END_OF_LIST(),
-    }
+static Property labx_ethernet_properties[] = {
+    DEFINE_PROP_UINT32("baseAddress",        struct labx_ethernet, baseAddress,        0),
+    DEFINE_NIC_PROPERTIES(struct labx_ethernet, conf),
+    DEFINE_PROP_END_OF_LIST(),
 };
 
-static void labx_ethernet_register(void)
-{
-    sysbus_register_withprop(&labx_ethernet_info);
+static void labx_ethernet_class_init(ObjectClass *klass, void *data) {
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+
+    k->init = labx_ethernet_init;
+    dc->props = labx_ethernet_properties;
 }
 
-device_init(labx_ethernet_register)
+static TypeInfo labx_ethernet_info = {
+    .name          = "labx,ethernet",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(struct labx_ethernet),
+    .class_init    = labx_ethernet_class_init,
+};
+
+static void labx_ethernet_register(void) {
+    type_register_static(&labx_ethernet_info);
+}
+
+type_init(labx_ethernet_register)
 

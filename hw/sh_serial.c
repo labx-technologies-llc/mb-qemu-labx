@@ -27,6 +27,7 @@
 #include "hw.h"
 #include "sh.h"
 #include "qemu-char.h"
+#include "exec-memory.h"
 
 //#define DEBUG_SERIAL
 
@@ -39,6 +40,9 @@
 #define SH_RX_FIFO_LENGTH (16)
 
 typedef struct {
+    MemoryRegion iomem;
+    MemoryRegion iomem_p4;
+    MemoryRegion iomem_a7;
     uint8_t smr;
     uint8_t brr;
     uint8_t scr;
@@ -74,7 +78,8 @@ static void sh_serial_clear_fifo(sh_serial_state * s)
     s->rx_tail = 0;
 }
 
-static void sh_serial_ioport_write(void *opaque, uint32_t offs, uint32_t val)
+static void sh_serial_write(void *opaque, target_phys_addr_t offs,
+                            uint64_t val, unsigned size)
 {
     sh_serial_state *s = opaque;
     unsigned char ch;
@@ -105,7 +110,7 @@ static void sh_serial_ioport_write(void *opaque, uint32_t offs, uint32_t val)
     case 0x0c: /* FTDR / TDR */
         if (s->chr) {
             ch = val;
-            qemu_chr_write(s->chr, &ch, 1);
+            qemu_chr_fe_write(s->chr, &ch, 1);
 	}
 	s->dr = val;
 	s->flags &= ~SH_SERIAL_FLAG_TDE;
@@ -181,11 +186,13 @@ static void sh_serial_ioport_write(void *opaque, uint32_t offs, uint32_t val)
         }
     }
 
-    fprintf(stderr, "sh_serial: unsupported write to 0x%02x\n", offs);
+    fprintf(stderr, "sh_serial: unsupported write to 0x%02"
+            TARGET_PRIxPHYS "\n", offs);
     abort();
 }
 
-static uint32_t sh_serial_ioport_read(void *opaque, uint32_t offs)
+static uint64_t sh_serial_read(void *opaque, target_phys_addr_t offs,
+                               unsigned size)
 {
     sh_serial_state *s = opaque;
     uint32_t ret = ~0;
@@ -281,7 +288,8 @@ static uint32_t sh_serial_ioport_read(void *opaque, uint32_t offs)
 #endif
 
     if (ret & ~((1 << 16) - 1)) {
-        fprintf(stderr, "sh_serial: unsupported read from 0x%02x\n", offs);
+        fprintf(stderr, "sh_serial: unsupported read from 0x%02"
+                TARGET_PRIxPHYS "\n", offs);
         abort();
     }
 
@@ -291,26 +299,6 @@ static uint32_t sh_serial_ioport_read(void *opaque, uint32_t offs)
 static int sh_serial_can_receive(sh_serial_state *s)
 {
     return s->scr & (1 << 4);
-}
-
-static void sh_serial_receive_byte(sh_serial_state *s, int ch)
-{
-    if (s->feat & SH_SERIAL_FEAT_SCIF) {
-        if (s->rx_cnt < SH_RX_FIFO_LENGTH) {
-            s->rx_fifo[s->rx_head++] = ch;
-            if (s->rx_head == SH_RX_FIFO_LENGTH)
-                s->rx_head = 0;
-            s->rx_cnt++;
-            if (s->rx_cnt >= s->rtrg) {
-                s->flags |= SH_SERIAL_FLAG_RDF;
-                if (s->scr & (1 << 6) && s->rxi) {
-                    qemu_set_irq(s->rxi, 1);
-                }
-            }
-        }
-    } else {
-        s->rx_fifo[0] = ch;
-    }
 }
 
 static void sh_serial_receive_break(sh_serial_state *s)
@@ -328,7 +316,27 @@ static int sh_serial_can_receive1(void *opaque)
 static void sh_serial_receive1(void *opaque, const uint8_t *buf, int size)
 {
     sh_serial_state *s = opaque;
-    sh_serial_receive_byte(s, buf[0]);
+
+    if (s->feat & SH_SERIAL_FEAT_SCIF) {
+        int i;
+        for (i = 0; i < size; i++) {
+            if (s->rx_cnt < SH_RX_FIFO_LENGTH) {
+                s->rx_fifo[s->rx_head++] = buf[i];
+                if (s->rx_head == SH_RX_FIFO_LENGTH) {
+                    s->rx_head = 0;
+                }
+                s->rx_cnt++;
+                if (s->rx_cnt >= s->rtrg) {
+                    s->flags |= SH_SERIAL_FLAG_RDF;
+                    if (s->scr & (1 << 6) && s->rxi) {
+                        qemu_set_irq(s->rxi, 1);
+                    }
+                }
+            }
+        }
+    } else {
+        s->rx_fifo[0] = buf[0];
+    }
 }
 
 static void sh_serial_event(void *opaque, int event)
@@ -338,43 +346,24 @@ static void sh_serial_event(void *opaque, int event)
         sh_serial_receive_break(s);
 }
 
-static uint32_t sh_serial_read (void *opaque, target_phys_addr_t addr)
-{
-    sh_serial_state *s = opaque;
-    return sh_serial_ioport_read(s, addr);
-}
-
-static void sh_serial_write (void *opaque,
-                             target_phys_addr_t addr, uint32_t value)
-{
-    sh_serial_state *s = opaque;
-    sh_serial_ioport_write(s, addr, value);
-}
-
-static CPUReadMemoryFunc * const sh_serial_readfn[] = {
-    &sh_serial_read,
-    &sh_serial_read,
-    &sh_serial_read,
+static const MemoryRegionOps sh_serial_ops = {
+    .read = sh_serial_read,
+    .write = sh_serial_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
 };
 
-static CPUWriteMemoryFunc * const sh_serial_writefn[] = {
-    &sh_serial_write,
-    &sh_serial_write,
-    &sh_serial_write,
-};
-
-void sh_serial_init (target_phys_addr_t base, int feat,
-		     uint32_t freq, CharDriverState *chr,
-		     qemu_irq eri_source,
-		     qemu_irq rxi_source,
-		     qemu_irq txi_source,
-		     qemu_irq tei_source,
-		     qemu_irq bri_source)
+void sh_serial_init(MemoryRegion *sysmem,
+                    target_phys_addr_t base, int feat,
+                    uint32_t freq, CharDriverState *chr,
+                    qemu_irq eri_source,
+                    qemu_irq rxi_source,
+                    qemu_irq txi_source,
+                    qemu_irq tei_source,
+                    qemu_irq bri_source)
 {
     sh_serial_state *s;
-    int s_io_memory;
 
-    s = qemu_mallocz(sizeof(sh_serial_state));
+    s = g_malloc0(sizeof(sh_serial_state));
 
     s->feat = feat;
     s->flags = SH_SERIAL_FLAG_TEND | SH_SERIAL_FLAG_TDE;
@@ -394,10 +383,16 @@ void sh_serial_init (target_phys_addr_t base, int feat,
 
     sh_serial_clear_fifo(s);
 
-    s_io_memory = cpu_register_io_memory(sh_serial_readfn,
-					 sh_serial_writefn, s);
-    cpu_register_physical_memory(P4ADDR(base), 0x28, s_io_memory);
-    cpu_register_physical_memory(A7ADDR(base), 0x28, s_io_memory);
+    memory_region_init_io(&s->iomem, &sh_serial_ops, s,
+                          "serial", 0x100000000ULL);
+
+    memory_region_init_alias(&s->iomem_p4, "serial-p4", &s->iomem,
+                             0, 0x28);
+    memory_region_add_subregion(sysmem, P4ADDR(base), &s->iomem_p4);
+
+    memory_region_init_alias(&s->iomem_a7, "serial-a7", &s->iomem,
+                             0, 0x28);
+    memory_region_add_subregion(sysmem, A7ADDR(base), &s->iomem_a7);
 
     s->chr = chr;
 

@@ -4,6 +4,8 @@
 #include "qemu-char.h"
 #include "qdict.h"
 #include "notify.h"
+#include "monitor.h"
+#include "trace.h"
 
 /* keyboard/mouse support */
 
@@ -72,8 +74,6 @@ struct MouseTransformInfo {
     int a[7];
 };
 
-void do_info_mice_print(Monitor *mon, const QObject *data);
-void do_info_mice(Monitor *mon, QObject **ret_data);
 void do_mouse_set(Monitor *mon, const QDict *qdict);
 
 /* keysym is a unicode code except for special keys (see QEMU_KEY_xxx
@@ -189,6 +189,8 @@ void register_displaystate(DisplayState *ds);
 DisplayState *get_displaystate(void);
 DisplaySurface* qemu_create_displaysurface_from(int width, int height, int bpp,
                                                 int linesize, uint8_t *data);
+void qemu_alloc_display(DisplaySurface *surface, int width, int height,
+                        int linesize, PixelFormat pf, int newflags);
 PixelFormat qemu_different_endianness_pixelformat(int bpp);
 PixelFormat qemu_default_pixelformat(int bpp);
 
@@ -201,11 +203,13 @@ static inline DisplaySurface* qemu_create_displaysurface(DisplayState *ds, int w
 
 static inline DisplaySurface* qemu_resize_displaysurface(DisplayState *ds, int width, int height)
 {
+    trace_displaysurface_resize(ds, ds->surface, width, height);
     return ds->allocator->resize_displaysurface(ds->surface, width, height);
 }
 
 static inline void qemu_free_displaysurface(DisplayState *ds)
 {
+    trace_displaysurface_free(ds, ds->surface);
     ds->allocator->free_displaysurface(ds->surface);
 }
 
@@ -324,17 +328,22 @@ static inline int ds_get_bytes_per_pixel(DisplayState *ds)
     return ds->surface->pf.bytes_per_pixel;
 }
 
+#ifdef CONFIG_CURSES
+#include <curses.h>
+typedef chtype console_ch_t;
+#else
 typedef unsigned long console_ch_t;
+#endif
 static inline void console_write_ch(console_ch_t *dest, uint32_t ch)
 {
     if (!(ch & 0xff))
         ch |= ' ';
-    cpu_to_le32wu((uint32_t *) dest, ch);
+    *dest = ch;
 }
 
 typedef void (*vga_hw_update_ptr)(void *);
 typedef void (*vga_hw_invalidate_ptr)(void *);
-typedef void (*vga_hw_screen_dump_ptr)(void *, const char *);
+typedef void (*vga_hw_screen_dump_ptr)(void *, const char *, bool cswitch);
 typedef void (*vga_hw_text_update_ptr)(void *, console_ch_t *);
 
 DisplayState *graphic_console_init(vga_hw_update_ptr update,
@@ -368,10 +377,22 @@ void cocoa_display_init(DisplayState *ds, int full_screen);
 void vnc_display_init(DisplayState *ds);
 void vnc_display_close(DisplayState *ds);
 int vnc_display_open(DisplayState *ds, const char *display);
-int vnc_display_password(DisplayState *ds, const char *password);
-void do_info_vnc_print(Monitor *mon, const QObject *data);
-void do_info_vnc(Monitor *mon, QObject **ret_data);
+void vnc_display_add_client(DisplayState *ds, int csock, int skipauth);
+int vnc_display_disable_login(DisplayState *ds);
 char *vnc_display_local_addr(DisplayState *ds);
+#ifdef CONFIG_VNC
+int vnc_display_password(DisplayState *ds, const char *password);
+int vnc_display_pw_expire(DisplayState *ds, time_t expires);
+#else
+static inline int vnc_display_password(DisplayState *ds, const char *password)
+{
+    return -ENODEV;
+}
+static inline int vnc_display_pw_expire(DisplayState *ds, time_t expires)
+{
+    return -ENODEV;
+};
+#endif
 
 /* curses.c */
 void curses_display_init(DisplayState *ds, int full_screen);

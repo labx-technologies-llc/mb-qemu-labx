@@ -18,51 +18,60 @@
  * License along with this library; if not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <stdio.h>
-#include <string.h>
-
-#include "config.h"
 #include "cpu.h"
-#include "exec-all.h"
-#include "qemu-common.h"
 #include "gdbstub.h"
 
 #include "helpers.h"
 
 #define SIGNBIT (1u << 31)
 
-enum m68k_cpuid {
-    M68K_CPUID_M5206,
-    M68K_CPUID_M5208,
-    M68K_CPUID_CFV4E,
-    M68K_CPUID_ANY,
-};
+typedef struct M68kCPUListState {
+    fprintf_function cpu_fprintf;
+    FILE *file;
+} M68kCPUListState;
 
-typedef struct m68k_def_t m68k_def_t;
-
-struct m68k_def_t {
-    const char * name;
-    enum m68k_cpuid id;
-};
-
-static m68k_def_t m68k_cpu_defs[] = {
-    {"m5206", M68K_CPUID_M5206},
-    {"m5208", M68K_CPUID_M5208},
-    {"cfv4e", M68K_CPUID_CFV4E},
-    {"any", M68K_CPUID_ANY},
-    {NULL, 0},
-};
-
-void m68k_cpu_list(FILE *f, fprintf_function cpu_fprintf)
+/* Sort alphabetically, except for "any". */
+static gint m68k_cpu_list_compare(gconstpointer a, gconstpointer b)
 {
-    unsigned int i;
+    ObjectClass *class_a = (ObjectClass *)a;
+    ObjectClass *class_b = (ObjectClass *)b;
+    const char *name_a, *name_b;
 
-    for (i = 0; m68k_cpu_defs[i].name; i++) {
-        (*cpu_fprintf)(f, "%s\n", m68k_cpu_defs[i].name);
+    name_a = object_class_get_name(class_a);
+    name_b = object_class_get_name(class_b);
+    if (strcmp(name_a, "any") == 0) {
+        return 1;
+    } else if (strcmp(name_b, "any") == 0) {
+        return -1;
+    } else {
+        return strcasecmp(name_a, name_b);
     }
 }
 
-static int fpu_gdb_get_reg(CPUState *env, uint8_t *mem_buf, int n)
+static void m68k_cpu_list_entry(gpointer data, gpointer user_data)
+{
+    ObjectClass *c = data;
+    M68kCPUListState *s = user_data;
+
+    (*s->cpu_fprintf)(s->file, "%s\n",
+                      object_class_get_name(c));
+}
+
+void m68k_cpu_list(FILE *f, fprintf_function cpu_fprintf)
+{
+    M68kCPUListState s = {
+        .file = f,
+        .cpu_fprintf = cpu_fprintf,
+    };
+    GSList *list;
+
+    list = object_class_get_list(TYPE_M68K_CPU, false);
+    list = g_slist_sort(list, m68k_cpu_list_compare);
+    g_slist_foreach(list, m68k_cpu_list_entry, &s);
+    g_slist_free(list);
+}
+
+static int fpu_gdb_get_reg(CPUM68KState *env, uint8_t *mem_buf, int n)
 {
     if (n < 8) {
         stfq_p(mem_buf, env->fregs[n]);
@@ -76,7 +85,7 @@ static int fpu_gdb_get_reg(CPUState *env, uint8_t *mem_buf, int n)
     return 0;
 }
 
-static int fpu_gdb_set_reg(CPUState *env, uint8_t *mem_buf, int n)
+static int fpu_gdb_set_reg(CPUM68KState *env, uint8_t *mem_buf, int n)
 {
     if (n < 8) {
         env->fregs[n] = ldfq_p(mem_buf);
@@ -89,92 +98,18 @@ static int fpu_gdb_set_reg(CPUState *env, uint8_t *mem_buf, int n)
     return 0;
 }
 
-static void m68k_set_feature(CPUM68KState *env, int feature)
-{
-    env->features |= (1u << feature);
-}
-
-static int cpu_m68k_set_model(CPUM68KState *env, const char *name)
-{
-    m68k_def_t *def;
-
-    for (def = m68k_cpu_defs; def->name; def++) {
-        if (strcmp(def->name, name) == 0)
-            break;
-    }
-    if (!def->name)
-        return -1;
-
-    switch (def->id) {
-    case M68K_CPUID_M5206:
-        m68k_set_feature(env, M68K_FEATURE_CF_ISA_A);
-        break;
-    case M68K_CPUID_M5208:
-        m68k_set_feature(env, M68K_FEATURE_CF_ISA_A);
-        m68k_set_feature(env, M68K_FEATURE_CF_ISA_APLUSC);
-        m68k_set_feature(env, M68K_FEATURE_BRAL);
-        m68k_set_feature(env, M68K_FEATURE_CF_EMAC);
-        m68k_set_feature(env, M68K_FEATURE_USP);
-        break;
-    case M68K_CPUID_CFV4E:
-        m68k_set_feature(env, M68K_FEATURE_CF_ISA_A);
-        m68k_set_feature(env, M68K_FEATURE_CF_ISA_B);
-        m68k_set_feature(env, M68K_FEATURE_BRAL);
-        m68k_set_feature(env, M68K_FEATURE_CF_FPU);
-        m68k_set_feature(env, M68K_FEATURE_CF_EMAC);
-        m68k_set_feature(env, M68K_FEATURE_USP);
-        break;
-    case M68K_CPUID_ANY:
-        m68k_set_feature(env, M68K_FEATURE_CF_ISA_A);
-        m68k_set_feature(env, M68K_FEATURE_CF_ISA_B);
-        m68k_set_feature(env, M68K_FEATURE_CF_ISA_APLUSC);
-        m68k_set_feature(env, M68K_FEATURE_BRAL);
-        m68k_set_feature(env, M68K_FEATURE_CF_FPU);
-        /* MAC and EMAC are mututally exclusive, so pick EMAC.
-           It's mostly backwards compatible.  */
-        m68k_set_feature(env, M68K_FEATURE_CF_EMAC);
-        m68k_set_feature(env, M68K_FEATURE_CF_EMAC_B);
-        m68k_set_feature(env, M68K_FEATURE_USP);
-        m68k_set_feature(env, M68K_FEATURE_EXT_FULL);
-        m68k_set_feature(env, M68K_FEATURE_WORD_INDEX);
-        break;
-    }
-
-    register_m68k_insns(env);
-    if (m68k_feature (env, M68K_FEATURE_CF_FPU)) {
-        gdb_register_coprocessor(env, fpu_gdb_get_reg, fpu_gdb_set_reg,
-                                 11, "cf-fp.xml", 18);
-    }
-    /* TODO: Add [E]MAC registers.  */
-    return 0;
-}
-
-void cpu_reset(CPUM68KState *env)
-{
-    if (qemu_loglevel_mask(CPU_LOG_RESET)) {
-        qemu_log("CPU Reset (CPU %d)\n", env->cpu_index);
-        log_cpu_state(env, 0);
-    }
-
-    memset(env, 0, offsetof(CPUM68KState, breakpoints));
-#if !defined (CONFIG_USER_ONLY)
-    env->sr = 0x2700;
-#endif
-    m68k_switch_sp(env);
-    /* ??? FP regs should be initialized to NaN.  */
-    env->cc_op = CC_OP_FLAGS;
-    /* TODO: We should set PC from the interrupt vector.  */
-    env->pc = 0;
-    tlb_flush(env, 1);
-}
-
 CPUM68KState *cpu_m68k_init(const char *cpu_model)
 {
+    M68kCPU *cpu;
     CPUM68KState *env;
     static int inited;
 
-    env = qemu_mallocz(sizeof(CPUM68KState));
-    cpu_exec_init(env);
+    if (object_class_by_name(cpu_model) == NULL) {
+        return NULL;
+    }
+    cpu = M68K_CPU(object_new(cpu_model));
+    env = &cpu->env;
+
     if (!inited) {
         inited = 1;
         m68k_tcg_init();
@@ -182,19 +117,16 @@ CPUM68KState *cpu_m68k_init(const char *cpu_model)
 
     env->cpu_model_str = cpu_model;
 
-    if (cpu_m68k_set_model(env, cpu_model) < 0) {
-        cpu_m68k_close(env);
-        return NULL;
+    register_m68k_insns(env);
+    if (m68k_feature(env, M68K_FEATURE_CF_FPU)) {
+        gdb_register_coprocessor(env, fpu_gdb_get_reg, fpu_gdb_set_reg,
+                                 11, "cf-fp.xml", 18);
     }
+    /* TODO: Add [E]MAC registers.  */
 
-    cpu_reset(env);
+    cpu_reset(ENV_GET_CPU(env));
     qemu_init_vcpu(env);
     return env;
-}
-
-void cpu_m68k_close(CPUM68KState *env)
-{
-    qemu_free(env);
 }
 
 void cpu_m68k_flush_flags(CPUM68KState *env, int cc_op)
@@ -344,8 +276,8 @@ void m68k_switch_sp(CPUM68KState *env)
 
 #if defined(CONFIG_USER_ONLY)
 
-int cpu_m68k_handle_mmu_fault (CPUState *env, target_ulong address, int rw,
-                               int mmu_idx, int is_softmmu)
+int cpu_m68k_handle_mmu_fault (CPUM68KState *env, target_ulong address, int rw,
+                               int mmu_idx)
 {
     env->exception_index = EXCP_ACCESS;
     env->mmu.ar = address;
@@ -357,13 +289,13 @@ int cpu_m68k_handle_mmu_fault (CPUState *env, target_ulong address, int rw,
 /* MMU */
 
 /* TODO: This will need fixing once the MMU is implemented.  */
-target_phys_addr_t cpu_get_phys_page_debug(CPUState *env, target_ulong addr)
+target_phys_addr_t cpu_get_phys_page_debug(CPUM68KState *env, target_ulong addr)
 {
     return addr;
 }
 
-int cpu_m68k_handle_mmu_fault (CPUState *env, target_ulong address, int rw,
-                               int mmu_idx, int is_softmmu)
+int cpu_m68k_handle_mmu_fault (CPUM68KState *env, target_ulong address, int rw,
+                               int mmu_idx)
 {
     int prot;
 
@@ -413,7 +345,7 @@ uint32_t HELPER(sats)(uint32_t val, uint32_t ccr)
     return val;
 }
 
-uint32_t HELPER(subx_cc)(CPUState *env, uint32_t op1, uint32_t op2)
+uint32_t HELPER(subx_cc)(CPUM68KState *env, uint32_t op1, uint32_t op2)
 {
     uint32_t res;
     uint32_t old_flags;
@@ -436,7 +368,7 @@ uint32_t HELPER(subx_cc)(CPUState *env, uint32_t op1, uint32_t op2)
     return res;
 }
 
-uint32_t HELPER(addx_cc)(CPUState *env, uint32_t op1, uint32_t op2)
+uint32_t HELPER(addx_cc)(CPUM68KState *env, uint32_t op1, uint32_t op2)
 {
     uint32_t res;
     uint32_t old_flags;
@@ -464,13 +396,13 @@ uint32_t HELPER(xflag_lt)(uint32_t a, uint32_t b)
     return a < b;
 }
 
-void HELPER(set_sr)(CPUState *env, uint32_t val)
+void HELPER(set_sr)(CPUM68KState *env, uint32_t val)
 {
     env->sr = val & 0xffff;
     m68k_switch_sp(env);
 }
 
-uint32_t HELPER(shl_cc)(CPUState *env, uint32_t val, uint32_t shift)
+uint32_t HELPER(shl_cc)(CPUM68KState *env, uint32_t val, uint32_t shift)
 {
     uint32_t result;
     uint32_t cf;
@@ -495,7 +427,7 @@ uint32_t HELPER(shl_cc)(CPUState *env, uint32_t val, uint32_t shift)
     return result;
 }
 
-uint32_t HELPER(shr_cc)(CPUState *env, uint32_t val, uint32_t shift)
+uint32_t HELPER(shr_cc)(CPUM68KState *env, uint32_t val, uint32_t shift)
 {
     uint32_t result;
     uint32_t cf;
@@ -520,7 +452,7 @@ uint32_t HELPER(shr_cc)(CPUState *env, uint32_t val, uint32_t shift)
     return result;
 }
 
-uint32_t HELPER(sar_cc)(CPUState *env, uint32_t val, uint32_t shift)
+uint32_t HELPER(sar_cc)(CPUM68KState *env, uint32_t val, uint32_t shift)
 {
     uint32_t result;
     uint32_t cf;
@@ -543,37 +475,37 @@ uint32_t HELPER(sar_cc)(CPUState *env, uint32_t val, uint32_t shift)
 }
 
 /* FPU helpers.  */
-uint32_t HELPER(f64_to_i32)(CPUState *env, float64 val)
+uint32_t HELPER(f64_to_i32)(CPUM68KState *env, float64 val)
 {
     return float64_to_int32(val, &env->fp_status);
 }
 
-float32 HELPER(f64_to_f32)(CPUState *env, float64 val)
+float32 HELPER(f64_to_f32)(CPUM68KState *env, float64 val)
 {
     return float64_to_float32(val, &env->fp_status);
 }
 
-float64 HELPER(i32_to_f64)(CPUState *env, uint32_t val)
+float64 HELPER(i32_to_f64)(CPUM68KState *env, uint32_t val)
 {
     return int32_to_float64(val, &env->fp_status);
 }
 
-float64 HELPER(f32_to_f64)(CPUState *env, float32 val)
+float64 HELPER(f32_to_f64)(CPUM68KState *env, float32 val)
 {
     return float32_to_float64(val, &env->fp_status);
 }
 
-float64 HELPER(iround_f64)(CPUState *env, float64 val)
+float64 HELPER(iround_f64)(CPUM68KState *env, float64 val)
 {
     return float64_round_to_int(val, &env->fp_status);
 }
 
-float64 HELPER(itrunc_f64)(CPUState *env, float64 val)
+float64 HELPER(itrunc_f64)(CPUM68KState *env, float64 val)
 {
     return float64_trunc_to_int(val, &env->fp_status);
 }
 
-float64 HELPER(sqrt_f64)(CPUState *env, float64 val)
+float64 HELPER(sqrt_f64)(CPUM68KState *env, float64 val)
 {
     return float64_sqrt(val, &env->fp_status);
 }
@@ -588,36 +520,36 @@ float64 HELPER(chs_f64)(float64 val)
     return float64_chs(val);
 }
 
-float64 HELPER(add_f64)(CPUState *env, float64 a, float64 b)
+float64 HELPER(add_f64)(CPUM68KState *env, float64 a, float64 b)
 {
     return float64_add(a, b, &env->fp_status);
 }
 
-float64 HELPER(sub_f64)(CPUState *env, float64 a, float64 b)
+float64 HELPER(sub_f64)(CPUM68KState *env, float64 a, float64 b)
 {
     return float64_sub(a, b, &env->fp_status);
 }
 
-float64 HELPER(mul_f64)(CPUState *env, float64 a, float64 b)
+float64 HELPER(mul_f64)(CPUM68KState *env, float64 a, float64 b)
 {
     return float64_mul(a, b, &env->fp_status);
 }
 
-float64 HELPER(div_f64)(CPUState *env, float64 a, float64 b)
+float64 HELPER(div_f64)(CPUM68KState *env, float64 a, float64 b)
 {
     return float64_div(a, b, &env->fp_status);
 }
 
-float64 HELPER(sub_cmp_f64)(CPUState *env, float64 a, float64 b)
+float64 HELPER(sub_cmp_f64)(CPUM68KState *env, float64 a, float64 b)
 {
     /* ??? This may incorrectly raise exceptions.  */
     /* ??? Should flush denormals to zero.  */
     float64 res;
     res = float64_sub(a, b, &env->fp_status);
-    if (float64_is_nan(res)) {
+    if (float64_is_quiet_nan(res)) {
         /* +/-inf compares equal against itself, but sub returns nan.  */
-        if (!float64_is_nan(a)
-            && !float64_is_nan(b)) {
+        if (!float64_is_quiet_nan(a)
+            && !float64_is_quiet_nan(b)) {
             res = float64_zero;
             if (float64_lt_quiet(a, res, &env->fp_status))
                 res = float64_chs(res);
@@ -626,7 +558,7 @@ float64 HELPER(sub_cmp_f64)(CPUState *env, float64 a, float64 b)
     return res;
 }
 
-uint32_t HELPER(compare_f64)(CPUState *env, float64 val)
+uint32_t HELPER(compare_f64)(CPUM68KState *env, float64 val)
 {
     return float64_compare_quiet(val, float64_zero, &env->fp_status);
 }
@@ -635,7 +567,7 @@ uint32_t HELPER(compare_f64)(CPUState *env, float64 val)
 /* FIXME: The MAC unit implementation is a bit of a mess.  Some helpers
    take values,  others take register numbers and manipulate the contents
    in-place.  */
-void HELPER(mac_move)(CPUState *env, uint32_t dest, uint32_t src)
+void HELPER(mac_move)(CPUM68KState *env, uint32_t dest, uint32_t src)
 {
     uint32_t mask;
     env->macc[dest] = env->macc[src];
@@ -646,7 +578,7 @@ void HELPER(mac_move)(CPUState *env, uint32_t dest, uint32_t src)
         env->macsr &= ~mask;
 }
 
-uint64_t HELPER(macmuls)(CPUState *env, uint32_t op1, uint32_t op2)
+uint64_t HELPER(macmuls)(CPUM68KState *env, uint32_t op1, uint32_t op2)
 {
     int64_t product;
     int64_t res;
@@ -666,7 +598,7 @@ uint64_t HELPER(macmuls)(CPUState *env, uint32_t op1, uint32_t op2)
     return res;
 }
 
-uint64_t HELPER(macmulu)(CPUState *env, uint32_t op1, uint32_t op2)
+uint64_t HELPER(macmulu)(CPUM68KState *env, uint32_t op1, uint32_t op2)
 {
     uint64_t product;
 
@@ -683,7 +615,7 @@ uint64_t HELPER(macmulu)(CPUState *env, uint32_t op1, uint32_t op2)
     return product;
 }
 
-uint64_t HELPER(macmulf)(CPUState *env, uint32_t op1, uint32_t op2)
+uint64_t HELPER(macmulf)(CPUM68KState *env, uint32_t op1, uint32_t op2)
 {
     uint64_t product;
     uint32_t remainder;
@@ -702,7 +634,7 @@ uint64_t HELPER(macmulf)(CPUState *env, uint32_t op1, uint32_t op2)
     return product;
 }
 
-void HELPER(macsats)(CPUState *env, uint32_t acc)
+void HELPER(macsats)(CPUM68KState *env, uint32_t acc)
 {
     int64_t tmp;
     int64_t result;
@@ -714,7 +646,7 @@ void HELPER(macsats)(CPUState *env, uint32_t acc)
     if (env->macsr & MACSR_V) {
         env->macsr |= MACSR_PAV0 << acc;
         if (env->macsr & MACSR_OMC) {
-            /* The result is saturated to 32 bits, despite overflow occuring
+            /* The result is saturated to 32 bits, despite overflow occurring
                at 48 bits.  Seems weird, but that's what the hardware docs
                say.  */
             result = (result >> 63) ^ 0x7fffffff;
@@ -723,7 +655,7 @@ void HELPER(macsats)(CPUState *env, uint32_t acc)
     env->macc[acc] = result;
 }
 
-void HELPER(macsatu)(CPUState *env, uint32_t acc)
+void HELPER(macsatu)(CPUM68KState *env, uint32_t acc)
 {
     uint64_t val;
 
@@ -745,7 +677,7 @@ void HELPER(macsatu)(CPUState *env, uint32_t acc)
     env->macc[acc] = val;
 }
 
-void HELPER(macsatf)(CPUState *env, uint32_t acc)
+void HELPER(macsatf)(CPUM68KState *env, uint32_t acc)
 {
     int64_t sum;
     int64_t result;
@@ -764,7 +696,7 @@ void HELPER(macsatf)(CPUState *env, uint32_t acc)
     env->macc[acc] = result;
 }
 
-void HELPER(mac_set_flags)(CPUState *env, uint32_t acc)
+void HELPER(mac_set_flags)(CPUM68KState *env, uint32_t acc)
 {
     uint64_t val;
     val = env->macc[acc];
@@ -790,12 +722,12 @@ void HELPER(mac_set_flags)(CPUState *env, uint32_t acc)
     }
 }
 
-void HELPER(flush_flags)(CPUState *env, uint32_t cc_op)
+void HELPER(flush_flags)(CPUM68KState *env, uint32_t cc_op)
 {
     cpu_m68k_flush_flags(env, cc_op);
 }
 
-uint32_t HELPER(get_macf)(CPUState *env, uint64_t val)
+uint32_t HELPER(get_macf)(CPUM68KState *env, uint64_t val)
 {
     int rem;
     uint32_t result;
@@ -864,7 +796,7 @@ uint32_t HELPER(get_macu)(uint64_t val)
     }
 }
 
-uint32_t HELPER(get_mac_extf)(CPUState *env, uint32_t acc)
+uint32_t HELPER(get_mac_extf)(CPUM68KState *env, uint32_t acc)
 {
     uint32_t val;
     val = env->macc[acc] & 0x00ff;
@@ -874,7 +806,7 @@ uint32_t HELPER(get_mac_extf)(CPUState *env, uint32_t acc)
     return val;
 }
 
-uint32_t HELPER(get_mac_exti)(CPUState *env, uint32_t acc)
+uint32_t HELPER(get_mac_exti)(CPUM68KState *env, uint32_t acc)
 {
     uint32_t val;
     val = (env->macc[acc] >> 32) & 0xffff;
@@ -882,7 +814,7 @@ uint32_t HELPER(get_mac_exti)(CPUState *env, uint32_t acc)
     return val;
 }
 
-void HELPER(set_mac_extf)(CPUState *env, uint32_t val, uint32_t acc)
+void HELPER(set_mac_extf)(CPUM68KState *env, uint32_t val, uint32_t acc)
 {
     int64_t res;
     int32_t tmp;
@@ -898,7 +830,7 @@ void HELPER(set_mac_extf)(CPUState *env, uint32_t val, uint32_t acc)
     env->macc[acc + 1] = res;
 }
 
-void HELPER(set_mac_exts)(CPUState *env, uint32_t val, uint32_t acc)
+void HELPER(set_mac_exts)(CPUM68KState *env, uint32_t val, uint32_t acc)
 {
     int64_t res;
     int32_t tmp;
@@ -912,7 +844,7 @@ void HELPER(set_mac_exts)(CPUState *env, uint32_t val, uint32_t acc)
     env->macc[acc + 1] = res;
 }
 
-void HELPER(set_mac_extu)(CPUState *env, uint32_t val, uint32_t acc)
+void HELPER(set_mac_extu)(CPUM68KState *env, uint32_t val, uint32_t acc)
 {
     uint64_t res;
     res = (uint32_t)env->macc[acc];

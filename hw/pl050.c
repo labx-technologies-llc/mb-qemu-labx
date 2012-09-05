@@ -4,7 +4,7 @@
  * Copyright (c) 2006-2007 CodeSourcery.
  * Written by Paul Brook
  *
- * This code is licenced under the GPL.
+ * This code is licensed under the GPL.
  */
 
 #include "sysbus.h"
@@ -12,6 +12,7 @@
 
 typedef struct {
     SysBusDevice busdev;
+    MemoryRegion iomem;
     void *dev;
     uint32_t cr;
     uint32_t clk;
@@ -20,6 +21,20 @@ typedef struct {
     qemu_irq irq;
     int is_mouse;
 } pl050_state;
+
+static const VMStateDescription vmstate_pl050 = {
+    .name = "pl050",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .fields = (VMStateField[]) {
+        VMSTATE_UINT32(cr, pl050_state),
+        VMSTATE_UINT32(clk, pl050_state),
+        VMSTATE_UINT32(last, pl050_state),
+        VMSTATE_INT32(pending, pl050_state),
+        VMSTATE_INT32(is_mouse, pl050_state),
+        VMSTATE_END_OF_LIST()
+    }
+};
 
 #define PL050_TXEMPTY         (1 << 6)
 #define PL050_TXBUSY          (1 << 5)
@@ -43,7 +58,8 @@ static void pl050_update(void *opaque, int level)
     qemu_set_irq(s->irq, raise);
 }
 
-static uint32_t pl050_read(void *opaque, target_phys_addr_t offset)
+static uint64_t pl050_read(void *opaque, target_phys_addr_t offset,
+                           unsigned size)
 {
     pl050_state *s = (pl050_state *)opaque;
     if (offset >= 0xfe0 && offset < 0x1000)
@@ -85,7 +101,7 @@ static uint32_t pl050_read(void *opaque, target_phys_addr_t offset)
 }
 
 static void pl050_write(void *opaque, target_phys_addr_t offset,
-                          uint32_t value)
+                        uint64_t value, unsigned size)
 {
     pl050_state *s = (pl050_state *)opaque;
     switch (offset >> 2) {
@@ -110,33 +126,24 @@ static void pl050_write(void *opaque, target_phys_addr_t offset,
         hw_error("pl050_write: Bad offset %x\n", (int)offset);
     }
 }
-static CPUReadMemoryFunc * const pl050_readfn[] = {
-   pl050_read,
-   pl050_read,
-   pl050_read
-};
-
-static CPUWriteMemoryFunc * const pl050_writefn[] = {
-   pl050_write,
-   pl050_write,
-   pl050_write
+static const MemoryRegionOps pl050_ops = {
+    .read = pl050_read,
+    .write = pl050_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
 };
 
 static int pl050_init(SysBusDevice *dev, int is_mouse)
 {
     pl050_state *s = FROM_SYSBUS(pl050_state, dev);
-    int iomemtype;
 
-    iomemtype = cpu_register_io_memory(pl050_readfn,
-                                       pl050_writefn, s);
-    sysbus_init_mmio(dev, 0x1000, iomemtype);
+    memory_region_init_io(&s->iomem, &pl050_ops, s, "pl050", 0x1000);
+    sysbus_init_mmio(dev, &s->iomem);
     sysbus_init_irq(dev, &s->irq);
     s->is_mouse = is_mouse;
     if (s->is_mouse)
         s->dev = ps2_mouse_init(pl050_update, s);
     else
         s->dev = ps2_kbd_init(pl050_update, s);
-    /* ??? Save/restore.  */
     return 0;
 }
 
@@ -150,12 +157,42 @@ static int pl050_init_mouse(SysBusDevice *dev)
     return pl050_init(dev, 1);
 }
 
-static void pl050_register_devices(void)
+static void pl050_kbd_class_init(ObjectClass *klass, void *data)
 {
-    sysbus_register_dev("pl050_keyboard", sizeof(pl050_state),
-                        pl050_init_keyboard);
-    sysbus_register_dev("pl050_mouse", sizeof(pl050_state),
-                        pl050_init_mouse);
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+
+    k->init = pl050_init_keyboard;
+    dc->vmsd = &vmstate_pl050;
 }
 
-device_init(pl050_register_devices)
+static TypeInfo pl050_kbd_info = {
+    .name          = "pl050_keyboard",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(pl050_state),
+    .class_init    = pl050_kbd_class_init,
+};
+
+static void pl050_mouse_class_init(ObjectClass *klass, void *data)
+{
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
+
+    k->init = pl050_init_mouse;
+    dc->vmsd = &vmstate_pl050;
+}
+
+static TypeInfo pl050_mouse_info = {
+    .name          = "pl050_mouse",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(pl050_state),
+    .class_init    = pl050_mouse_class_init,
+};
+
+static void pl050_register_types(void)
+{
+    type_register_static(&pl050_kbd_info);
+    type_register_static(&pl050_mouse_info);
+}
+
+type_init(pl050_register_types)

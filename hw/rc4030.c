@@ -50,7 +50,7 @@ do { fprintf(stderr, "rc4030 ERROR: %s: " fmt, __func__ , ## __VA_ARGS__); } whi
 typedef struct dma_pagetable_entry {
     int32_t frame;
     int32_t owner;
-} __attribute__((packed)) dma_pagetable_entry;
+} QEMU_PACKED dma_pagetable_entry;
 
 #define DMA_PAGESIZE    4096
 #define DMA_REG_ENABLE  1
@@ -95,6 +95,9 @@ typedef struct rc4030State
 
     qemu_irq timer_irq;
     qemu_irq jazz_bus_irq;
+
+    MemoryRegion iomem_chipset;
+    MemoryRegion iomem_jazzio;
 } rc4030State;
 
 static void set_next_tick(rc4030State *s)
@@ -104,7 +107,7 @@ static void set_next_tick(rc4030State *s)
 
     tm_hz = 1000 / (s->itr + 1);
 
-    qemu_mod_timer(s->periodic_timer, qemu_get_clock(vm_clock) +
+    qemu_mod_timer(s->periodic_timer, qemu_get_clock_ns(vm_clock) +
                    get_ticks_per_sec() / tm_hz);
 }
 
@@ -307,7 +310,7 @@ static void rc4030_writel(void *opaque, target_phys_addr_t addr, uint32_t val)
         if (s->cache_ltag == 0x80000001 && s->cache_bmask == 0xf0f0f0f) {
             target_phys_addr_t dest = s->cache_ptag & ~0x1;
             dest += (s->cache_maint & 0x3) << 3;
-            cpu_physical_memory_rw(dest, (uint8_t*)&val, 4, 1);
+            cpu_physical_memory_write(dest, &val, 4);
         }
         break;
     /* Remote Speed Registers */
@@ -419,16 +422,12 @@ static void rc4030_writeb(void *opaque, target_phys_addr_t addr, uint32_t val)
     rc4030_writel(opaque, addr & ~0x3, val);
 }
 
-static CPUReadMemoryFunc * const rc4030_read[3] = {
-    rc4030_readb,
-    rc4030_readw,
-    rc4030_readl,
-};
-
-static CPUWriteMemoryFunc * const rc4030_write[3] = {
-    rc4030_writeb,
-    rc4030_writew,
-    rc4030_writel,
+static const MemoryRegionOps rc4030_ops = {
+    .old_mmio = {
+        .read = { rc4030_readb, rc4030_readw, rc4030_readl, },
+        .write = { rc4030_writeb, rc4030_writew, rc4030_writel, },
+    },
+    .endianness = DEVICE_NATIVE_ENDIAN,
 };
 
 static void update_jazz_irq(rc4030State *s)
@@ -573,16 +572,12 @@ static void jazzio_writel(void *opaque, target_phys_addr_t addr, uint32_t val)
     jazzio_writew(opaque, addr + 2, (val >> 16) & 0xffff);
 }
 
-static CPUReadMemoryFunc * const jazzio_read[3] = {
-    jazzio_readb,
-    jazzio_readw,
-    jazzio_readl,
-};
-
-static CPUWriteMemoryFunc * const jazzio_write[3] = {
-    jazzio_writeb,
-    jazzio_writew,
-    jazzio_writel,
+static const MemoryRegionOps jazzio_ops = {
+    .old_mmio = {
+        .read = { jazzio_readb, jazzio_readw, jazzio_readl, },
+        .write = { jazzio_writeb, jazzio_writew, jazzio_writel, },
+    },
+    .endianness = DEVICE_NATIVE_ENDIAN,
 };
 
 static void rc4030_reset(void *opaque)
@@ -704,7 +699,7 @@ void rc4030_dma_memory_rw(void *opaque, target_phys_addr_t addr, uint8_t *buf, i
         entry_addr = s->dma_tl_base + index * sizeof(dma_pagetable_entry);
         /* XXX: not sure. should we really use only lowest bits? */
         entry_addr &= 0x7fffffff;
-        cpu_physical_memory_rw(entry_addr, (uint8_t *)&entry, sizeof(entry), 0);
+        cpu_physical_memory_read(entry_addr, &entry, sizeof(entry));
 
         /* Read/write data at right place */
         phys_addr = entry.frame + (addr & (DMA_PAGESIZE - 1));
@@ -789,8 +784,8 @@ static rc4030_dma *rc4030_allocate_dmas(void *opaque, int n)
     struct rc4030DMAState *p;
     int i;
 
-    s = (rc4030_dma *)qemu_mallocz(sizeof(rc4030_dma) * n);
-    p = (struct rc4030DMAState *)qemu_mallocz(sizeof(struct rc4030DMAState) * n);
+    s = (rc4030_dma *)g_malloc0(sizeof(rc4030_dma) * n);
+    p = (struct rc4030DMAState *)g_malloc0(sizeof(struct rc4030DMAState) * n);
     for (i = 0; i < n; i++) {
         p->opaque = opaque;
         p->n = i;
@@ -801,17 +796,17 @@ static rc4030_dma *rc4030_allocate_dmas(void *opaque, int n)
 }
 
 void *rc4030_init(qemu_irq timer, qemu_irq jazz_bus,
-                  qemu_irq **irqs, rc4030_dma **dmas)
+                  qemu_irq **irqs, rc4030_dma **dmas,
+                  MemoryRegion *sysmem)
 {
     rc4030State *s;
-    int s_chipset, s_jazzio;
 
-    s = qemu_mallocz(sizeof(rc4030State));
+    s = g_malloc0(sizeof(rc4030State));
 
     *irqs = qemu_allocate_irqs(rc4030_irq_jazz_request, s, 16);
     *dmas = rc4030_allocate_dmas(s, 4);
 
-    s->periodic_timer = qemu_new_timer(vm_clock, rc4030_periodic_timer, s);
+    s->periodic_timer = qemu_new_timer_ns(vm_clock, rc4030_periodic_timer, s);
     s->timer_irq = timer;
     s->jazz_bus_irq = jazz_bus;
 
@@ -819,10 +814,12 @@ void *rc4030_init(qemu_irq timer, qemu_irq jazz_bus,
     register_savevm(NULL, "rc4030", 0, 2, rc4030_save, rc4030_load, s);
     rc4030_reset(s);
 
-    s_chipset = cpu_register_io_memory(rc4030_read, rc4030_write, s);
-    cpu_register_physical_memory(0x80000000, 0x300, s_chipset);
-    s_jazzio = cpu_register_io_memory(jazzio_read, jazzio_write, s);
-    cpu_register_physical_memory(0xf0000000, 0x00001000, s_jazzio);
+    memory_region_init_io(&s->iomem_chipset, &rc4030_ops, s,
+                          "rc4030.chipset", 0x300);
+    memory_region_add_subregion(sysmem, 0x80000000, &s->iomem_chipset);
+    memory_region_init_io(&s->iomem_jazzio, &jazzio_ops, s,
+                          "rc4030.jazzio", 0x00001000);
+    memory_region_add_subregion(sysmem, 0xf0000000, &s->iomem_jazzio);
 
     return s;
 }

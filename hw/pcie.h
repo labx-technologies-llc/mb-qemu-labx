@@ -24,6 +24,7 @@
 #include "hw.h"
 #include "pci_regs.h"
 #include "pcie_regs.h"
+#include "pcie_aer.h"
 
 typedef enum {
     /* for attention and power indicator */
@@ -39,7 +40,7 @@ typedef enum {
      *
      * Not all the bits of slot control register match with the ones of
      * slot status. Not some bits of slot status register is used to
-     * show status, not to report event occurence.
+     * show status, not to report event occurrence.
      * So such bits must be masked out when checking the software
      * notification condition.
      */
@@ -62,8 +63,6 @@ struct PCIExpressDevice {
     /* Offset of express capability in config space */
     uint8_t exp_cap;
 
-    /* TODO FLR */
-
     /* SLOT */
     unsigned int hpev_intx;     /* INTx for hot plug event (0-3:INT[A-D]#)
                                  * default is 0 = INTA#
@@ -79,6 +78,19 @@ struct PCIExpressDevice {
                          Software Notification of Hot-Plug Events, an interrupt
                          is sent whenever the logical and of these conditions
                          transitions from false to true. */
+
+    /* AER */
+    uint16_t aer_cap;
+    PCIEAERLog aer_log;
+    unsigned int aer_intx;      /* INTx for error reporting
+                                 * default is 0 = INTA#
+                                 * If the chip wants to use other interrupt
+                                 * line, initialize this member with the
+                                 * desired number.
+                                 * If the chip dynamically changes this member,
+                                 * also initialize it when loaded as
+                                 * appropreately.
+                                 */
 };
 
 /* PCI express capability helper functions */
@@ -116,5 +128,16 @@ void pcie_add_capability(PCIDevice *dev,
                          uint16_t offset, uint16_t size);
 
 void pcie_ari_init(PCIDevice *dev, uint16_t offset, uint16_t nextfn);
+
+extern const VMStateDescription vmstate_pcie_device;
+
+#define VMSTATE_PCIE_DEVICE(_field, _state) {                        \
+    .name       = (stringify(_field)),                               \
+    .version_id = 2,                                                 \
+    .size       = sizeof(PCIDevice),                                 \
+    .vmsd       = &vmstate_pcie_device,                              \
+    .flags      = VMS_STRUCT,                                        \
+    .offset     = vmstate_offset_value(_state, _field, PCIDevice),   \
+}
 
 #endif /* QEMU_PCIE_H */
