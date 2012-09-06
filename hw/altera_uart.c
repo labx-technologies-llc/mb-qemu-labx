@@ -67,6 +67,7 @@ static void uart_update_irq(struct altera_uart *s) {
 
   irq = (s->regs[R_STATUS] & s->regs[R_CONTROL] &
     (STATUS_PE | STATUS_FE | STATUS_BRK | STATUS_ROE | STATUS_TOE | STATUS_TMT | STATUS_TRDY | STATUS_RRDY | STATUS_E | STATUS_DTCS));
+  irq = (irq == 0) ? 0 : 1;
   qemu_set_irq(s->irq, irq);
 }
 
