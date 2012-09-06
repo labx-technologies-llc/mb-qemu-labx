@@ -109,11 +109,24 @@ static uint64_t ethernet_regs_read(void *opaque, target_phys_addr_t addr, unsign
         case 0x02: // irq mask
         case 0x03: // irq flags
         case 0x04: // vlan mask
+	case 0x05: // filter select
             retval = p->hostRegs[(addr>>2) & 0x0F];
             break;
 
+	case 0x06: // filter control
+	    retval = 0x20000000;
+	    break;
+
         case 0x0F: // revision
-            retval = 0x00000010;
+            retval = 0x00000C13;
+            break;
+
+        case 0x07: // filter load
+            retval = p->hostRegs[(addr>>2) & 0x0F];
+            break;
+
+        case 0x08: // bad packet
+	    retval = 0;
             break;
 
         default:
@@ -151,6 +164,18 @@ static void ethernet_regs_write(void *opaque, target_phys_addr_t addr, uint64_t 
             break;
 
         case 0x04: // vlan mask
+            break;
+
+        case 0x05: // filter select
+            break;
+
+        case 0x06: // filter control
+            break;
+
+        case 0x07: // filter load
+            break;
+
+        case 0x08: // bad packet
             break;
 
         case 0x0F: // revision
