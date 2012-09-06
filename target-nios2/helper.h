@@ -1,7 +1,7 @@
 #include "def-helper.h"
 
 /* Define this to enable tracing calls/returns */
-#define CALL_TRACING
+// #define CALL_TRACING
 
 #ifdef CALL_TRACING
 DEF_HELPER_2(call_status, void, i32, i32)

@@ -178,3 +178,21 @@ void mmu_init(struct nios2_mmu *mmu) {
   mmu->tlb = (struct nios2_tlb_entry*)g_malloc0(sizeof(struct nios2_tlb_entry)*mmu->tlb_num_entries);
 }
 
+void dump_mmu(FILE *f, fprintf_function cpu_fprintf, CPUNios2State *env)
+{
+  int i;
+  cpu_fprintf(f, "MMU: ways %d, entries %d, pid bits %d\n", env->mmu.tlb_num_ways, env->mmu.tlb_num_entries, env->mmu.pid_bits);
+  for (i=0; i<env->mmu.tlb_num_entries; i++) {
+    struct nios2_tlb_entry *entry = &env->mmu.tlb[i];
+    cpu_fprintf(f, "TLB[%d] = %08X %08X %c VPN %05X PID %02X %c PFN %05X %c%c%c%c\n", i, entry->tag, entry->data,
+                (entry->tag & (1<<10)) ? 'V' : '-',
+                entry->tag >> 12, entry->tag & ((1<<env->mmu.pid_bits)-1),
+                (entry->tag & (1<<11)) ? 'G' : '-',
+                entry->data & CR_TLBACC_PFN_MASK,
+                (entry->data & CR_TLBACC_C) ? 'C' : '-',
+                (entry->data & CR_TLBACC_R) ? 'R' : '-',
+                (entry->data & CR_TLBACC_W) ? 'W' : '-',
+                (entry->data & CR_TLBACC_X) ? 'X' : '-');
+  }
+}
+

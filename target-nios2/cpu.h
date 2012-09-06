@@ -149,12 +149,12 @@ typedef struct CPUNios2State {
 
 #include "cpu-qom.h"
 
-Nios2CPU *cpu_nios2_init(const char *cpu_model);
-int cpu_nios2_exec(CPUNios2State *s);
-void cpu_nios2_close(CPUNios2State *s);
-void do_interrupt(CPUNios2State *env);
-int cpu_nios2_signal_handler(int host_signum, void *pinfo,
-                          void *puc);
+extern Nios2CPU *cpu_nios2_init(const char *cpu_model);
+extern int cpu_nios2_exec(CPUNios2State *s);
+extern void cpu_nios2_close(CPUNios2State *s);
+extern void do_interrupt(CPUNios2State *env);
+extern int cpu_nios2_signal_handler(int host_signum, void *pinfo, void *puc);
+extern void dump_mmu(FILE *f, fprintf_function cpu_fprintf, CPUNios2State *env);
 
 #define TARGET_PHYS_ADDR_SPACE_BITS 32
 #define TARGET_VIRT_ADDR_SPACE_BITS 32
