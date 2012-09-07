@@ -188,8 +188,6 @@ static int cpu_nios2_handle_virtual_page(CPUNios2State *env, target_ulong addres
     vaddr = address & TARGET_PAGE_MASK;
     paddr = lu.paddr + vaddr - lu.vaddr;
 
-    //qemu_log("MMU map mmu=%d v=%x p=%x prot=%x\n",
-    //         mmu_idx, vaddr, paddr, lu.prot);
     if (((rw == 0) && (lu.prot & PAGE_READ)) ||
         ((rw == 1) && (lu.prot & PAGE_WRITE)) ||
         ((rw == 2) && (lu.prot & PAGE_EXEC))) {
@@ -201,11 +199,8 @@ static int cpu_nios2_handle_virtual_page(CPUNios2State *env, target_ulong addres
       env->exception_index = (rw == 0) ? EXCP_TLBR : ((rw == 1) ? EXCP_TLBW : EXCP_TLBX);
     }
   } else {
-    //qemu_log("MMU !hit %08x\n", address);
     env->exception_index = EXCP_TLBD; 
   }
-
-  qemu_log("handle virtual page %08X, rw %d\n", address, rw);
 
   if (rw == 2) {
     env->regs[CR_TLBMISC] &= ~CR_TLBMISC_D;
@@ -266,9 +261,7 @@ target_phys_addr_t cpu_get_phys_page_debug(CPUNios2State * env, target_ulong add
       vaddr = addr & TARGET_PAGE_MASK;
       paddr = lu.paddr + vaddr - lu.vaddr;
     } else {
-      paddr = -1; /* ???.  */
-      qemu_log("Debug address lookup failure: %08X\n", addr);
-      //cpu_abort(env, "cpu_get_phys_page debug MISS: %08X\n", addr);
+      cpu_abort(env, "cpu_get_phys_page debug MISS: %08X\n", addr);
     }
   } else {
     paddr = addr & TARGET_PAGE_MASK;

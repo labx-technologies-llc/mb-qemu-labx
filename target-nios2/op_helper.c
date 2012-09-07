@@ -73,9 +73,8 @@ void helper_mmu_write(uint32_t rn, uint32_t v) {
 
 void helper_memalign(uint32_t addr, uint32_t dr, uint32_t wr, uint32_t mask) {
   if (addr & mask) {
-    qemu_log_mask(CPU_LOG_INT,
-                  "unaligned access addr=%x mask=%x, wr=%d dr=r%d\n",
-                   addr, mask, wr, dr);
+    qemu_log("unaligned access addr=%x mask=%x, wr=%d dr=r%d\n",
+             addr, mask, wr, dr);
     env->regs[CR_BADADDR] = addr;
     env->regs[CR_EXCEPTION] = EXCP_UNALIGN << 2;
     helper_raise_exception(EXCP_UNALIGN);
@@ -84,7 +83,6 @@ void helper_memalign(uint32_t addr, uint32_t dr, uint32_t wr, uint32_t mask) {
 
 void cpu_unassigned_access(CPUNios2State *env1, target_phys_addr_t addr,
                            int is_write, int is_exec, int is_asi, int size) {
-  // TODO
   qemu_log("unassigned access to %08X\n", addr);
 }
 
