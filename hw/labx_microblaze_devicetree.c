@@ -36,6 +36,8 @@
 #include "loader.h"
 #include "elf.h"
 #include "blockdev.h"
+#include "exec-memory.h"
+#include "microblaze_pic_cpu.h"
 
 #define LMB_BRAM_SIZE  (128 * 1024)
 
@@ -47,11 +49,16 @@ static struct
     uint32_t fdt;
 } boot_info;
 
+// Current ethernet device index for multiple network interfaces
+static int eth_dev_index = 0;
+
 static void main_cpu_reset(void *opaque)
 {
-    CPUState *env = opaque;
+    MicroBlazeCPU *cpu = opaque;
+    CPUMBState *env = &cpu->env;
 
-    cpu_reset(env);
+    cpu_reset(CPU(cpu));
+
     env->regs[5] = boot_info.cmdline;
     env->regs[6] = boot_info.initrd;
     env->regs[7] = boot_info.fdt;
@@ -74,7 +81,7 @@ static void* get_device_tree(int* fdt_size)
         path = qemu_find_file(QEMU_FILE_TYPE_BIOS, BINARY_DEVICE_TREE_FILE);
         if (path) {
             fdt = load_device_tree(path, fdt_size);
-            qemu_free(path);
+            g_free(path);
         }
     }
 
@@ -118,7 +125,7 @@ static ram_addr_t get_dram_base(void* fdt)
     if (memory > 0)
     {
         int reglen;
-        const void* reg = qemu_devtree_getprop(fdt, memory, "reg", &reglen);
+        const void* reg = qemu_devtree_getprop_offset(fdt, memory, "reg", &reglen);
 
         if (reglen >= 4)
         {
@@ -146,7 +153,7 @@ typedef struct
 /*
  * Xilinx interrupt controller device
  */
-CPUState *env;
+MicroBlazeCPU *g_cpu = NULL;
 static qemu_irq irq[32] = {};
 static qemu_irq *cpu_irq = NULL;
 
@@ -155,15 +162,15 @@ static void xilinx_interrupt_controller_probe(void* fdt, int node)
     int i;
     DeviceState *dev;
     int reglen;
-    const void* reg = qemu_devtree_getprop(fdt, node, "reg", &reglen);
+    const void* reg = qemu_devtree_getprop_offset(fdt, node, "reg", &reglen);
     uint32_t irq_addr = qemu_devtree_int_array_index(reg, 0);
     int nrIrqLen;
-    const void* nrIrq = qemu_devtree_getprop(fdt, node, "xlnx,num-intr-inputs", &nrIrqLen);
+    const void* nrIrq = qemu_devtree_getprop_offset(fdt, node, "xlnx,num-intr-inputs", &nrIrqLen);
     uint32_t nrIrqs = qemu_devtree_int_array_index(nrIrq, 0);
 
     printf("  IRQ BASE %08X NIRQS %d\n", irq_addr, nrIrqs);
 
-    cpu_irq = microblaze_pic_init_cpu(env);
+    cpu_irq = microblaze_pic_init_cpu(&g_cpu->env);
     dev = xilinx_intc_create(irq_addr, cpu_irq[0], 2);
     for (i = 0; i < nrIrqs; i++) {
         irq[i] = qdev_get_gpio_in(dev, i);
@@ -182,13 +189,13 @@ devinfo_t xilinx_interrupt_controller_device = {
 static void flash_probe(void* fdt, int node)
 {
     int reglen;
-    const void* reg = qemu_devtree_getprop(fdt, node, "reg", &reglen);
+    const void* reg = qemu_devtree_getprop_offset(fdt, node, "reg", &reglen);
     uint32_t flash_addr = qemu_devtree_int_array_index(reg, 0);
     uint32_t flash_size = qemu_devtree_int_array_index(reg, 1);
 
-    ram_addr_t phys_flash = qemu_ram_alloc(NULL, qemu_devtree_get_name(fdt, node, NULL), flash_size);
     DriveInfo *dinfo = drive_get(IF_PFLASH, 0, 0);
-    pflash_cfi01_register(qemu_devtree_int_array_index(reg, 0), phys_flash,
+    pflash_cfi01_register(flash_addr, NULL,
+                          qemu_devtree_get_name(fdt, node, NULL), flash_size,
                           dinfo ? dinfo->bdrv : NULL, (64 * 1024),
                           flash_size >> 16,
                           1, 0x89, 0x18, 0x0000, 0x0, 1);
@@ -207,16 +214,16 @@ devinfo_t flash_device = {
 static void xilinx_timer_probe(void* fdt, int node)
 {
     int reglen;
-    const void* reg = qemu_devtree_getprop(fdt, node, "reg", &reglen);
+    const void* reg = qemu_devtree_getprop_offset(fdt, node, "reg", &reglen);
     uint32_t timer_addr = qemu_devtree_int_array_index(reg, 0);
     int irqLen;
-    const void* irqs = qemu_devtree_getprop(fdt, node, "interrupts", &irqLen);
+    const void* irqs = qemu_devtree_getprop_offset(fdt, node, "interrupts", &irqLen);
     uint32_t timer_irq = qemu_devtree_int_array_index(irqs, 0);
 
     printf("  TIMER BASE %08X IRQ %d\n", timer_addr, timer_irq);
 
     /* 2 timers at irq 2 @ 62 Mhz.  */
-    xilinx_timer_create(timer_addr, irq[timer_irq], 2, 62 * 1000000);
+    xilinx_timer_create(timer_addr, irq[timer_irq], 0, 62 * 1000000);
 }
 
 devinfo_t xilinx_timer_device = {
@@ -231,15 +238,15 @@ devinfo_t xilinx_timer_device = {
 static void xilinx_uartlite_probe(void* fdt, int node)
 {
     int reglen;
-    const void* reg = qemu_devtree_getprop(fdt, node, "reg", &reglen);
+    const void* reg = qemu_devtree_getprop_offset(fdt, node, "reg", &reglen);
     uint32_t uart_addr = qemu_devtree_int_array_index(reg, 0);
     int irqLen;
-    const void* irqs = qemu_devtree_getprop(fdt, node, "interrupts", &irqLen);
+    const void* irqs = qemu_devtree_getprop_offset(fdt, node, "interrupts", &irqLen);
     uint32_t uart_irq = qemu_devtree_int_array_index(irqs, 0);
 
     printf("  UART BASE %08X IRQ %d\n", uart_addr, uart_irq);
 
-    sysbus_create_simple("xilinx,uartlite", uart_addr, irq[uart_irq]);
+    sysbus_create_simple("xlnx.xps-uartlite", uart_addr, irq[uart_irq]);
 }
 
 devinfo_t xilinx_uartlite_device = {
@@ -254,13 +261,13 @@ devinfo_t xilinx_uartlite_device = {
 static void xilinx_ethlite_probe(void* fdt, int node)
 {
     int reglen;
-    const void* reg = qemu_devtree_getprop(fdt, node, "reg", &reglen);
+    const void* reg = qemu_devtree_getprop_offset(fdt, node, "reg", &reglen);
     uint32_t eth_addr = qemu_devtree_int_array_index(reg, 0);
     int irqLen;
-    const void* irqs = qemu_devtree_getprop(fdt, node, "interrupts", &irqLen);
+    const void* irqs = qemu_devtree_getprop_offset(fdt, node, "interrupts", &irqLen);
     uint32_t eth_irq = qemu_devtree_int_array_index(irqs, 0);
 
-    xilinx_ethlite_create(&nd_table[0], eth_addr, irq[eth_irq], 0, 0);
+    xilinx_ethlite_create(&nd_table[eth_dev_index++], eth_addr, irq[eth_irq], 0, 0);
 }
 
 devinfo_t xilinx_ethlite_device = {
@@ -275,16 +282,16 @@ devinfo_t xilinx_ethlite_device = {
 static void labx_audio_packetizer_probe(void* fdt, int node)
 {
     int reglen;
-    const void* reg = qemu_devtree_getprop(fdt, node, "reg", &reglen);
+    const void* reg = qemu_devtree_getprop_offset(fdt, node, "reg", &reglen);
     uint32_t packetizer_addr = qemu_devtree_int_array_index(reg, 0);
     int irqLen;
-    const void* irqs = qemu_devtree_getprop(fdt, node, "interrupts", &irqLen);
+    const void* irqs = qemu_devtree_getprop_offset(fdt, node, "interrupts", &irqLen);
     uint32_t packetizer_irq = qemu_devtree_int_array_index(irqs, 0);
     int clockLen;
-    const void* clocks = qemu_devtree_getprop(fdt, node, "xlnx,num-clock-domains", &clockLen);
+    const void* clocks = qemu_devtree_getprop_offset(fdt, node, "xlnx,num-clock-domains", &clockLen);
     uint32_t clockDomains = qemu_devtree_int_array_index(clocks, 0);
     int cacheLen;
-    const void* caches = qemu_devtree_getprop(fdt, node, "xlnx,cache-data-words", &cacheLen);
+    const void* caches = qemu_devtree_getprop_offset(fdt, node, "xlnx,cache-data-words", &cacheLen);
     uint32_t cacheWords = qemu_devtree_int_array_index(caches, 0);
 
     labx_audio_packetizer_create(packetizer_addr, irq[packetizer_irq], clockDomains, cacheWords);
@@ -302,19 +309,19 @@ devinfo_t labx_audio_packetizer_device = {
 static void labx_audio_depacketizer_probe(void* fdt, int node)
 {
     int reglen;
-    const void* reg = qemu_devtree_getprop(fdt, node, "reg", &reglen);
+    const void* reg = qemu_devtree_getprop_offset(fdt, node, "reg", &reglen);
     uint32_t depacketizer_addr = qemu_devtree_int_array_index(reg, 0);
     int irqLen;
-    const void* irqs = qemu_devtree_getprop(fdt, node, "interrupts", &irqLen);
+    const void* irqs = qemu_devtree_getprop_offset(fdt, node, "interrupts", &irqLen);
     uint32_t depacketizer_irq = qemu_devtree_int_array_index(irqs, 0);
     int clockLen;
-    const void* clocks = qemu_devtree_getprop(fdt, node, "xlnx,num-clock-domains", &clockLen);
+    const void* clocks = qemu_devtree_getprop_offset(fdt, node, "xlnx,num-clock-domains", &clockLen);
     uint32_t clockDomains = qemu_devtree_int_array_index(clocks, 0);
     int cacheLen;
-    const void* caches = qemu_devtree_getprop(fdt, node, "xlnx,cache-data-words", &cacheLen);
+    const void* caches = qemu_devtree_getprop_offset(fdt, node, "xlnx,cache-data-words", &cacheLen);
     uint32_t cacheWords = qemu_devtree_int_array_index(caches, 0);
     int ifLen;
-    const void* ifType = qemu_devtree_getprop(fdt, node, "xlnx,interface-type", &ifLen);
+    const void* ifType = qemu_devtree_getprop_offset(fdt, node, "xlnx,interface-type", &ifLen);
     int hasDMA = (0 != strncmp("CACHE_RAM", (const char*)ifType, ifLen));
 
     labx_audio_depacketizer_create(depacketizer_addr, irq[depacketizer_irq], clockDomains, cacheWords, hasDMA);
@@ -332,7 +339,7 @@ devinfo_t labx_audio_depacketizer_device = {
 static void labx_dma_probe(void* fdt, int node)
 {
     int reglen;
-    const void* reg = qemu_devtree_getprop(fdt, node, "reg", &reglen);
+    const void* reg = qemu_devtree_getprop_offset(fdt, node, "reg", &reglen);
     uint32_t dma_addr = qemu_devtree_int_array_index(reg, 0);
 
     labx_dma_create(dma_addr, 1024);
@@ -350,15 +357,15 @@ devinfo_t labx_dma_device = {
 static void labx_ethernet_probe(void* fdt, int node)
 {
     int reglen;
-    const void* reg = qemu_devtree_getprop(fdt, node, "reg", &reglen);
+    const void* reg = qemu_devtree_getprop_offset(fdt, node, "reg", &reglen);
     uint32_t ethernet_addr = qemu_devtree_int_array_index(reg, 0);
     int irqLen;
-    const void* irqs = qemu_devtree_getprop(fdt, node, "interrupts", &irqLen);
+    const void* irqs = qemu_devtree_getprop_offset(fdt, node, "interrupts", &irqLen);
     uint32_t host_irq = qemu_devtree_int_array_index(irqs, 0);
     uint32_t fifo_irq = qemu_devtree_int_array_index(irqs, 2);
     uint32_t phy_irq  = qemu_devtree_int_array_index(irqs, 4);
 
-    labx_ethernet_create(&nd_table[0], ethernet_addr, irq[host_irq], irq[fifo_irq], irq[phy_irq]);
+    labx_ethernet_create(&nd_table[eth_dev_index++], ethernet_addr, irq[host_irq], irq[fifo_irq], irq[phy_irq]);
 }
 
 devinfo_t labx_ethernet_device = {
@@ -373,7 +380,7 @@ devinfo_t labx_ethernet_device = {
 static void labx_ptp_probe(void* fdt, int node)
 {
     int reglen;
-    const void* reg = qemu_devtree_getprop(fdt, node, "reg", &reglen);
+    const void* reg = qemu_devtree_getprop_offset(fdt, node, "reg", &reglen);
     uint32_t ptp_addr = qemu_devtree_int_array_index(reg, 0);
 
     labx_ptp_create(ptp_addr);
@@ -473,31 +480,36 @@ labx_microblaze_init(ram_addr_t ram_size,
                           const char *kernel_cmdline,
                           const char *initrd_filename, const char *cpu_model)
 {
+    MemoryRegion *address_space_mem = get_system_memory();
+
     int kernel_size;
     int fdt_size;
     void* fdt = get_device_tree(&fdt_size);
     target_phys_addr_t ddr_base = get_dram_base(fdt);
-    ram_addr_t phys_lmb_bram;
-    ram_addr_t phys_ram;
+    MemoryRegion *phys_lmb_bram = g_new(MemoryRegion, 1);
+    MemoryRegion *phys_ram = g_new(MemoryRegion, 1);
+    CPUMBState *env;
 
     /* init CPUs */
     if (cpu_model == NULL) {
         cpu_model = "microblaze";
     }
-    env = cpu_init(cpu_model);
+    g_cpu = cpu_mb_init(cpu_model);
+    env = &g_cpu->env;
 
     env->pvr.regs[10] = 0x0c000000; /* spartan 3a dsp family.  */
-    qemu_register_reset(main_cpu_reset, env);
+    qemu_register_reset(main_cpu_reset, g_cpu);
 
     /* Attach emulated BRAM through the LMB. LMB size is not specified in the device-tree
        but there must be one to hold the vector table. */
-    phys_lmb_bram = qemu_ram_alloc(NULL, "labx_microblaze.lmb_bram",
-                                   LMB_BRAM_SIZE);
-    cpu_register_physical_memory(0x00000000, LMB_BRAM_SIZE,
-                                 phys_lmb_bram | IO_MEM_RAM);
+    memory_region_init_ram(phys_lmb_bram, "labx_microblaze.lmb_bram", LMB_BRAM_SIZE);
+    vmstate_register_ram_global(phys_lmb_bram);
+    memory_region_add_subregion(address_space_mem, 0x00000000, phys_lmb_bram);
 
-    phys_ram = qemu_ram_alloc(NULL, "labx_microblaze.ram", ram_size);
-    cpu_register_physical_memory(ddr_base, ram_size, phys_ram | IO_MEM_RAM);
+    memory_region_init_ram(phys_ram, "labx_microblaze.ram", ram_size);
+    vmstate_register_ram_global(phys_ram);
+    memory_region_add_subregion(address_space_mem, ddr_base, phys_ram);
+
 
     /* Create other devices listed in the device-tree */
     plb_bus_probe(fdt);

@@ -46,6 +46,9 @@ static struct
     uint32_t fdt;
 } boot_info;
 
+// Current ethernet device index for multiple network interfaces
+static int eth_dev_index = 0;
+
 static void main_cpu_reset(void *opaque)
 {
     Nios2CPU *cpu = opaque;
@@ -298,7 +301,7 @@ static void labx_ethernet_probe(void* fdt, int node, uint32_t offset)
     uint32_t fifo_irq = 0; //qemu_devtree_int_array_index(irqs, 2);
     uint32_t phy_irq  = 0; //qemu_devtree_int_array_index(irqs, 4);
 
-    labx_ethernet_create(&nd_table[0], ethernet_addr, irq[host_irq], irq[fifo_irq], irq[phy_irq]);
+    labx_ethernet_create(&nd_table[eth_dev_index++], ethernet_addr, irq[host_irq], irq[fifo_irq], irq[phy_irq]);
 }
 
 devinfo_t labx_ethernet_device = {

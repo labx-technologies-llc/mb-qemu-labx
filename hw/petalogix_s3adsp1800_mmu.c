@@ -33,6 +33,7 @@
 #include "xilinx.h"
 #include "blockdev.h"
 #include "exec-memory.h"
+#include "loader.h"
 
 #include "microblaze_boot.h"
 #include "microblaze_pic_cpu.h"
@@ -97,7 +98,7 @@ petalogix_s3adsp1800_init(ram_addr_t ram_size,
                           dinfo ? dinfo->bdrv : NULL, (64 * 1024),
                           FLASH_SIZE >> 16,
                           1, 0x89, 0x18, 0x0000, 0x0, 1);
-    printf("load of flash = %d to %08X\n", load_image_targphys(initrd_filename, 0x87000000, FLASH_SIZE), (int)phys_flash);
+    printf("load of flash = %d to %08X\n", load_image_targphys(initrd_filename, 0x87000000, FLASH_SIZE), 0x87000000);
 
     cpu_irq = microblaze_pic_init_cpu(env);
     dev = xilinx_intc_create(INTC_BASEADDR, cpu_irq[0], 2);

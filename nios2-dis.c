@@ -299,7 +299,7 @@ nios2_disassemble (bfd_vma address, unsigned long opcode,
   info->target = 0;
   info->target2 = 0;
 
-  (*info->fprintf_func) (info->stream, "%08x %08x   ", address, opcode);
+  (*info->fprintf_func) (info->stream, "%08x %08x   ", (int)address, (int)opcode);
 
   /* Find the major opcode and use this to disassemble
      the instruction and its arguments */
@@ -348,7 +348,7 @@ nios2_disassemble (bfd_vma address, unsigned long opcode,
     {
       /* Handle undefined instructions. */
       info->insn_type = dis_noninsn;
-      (*info->fprintf_func) (info->stream, "0x%x", opcode);
+      (*info->fprintf_func) (info->stream, "0x%x", (int)opcode);
     }
   // this tells the caller how far to advance the program counter
   return INSNLEN;
@@ -423,12 +423,12 @@ nios2_print_insn_arg (const char *argptr,
     case 'i':
       /* 16-bit signed immediate */
       i = (signed) (GET_INSN_FIELD (IMM16, opcode) << 16) >> 16;
-      (*info->fprintf_func) (info->stream, "%d", i);
+      (*info->fprintf_func) (info->stream, "%d", (int)i);
       break;
     case 'u':
       /* 16-bit unsigned immediate */
       i = GET_INSN_FIELD (IMM16, opcode);
-      (*info->fprintf_func) (info->stream, "%d", i);
+      (*info->fprintf_func) (info->stream, "%d", (int)i);
       break;
     case 'o':
       /* 16-bit signed immediate address offset */
@@ -439,18 +439,18 @@ nios2_print_insn_arg (const char *argptr,
     case 'p':
       /* 5-bit unsigned immediate */
       i = GET_INSN_FIELD (CACHE_OPX, opcode);
-      (*info->fprintf_func) (info->stream, "%d", i);
+      (*info->fprintf_func) (info->stream, "%d", (int)i);
       break;
     case 'j':
       /* 5-bit unsigned immediate */
       i = GET_INSN_FIELD (IMM5, opcode);
-      (*info->fprintf_func) (info->stream, "%d", i);
+      (*info->fprintf_func) (info->stream, "%d", (int)i);
       break;
     case 'l':
       /* 8-bit unsigned immediate */
       /* FIXME - not yet implemented */
       i = GET_INSN_FIELD (CUSTOM_N, opcode);
-      (*info->fprintf_func) (info->stream, "%u", i);
+      (*info->fprintf_func) (info->stream, "%u", (int)i);
       break;
     case 'm':
       /* 26-bit unsigned immediate */
@@ -466,7 +466,7 @@ nios2_print_insn_arg (const char *argptr,
       break;
     case 'b':
       i = GET_INSN_FIELD (IMM5, opcode);
-      (*info->fprintf_func) (info->stream, "%d", i);
+      (*info->fprintf_func) (info->stream, "%d", (int)i);
       break;
     default:
       (*info->fprintf_func) (info->stream, "unknown");

@@ -1,4 +1,5 @@
-obj-y = petalogix_s3adsp1800_mmu.o
+obj-y  = labx_microblaze_devicetree.o
+obj-y += petalogix_s3adsp1800_mmu.o
 obj-y += petalogix_ml605_mmu.o
 obj-y += microblaze_boot.o
 
