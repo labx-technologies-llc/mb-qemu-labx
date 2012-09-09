@@ -1,7 +1,7 @@
 /*
  * QEMU Nios II CPU
  *
- * Copyright (c) 2012 Chris Wulff
+ * Copyright (c) 2012 Chris Wulff <crwulff@gmail.com>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -25,56 +25,59 @@
 /* CPUClass::reset() */
 static void nios2_cpu_reset(CPUState *s)
 {
-  Nios2CPU *cpu = NIOS2_CPU(s);
-  Nios2CPUClass *mcc = NIOS2_CPU_GET_CLASS(cpu);
-  CPUNios2State *env = &cpu->env;
+    Nios2CPU *cpu = NIOS2_CPU(s);
+    Nios2CPUClass *mcc = NIOS2_CPU_GET_CLASS(cpu);
+    CPUNios2State *env = &cpu->env;
 
-  if (qemu_loglevel_mask(CPU_LOG_RESET)) {
-    qemu_log("CPU Reset (CPU %d)\n", env->cpu_index);
-    log_cpu_state(env, 0);
-  }
+    if (qemu_loglevel_mask(CPU_LOG_RESET)) {
+        qemu_log("CPU Reset (CPU %d)\n", env->cpu_index);
+        log_cpu_state(env, 0);
+    }
 
-  mcc->parent_reset(s);
+    mcc->parent_reset(s);
 
-  tlb_flush(env, 1);
+    tlb_flush(env, 1);
 
-  memset(env->regs, 0, sizeof(uint32_t) * NUM_CORE_REGS);
-  env->regs[R_PC] = 0xc0000000;
+    memset(env->regs, 0, sizeof(uint32_t) * NUM_CORE_REGS);
+    env->regs[R_PC] = env->reset_addr;
 
 #if defined(CONFIG_USER_ONLY)
-  /* start in user mode with interrupts enabled.  */
-  env->regs[CR_STATUS] = CR_STATUS_U | CR_STATUS_PIE;
+    /* start in user mode with interrupts enabled.  */
+    env->regs[CR_STATUS] = CR_STATUS_U | CR_STATUS_PIE;
 #else
-  mmu_init(&env->mmu);
+    mmu_init(&env->mmu);
 #endif
 }
 
-static void nios2_cpu_initfn(Object *obj) {
-  Nios2CPU *cpu = NIOS2_CPU(obj);
-  CPUNios2State *env = &cpu->env;
+static void nios2_cpu_initfn(Object *obj)
+{
+    Nios2CPU *cpu = NIOS2_CPU(obj);
+    CPUNios2State *env = &cpu->env;
 
-  cpu_exec_init(env);
+    cpu_exec_init(env);
 }
 
-static void nios2_cpu_class_init(ObjectClass *oc, void *data) {
-  CPUClass *cc = CPU_CLASS(oc);
-  Nios2CPUClass *mcc = NIOS2_CPU_CLASS(oc);
+static void nios2_cpu_class_init(ObjectClass *oc, void *data)
+{
+    CPUClass *cc = CPU_CLASS(oc);
+    Nios2CPUClass *mcc = NIOS2_CPU_CLASS(oc);
 
-  mcc->parent_reset = cc->reset;
-  cc->reset = nios2_cpu_reset;
+    mcc->parent_reset = cc->reset;
+    cc->reset = nios2_cpu_reset;
 }
 
 static const TypeInfo nios2_cpu_type_info = {
-  .name = TYPE_NIOS2_CPU,
-  .parent = TYPE_CPU,
-  .instance_size = sizeof(Nios2CPU),
-  .instance_init = nios2_cpu_initfn,
-  .class_size = sizeof(Nios2CPUClass),
-  .class_init = nios2_cpu_class_init,
+    .name = TYPE_NIOS2_CPU,
+    .parent = TYPE_CPU,
+    .instance_size = sizeof(Nios2CPU),
+    .instance_init = nios2_cpu_initfn,
+    .class_size = sizeof(Nios2CPUClass),
+    .class_init = nios2_cpu_class_init,
 };
 
-static void nios2_cpu_register_types(void) {
-  type_register_static(&nios2_cpu_type_info);
+static void nios2_cpu_register_types(void)
+{
+    type_register_static(&nios2_cpu_type_info);
 }
 
 type_init(nios2_cpu_register_types)

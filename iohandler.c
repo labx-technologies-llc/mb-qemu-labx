@@ -118,10 +118,12 @@ void qemu_iohandler_poll(fd_set *readfds, fd_set *writefds, fd_set *xfds, int re
         IOHandlerRecord *pioh, *ioh;
 
         QLIST_FOREACH_SAFE(ioh, &io_handlers, next, pioh) {
-            if (!ioh->deleted && ioh->fd_read && (ioh->fd >= 0) && FD_ISSET(ioh->fd, readfds)) {
+            if (!ioh->deleted && ioh->fd_read && (ioh->fd >= 0) &&
+                FD_ISSET(ioh->fd, readfds)) {
                 ioh->fd_read(ioh->opaque);
             }
-            if (!ioh->deleted && ioh->fd_write && (ioh->fd >= 0) && FD_ISSET(ioh->fd, writefds)) {
+            if (!ioh->deleted && ioh->fd_write && (ioh->fd >= 0) &&
+                FD_ISSET(ioh->fd, writefds)) {
                 ioh->fd_write(ioh->opaque);
             }
 

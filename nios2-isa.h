@@ -13,14 +13,14 @@
 #define NUM_OP_INSTS 64
 
 #ifndef ALT_ASM_SRC
-extern const char* op_names[NUM_OP_INSTS];
+extern const char *op_names[NUM_OP_INSTS];
 #endif /* ALT_ASM_SRC */
 
 /* OPX instruction opcode values (index is OPX field) */
 #define NUM_OPX_INSTS 64
 
 #ifndef ALT_ASM_SRC
-extern const char* opx_names[NUM_OPX_INSTS];
+extern const char *opx_names[NUM_OPX_INSTS];
 #endif /* ALT_ASM_SRC */
 
 /* Constants for instruction fields and ISA */
@@ -683,7 +683,8 @@ extern const char* opx_names[NUM_OPX_INSTS];
 #define GET_EXCEPTION_REG_CAUSE(Reg) \
     (((Reg) >> EXCEPTION_REG_CAUSE_LSB) & EXCEPTION_REG_CAUSE_MASK)
 #define SET_EXCEPTION_REG_CAUSE(Reg, Val) \
-    Reg = (((Reg) & (~(EXCEPTION_REG_CAUSE_MASK << EXCEPTION_REG_CAUSE_LSB))) | \
+    Reg = (((Reg) & (~(EXCEPTION_REG_CAUSE_MASK << \
+                       EXCEPTION_REG_CAUSE_LSB))) | \
          (((Val) & EXCEPTION_REG_CAUSE_MASK) << EXCEPTION_REG_CAUSE_LSB))
 #define GET_EXCEPTION_REG_MEA(Reg) \
     (((Reg) >> EXCEPTION_REG_MEA_LSB) & EXCEPTION_REG_MEA_MASK)
@@ -768,17 +769,20 @@ extern const char* opx_names[NUM_OPX_INSTS];
 #define GET_SIM_REG_PERF_CNT_CLR(Reg) \
     (((Reg) >> SIM_REG_PERF_CNT_CLR_LSB) & SIM_REG_PERF_CNT_CLR_MASK)
 #define SET_SIM_REG_PERF_CNT_CLR(Reg, Val) \
-    Reg = (((Reg) & (~(SIM_REG_PERF_CNT_CLR_MASK << SIM_REG_PERF_CNT_CLR_LSB))) | \
+    Reg = (((Reg) & (~(SIM_REG_PERF_CNT_CLR_MASK << \
+                       SIM_REG_PERF_CNT_CLR_LSB))) | \
          (((Val) & SIM_REG_PERF_CNT_CLR_MASK) << SIM_REG_PERF_CNT_CLR_LSB))
 #define GET_SIM_REG_PERF_CNT_EN(Reg) \
     (((Reg) >> SIM_REG_PERF_CNT_EN_LSB) & SIM_REG_PERF_CNT_EN_MASK)
 #define SET_SIM_REG_PERF_CNT_EN(Reg, Val) \
-    Reg = (((Reg) & (~(SIM_REG_PERF_CNT_EN_MASK << SIM_REG_PERF_CNT_EN_LSB))) | \
+    Reg = (((Reg) & (~(SIM_REG_PERF_CNT_EN_MASK << \
+                       SIM_REG_PERF_CNT_EN_LSB))) | \
          (((Val) & SIM_REG_PERF_CNT_EN_MASK) << SIM_REG_PERF_CNT_EN_LSB))
 #define GET_SIM_REG_SHOW_MMU_REGS(Reg) \
     (((Reg) >> SIM_REG_SHOW_MMU_REGS_LSB) & SIM_REG_SHOW_MMU_REGS_MASK)
 #define SET_SIM_REG_SHOW_MMU_REGS(Reg, Val) \
-    Reg = (((Reg) & (~(SIM_REG_SHOW_MMU_REGS_MASK << SIM_REG_SHOW_MMU_REGS_LSB))) | \
+    Reg = (((Reg) & (~(SIM_REG_SHOW_MMU_REGS_MASK << \
+                       SIM_REG_SHOW_MMU_REGS_LSB))) | \
          (((Val) & SIM_REG_SHOW_MMU_REGS_MASK) << SIM_REG_SHOW_MMU_REGS_LSB))
 #define GET_SIM_REG_SHOW_TLB(Reg) \
     (((Reg) >> SIM_REG_SHOW_TLB_LSB) & SIM_REG_SHOW_TLB_MASK)
@@ -823,7 +827,8 @@ extern const char* opx_names[NUM_OPX_INSTS];
 #define GET_STATUS_REG_NO_MMU_RSV(Reg) \
     (((Reg) >> STATUS_REG_NO_MMU_RSV_LSB) & STATUS_REG_NO_MMU_RSV_MASK)
 #define SET_STATUS_REG_NO_MMU_RSV(Reg, Val) \
-    Reg = (((Reg) & (~(STATUS_REG_NO_MMU_RSV_MASK << STATUS_REG_NO_MMU_RSV_LSB))) | \
+    Reg = (((Reg) & (~(STATUS_REG_NO_MMU_RSV_MASK << \
+                       STATUS_REG_NO_MMU_RSV_LSB))) | \
          (((Val) & STATUS_REG_NO_MMU_RSV_MASK) << STATUS_REG_NO_MMU_RSV_LSB))
 #define GET_STATUS_REG_PIE(Reg) \
     (((Reg) >> STATUS_REG_PIE_LSB) & STATUS_REG_PIE_MASK)
@@ -918,39 +923,51 @@ extern const char* opx_names[NUM_OPX_INSTS];
 
 /* Macros to extract MMU fields */
 #define GET_MMU_ADDR_BYPASS_TLB_CACHEABLE(Addr) \
-    (((Addr) >> MMU_ADDR_BYPASS_TLB_CACHEABLE_LSB) & MMU_ADDR_BYPASS_TLB_CACHEABLE_MASK)
+    (((Addr) >> MMU_ADDR_BYPASS_TLB_CACHEABLE_LSB) & \
+     MMU_ADDR_BYPASS_TLB_CACHEABLE_MASK)
 #define SET_MMU_ADDR_BYPASS_TLB_CACHEABLE(Addr, Val) \
-    Addr = (((Addr) & (~(MMU_ADDR_BYPASS_TLB_CACHEABLE_MASK << MMU_ADDR_BYPASS_TLB_CACHEABLE_LSB))) | \
-         (((Val) & MMU_ADDR_BYPASS_TLB_CACHEABLE_MASK) << MMU_ADDR_BYPASS_TLB_CACHEABLE_LSB))
+    Addr = (((Addr) & (~(MMU_ADDR_BYPASS_TLB_CACHEABLE_MASK << \
+                         MMU_ADDR_BYPASS_TLB_CACHEABLE_LSB))) | \
+         (((Val) & MMU_ADDR_BYPASS_TLB_CACHEABLE_MASK) << \
+          MMU_ADDR_BYPASS_TLB_CACHEABLE_LSB))
 #define GET_MMU_ADDR_BYPASS_TLB(Addr) \
     (((Addr) >> MMU_ADDR_BYPASS_TLB_LSB) & MMU_ADDR_BYPASS_TLB_MASK)
 #define SET_MMU_ADDR_BYPASS_TLB(Addr, Val) \
-    Addr = (((Addr) & (~(MMU_ADDR_BYPASS_TLB_MASK << MMU_ADDR_BYPASS_TLB_LSB))) | \
+    Addr = (((Addr) & (~(MMU_ADDR_BYPASS_TLB_MASK << \
+                         MMU_ADDR_BYPASS_TLB_LSB))) | \
          (((Val) & MMU_ADDR_BYPASS_TLB_MASK) << MMU_ADDR_BYPASS_TLB_LSB))
 #define GET_MMU_ADDR_BYPASS_TLB_PADDR(Addr) \
     (((Addr) >> MMU_ADDR_BYPASS_TLB_PADDR_LSB) & MMU_ADDR_BYPASS_TLB_PADDR_MASK)
 #define SET_MMU_ADDR_BYPASS_TLB_PADDR(Addr, Val) \
-    Addr = (((Addr) & (~(MMU_ADDR_BYPASS_TLB_PADDR_MASK << MMU_ADDR_BYPASS_TLB_PADDR_LSB))) | \
-         (((Val) & MMU_ADDR_BYPASS_TLB_PADDR_MASK) << MMU_ADDR_BYPASS_TLB_PADDR_LSB))
+    Addr = (((Addr) & (~(MMU_ADDR_BYPASS_TLB_PADDR_MASK << \
+                         MMU_ADDR_BYPASS_TLB_PADDR_LSB))) | \
+         (((Val) & MMU_ADDR_BYPASS_TLB_PADDR_MASK) << \
+          MMU_ADDR_BYPASS_TLB_PADDR_LSB))
 #define GET_MMU_ADDR_IO_REGION(Addr) \
     (((Addr) >> MMU_ADDR_IO_REGION_LSB) & MMU_ADDR_IO_REGION_MASK)
 #define SET_MMU_ADDR_IO_REGION(Addr, Val) \
-    Addr = (((Addr) & (~(MMU_ADDR_IO_REGION_MASK << MMU_ADDR_IO_REGION_LSB))) | \
+    Addr = (((Addr) & (~(MMU_ADDR_IO_REGION_MASK << \
+                         MMU_ADDR_IO_REGION_LSB))) | \
          (((Val) & MMU_ADDR_IO_REGION_MASK) << MMU_ADDR_IO_REGION_LSB))
 #define GET_MMU_ADDR_KERNEL_MMU_REGION(Addr) \
-    (((Addr) >> MMU_ADDR_KERNEL_MMU_REGION_LSB) & MMU_ADDR_KERNEL_MMU_REGION_MASK)
+    (((Addr) >> MMU_ADDR_KERNEL_MMU_REGION_LSB) & \
+     MMU_ADDR_KERNEL_MMU_REGION_MASK)
 #define SET_MMU_ADDR_KERNEL_MMU_REGION(Addr, Val) \
-    Addr = (((Addr) & (~(MMU_ADDR_KERNEL_MMU_REGION_MASK << MMU_ADDR_KERNEL_MMU_REGION_LSB))) | \
-         (((Val) & MMU_ADDR_KERNEL_MMU_REGION_MASK) << MMU_ADDR_KERNEL_MMU_REGION_LSB))
+    Addr = (((Addr) & (~(MMU_ADDR_KERNEL_MMU_REGION_MASK << \
+                         MMU_ADDR_KERNEL_MMU_REGION_LSB))) | \
+         (((Val) & MMU_ADDR_KERNEL_MMU_REGION_MASK) << \
+          MMU_ADDR_KERNEL_MMU_REGION_LSB))
 #define GET_MMU_ADDR_KERNEL_REGION(Addr) \
     (((Addr) >> MMU_ADDR_KERNEL_REGION_LSB) & MMU_ADDR_KERNEL_REGION_MASK)
 #define SET_MMU_ADDR_KERNEL_REGION(Addr, Val) \
-    Addr = (((Addr) & (~(MMU_ADDR_KERNEL_REGION_MASK << MMU_ADDR_KERNEL_REGION_LSB))) | \
+    Addr = (((Addr) & (~(MMU_ADDR_KERNEL_REGION_MASK << \
+                         MMU_ADDR_KERNEL_REGION_LSB))) | \
          (((Val) & MMU_ADDR_KERNEL_REGION_MASK) << MMU_ADDR_KERNEL_REGION_LSB))
 #define GET_MMU_ADDR_PAGE_OFFSET(Addr) \
     (((Addr) >> MMU_ADDR_PAGE_OFFSET_LSB) & MMU_ADDR_PAGE_OFFSET_MASK)
 #define SET_MMU_ADDR_PAGE_OFFSET(Addr, Val) \
-    Addr = (((Addr) & (~(MMU_ADDR_PAGE_OFFSET_MASK << MMU_ADDR_PAGE_OFFSET_LSB))) | \
+    Addr = (((Addr) & (~(MMU_ADDR_PAGE_OFFSET_MASK << \
+                         MMU_ADDR_PAGE_OFFSET_LSB))) | \
          (((Val) & MMU_ADDR_PAGE_OFFSET_MASK) << MMU_ADDR_PAGE_OFFSET_LSB))
 #define GET_MMU_ADDR_PFN(Addr) \
     (((Addr) >> MMU_ADDR_PFN_LSB) & MMU_ADDR_PFN_MASK)
@@ -960,7 +977,8 @@ extern const char* opx_names[NUM_OPX_INSTS];
 #define GET_MMU_ADDR_USER_REGION(Addr) \
     (((Addr) >> MMU_ADDR_USER_REGION_LSB) & MMU_ADDR_USER_REGION_MASK)
 #define SET_MMU_ADDR_USER_REGION(Addr, Val) \
-    Addr = (((Addr) & (~(MMU_ADDR_USER_REGION_MASK << MMU_ADDR_USER_REGION_LSB))) | \
+    Addr = (((Addr) & (~(MMU_ADDR_USER_REGION_MASK << \
+                         MMU_ADDR_USER_REGION_LSB))) | \
          (((Val) & MMU_ADDR_USER_REGION_MASK) << MMU_ADDR_USER_REGION_LSB))
 #define GET_MMU_ADDR_VPN(Addr) \
     (((Addr) >> MMU_ADDR_VPN_LSB) & MMU_ADDR_VPN_MASK)
@@ -2027,7 +2045,7 @@ extern unsigned char opx_prop_src2_no_x[64];
 #ifndef ALT_ASM_SRC
 /* Instruction information entry */
 typedef struct {
-     const char* name;     /* Assembly-language instruction name */
+     const char *name;     /* Assembly-language instruction name */
      int         instType; /* INST_TYPE_OP or INST_TYPE_OPX */
      unsigned    opcode;   /* Value of instruction word OP/OPX field */
 } Nios2InstInfo;
@@ -2037,7 +2055,8 @@ extern Nios2InstInfo nios2InstInfo[NUM_NIOS2_INST_CODES];
 
 /* Returns the instruction code given the 32-bit instruction word */
 #define GET_INST_CODE(Iw) \
-         (IS_OPX_INST(Iw) ? opxToInstCode[GET_IW_OPX(Iw)] : opToInstCode[GET_IW_OP(Iw)])
+         (IS_OPX_INST(Iw) ? opxToInstCode[GET_IW_OPX(Iw)] : \
+                            opToInstCode[GET_IW_OP(Iw)])
 
 #ifndef ALT_ASM_SRC
 extern int opToInstCode[64];
@@ -2080,9 +2099,10 @@ extern int opxToInstCode[64];
  * Just need to clear some top bits.
  */
 #define bypassTlbVaddrToPaddr(Vaddr)    \
-    ((Vaddr) & (MMU_ADDR_BYPASS_TLB_PADDR_MASK << MMU_ADDR_BYPASS_TLB_PADDR_LSB))
+    ((Vaddr) & (MMU_ADDR_BYPASS_TLB_PADDR_MASK << \
+                MMU_ADDR_BYPASS_TLB_PADDR_LSB))
 
-/* 
+/*
  * Will the physical address fit in the Kernel/IO region virtual address space?
  */
 #define fitsInKernelRegion(Paddr)       \
@@ -2117,7 +2137,7 @@ extern int opxToInstCode[64];
 /* Exception information */
 #ifndef ALT_ASM_SRC
 typedef struct {
-    const char* name;
+    const char *name;
     int priority;
     int subPriority; /* -1 if none */
     int causeId; /* -1 if none */

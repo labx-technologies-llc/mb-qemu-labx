@@ -1,7 +1,7 @@
 /*
  * QEMU Nios II CPU
  *
- * Copyright (c) 2012 Chris Wulff
+ * Copyright (c) 2012 Chris Wulff <crwulff@gmail.com>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -66,5 +66,4 @@ static inline Nios2CPU *nios2_env_get_cpu(CPUNios2State *env)
 
 #define ENV_GET_CPU(e) CPU(nios2_env_get_cpu(e))
 
-
-#endif
+#endif /* QEMU_NIOS2_CPU_QOM_H */

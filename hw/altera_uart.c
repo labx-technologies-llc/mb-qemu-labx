@@ -1,18 +1,21 @@
 /*
  * QEMU model of the Altera uart.
  *
- * Copyright (c) 2012 Chris Wulff
+ * Copyright (c) 2012 Chris Wulff <crwulff@gmail.com>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
- * version 2 of the License, or (at your option) any later version.
+ * version 2.1 of the License, or (at your option) any later version.
  *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
  *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, see
+ * <http://www.gnu.org/licenses/lgpl-2.1.html>
  */
 
 #include "sysbus.h"
@@ -54,95 +57,106 @@
 #define CONTROL_IEOP     0x1000
 
 struct altera_uart {
-  SysBusDevice busdev;
-  MemoryRegion mmio;
-  CharDriverState *chr;
-  qemu_irq irq;
+    SysBusDevice busdev;
+    MemoryRegion mmio;
+    CharDriverState *chr;
+    qemu_irq irq;
 
-  uint32_t regs[R_MAX];
+    uint32_t regs[R_MAX];
 };
 
-static void uart_update_irq(struct altera_uart *s) {
-  unsigned int irq;
+static void uart_update_irq(struct altera_uart *s)
+{
+    unsigned int irq;
 
-  irq = (s->regs[R_STATUS] & s->regs[R_CONTROL] &
-    (STATUS_PE | STATUS_FE | STATUS_BRK | STATUS_ROE | STATUS_TOE | STATUS_TMT | STATUS_TRDY | STATUS_RRDY | STATUS_E | STATUS_DTCS));
-  irq = (irq == 0) ? 0 : 1;
-  qemu_set_irq(s->irq, irq);
+    irq = (s->regs[R_STATUS] & s->regs[R_CONTROL] &
+          (STATUS_PE | STATUS_FE | STATUS_BRK | STATUS_ROE | STATUS_TOE |
+           STATUS_TMT | STATUS_TRDY | STATUS_RRDY | STATUS_E | STATUS_DTCS));
+    irq = (irq == 0) ? 0 : 1;
+    qemu_set_irq(s->irq, irq);
 }
 
-static uint64_t uart_read(void *opaque, target_phys_addr_t addr, unsigned int size) {
-  struct altera_uart *s = opaque;
-  uint32_t r = 0;
-  addr >>= 2;
-  addr &= 0x7;
-  switch (addr) {
+static uint64_t uart_read(void *opaque, target_phys_addr_t addr,
+                          unsigned int size)
+{
+    struct altera_uart *s = opaque;
+    uint32_t r = 0;
+    addr >>= 2;
+    addr &= 0x7;
+    switch (addr) {
     case R_RXDATA:
-      r = s->regs[R_RXDATA];
-      s->regs[R_STATUS] &= ~STATUS_RRDY;
-      uart_update_irq(s);
-      break;
+        r = s->regs[R_RXDATA];
+        s->regs[R_STATUS] &= ~STATUS_RRDY;
+        uart_update_irq(s);
+        break;
 
     case R_STATUS:
-      r = s->regs[R_STATUS];
-      s->regs[R_STATUS] &= ~(STATUS_PE | STATUS_FE | STATUS_BRK | STATUS_ROE | STATUS_TOE | STATUS_E | STATUS_DTCS);
-      uart_update_irq(s);
-      break;
+        r = s->regs[R_STATUS];
+        s->regs[R_STATUS] &= ~(STATUS_PE | STATUS_FE | STATUS_BRK |
+                               STATUS_ROE | STATUS_TOE | STATUS_E |
+                               STATUS_DTCS);
+        uart_update_irq(s);
+        break;
 
     default:
-      if (addr < ARRAY_SIZE(s->regs)) {
-        r = s->regs[addr];
-      }
-      break;
-  }
-  //printf("UART RD %08X %08X\n", addr, r);
-  return r;
+        if (addr < ARRAY_SIZE(s->regs)) {
+            r = s->regs[addr];
+        }
+        break;
+    }
+
+    return r;
 }
 
-static void uart_write(void *opaque, target_phys_addr_t addr, uint64_t val64, unsigned int size) {
-  struct altera_uart *s = opaque;
-  uint32_t value = val64;
-  unsigned char ch = value;
+static void uart_write(void *opaque, target_phys_addr_t addr,
+                       uint64_t val64, unsigned int size)
+{
+    struct altera_uart *s = opaque;
+    uint32_t value = val64;
+    unsigned char ch = value;
 
-  addr >>= 2;
-  addr &= 0x7;
-  //printf("UART WR  %08X %08X\n", addr, value);
-  switch (addr) {
+    addr >>= 2;
+    addr &= 0x7;
+
+    switch (addr) {
     case R_TXDATA:
-      if (s->chr) {
-        qemu_chr_fe_write(s->chr, &ch, 1);
-      }
+        if (s->chr) {
+            qemu_chr_fe_write(s->chr, &ch, 1);
+        }
 
-      s->regs[addr] = value;
-      break;
+        s->regs[addr] = value;
+        break;
 
     case R_RXDATA:
     case R_STATUS:
-      /* No writeable bits */
-      break;
+        /* No writeable bits */
+        break;
 
     default:
-      s->regs[addr] = value;
-      break;
+        s->regs[addr] = value;
+        break;
     }
     uart_update_irq(s);
 }
 
-static void uart_rx(void *opaque, const uint8_t *buf, int size) {
-  struct altera_uart *s = opaque;
+static void uart_rx(void *opaque, const uint8_t *buf, int size)
+{
+    struct altera_uart *s = opaque;
 
-  s->regs[R_RXDATA] = *buf;
-  s->regs[R_STATUS] |= STATUS_RRDY;
+    s->regs[R_RXDATA] = *buf;
+    s->regs[R_STATUS] |= STATUS_RRDY;
 
-  uart_update_irq(s);
+    uart_update_irq(s);
 }
 
-static int uart_can_rx(void *opaque) {
-  struct altera_uart *s = opaque;
-  return ((s->regs[R_STATUS] & STATUS_RRDY) == 0);
+static int uart_can_rx(void *opaque)
+{
+    struct altera_uart *s = opaque;
+    return ((s->regs[R_STATUS] & STATUS_RRDY) == 0);
 }
 
-static void uart_event(void *opaque, int event) {
+static void uart_event(void *opaque, int event)
+{
 }
 
 static const MemoryRegionOps uart_ops = {
@@ -155,29 +169,32 @@ static const MemoryRegionOps uart_ops = {
     }
 };
 
-static int altera_uart_init(SysBusDevice *dev) {
-  struct altera_uart *s = FROM_SYSBUS(typeof(*s), dev);
+static int altera_uart_init(SysBusDevice *dev)
+{
+    struct altera_uart *s = FROM_SYSBUS(typeof(*s), dev);
 
-  s->regs[R_STATUS] = STATUS_TMT | STATUS_TRDY; /* Always ready to transmit */
+    s->regs[R_STATUS] = STATUS_TMT | STATUS_TRDY; /* Always ready to tx */
 
-  sysbus_init_irq(dev, &s->irq);
+    sysbus_init_irq(dev, &s->irq);
 
-  memory_region_init_io(&s->mmio, &uart_ops, s, "altera,uart", R_MAX * sizeof(uint32_t));
-  sysbus_init_mmio(dev, &s->mmio);
+    memory_region_init_io(&s->mmio, &uart_ops, s,
+                          "altera,uart", R_MAX * sizeof(uint32_t));
+    sysbus_init_mmio(dev, &s->mmio);
 
-  s->chr = qemu_char_get_next_serial();
-  if (s->chr) {
-    qemu_chr_add_handlers(s->chr, uart_can_rx, uart_rx, uart_event, s);
-  }
+    s->chr = qemu_char_get_next_serial();
+    if (s->chr) {
+        qemu_chr_add_handlers(s->chr, uart_can_rx, uart_rx, uart_event, s);
+    }
 
-  return 0;
+    return 0;
 }
 
 static Property altera_uart_properties[] = {
     DEFINE_PROP_END_OF_LIST(),
 };
 
-static void altera_uart_class_init(ObjectClass *klass, void *data) {
+static void altera_uart_class_init(ObjectClass *klass, void *data)
+{
     DeviceClass *dc = DEVICE_CLASS(klass);
     SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
 
@@ -192,7 +209,8 @@ static TypeInfo altera_uart_info = {
     .class_init    = altera_uart_class_init,
 };
 
-static void altera_uart_register(void) {
+static void altera_uart_register(void)
+{
     type_register_static(&altera_uart_info);
 }
 

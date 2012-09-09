@@ -29,9 +29,10 @@
 
 #define CHECK_HEADER(fdt) \
     { \
-        int err; \
-        if ((err = fdt_check_header(fdt)) != 0) \
+        int err = fdt_check_header(fdt); \
+        if (err != 0) { \
             return err; \
+        } \
     }
 
 #define FDT_MAX_SIZE  0x10000
@@ -331,35 +332,38 @@ int qemu_devtree_next_child_offset(void *fdt, int parentoffset, int childoffset)
 
     CHECK_HEADER(fdt);
     tag = fdt_next_tag(fdt, parentoffset, &nextoffset);
-    if (tag != FDT_BEGIN_NODE)
+    if (tag != FDT_BEGIN_NODE) {
         return -FDT_ERR_BADOFFSET;
+    }
 
     do {
         offset = nextoffset;
         tag = fdt_next_tag(fdt, offset, &nextoffset);
 
         switch (tag) {
-            case FDT_END:
-                return -FDT_ERR_TRUNCATED;
+        case FDT_END:
+            return -FDT_ERR_TRUNCATED;
 
-            case FDT_BEGIN_NODE:
-                level++;
-                if (level != 1)
-                    continue;
-                if (offset > childoffset)
-                    return offset;
-                break;
+        case FDT_BEGIN_NODE:
+            level++;
+            if (level != 1) {
+                continue;
+            }
+            if (offset > childoffset) {
+                return offset;
+            }
+            break;
 
-            case FDT_END_NODE:
-                level--;
-                break;
+        case FDT_END_NODE:
+            level--;
+            break;
 
-            case FDT_PROP:
-            case FDT_NOP:
-                break;
+        case FDT_PROP:
+        case FDT_NOP:
+            break;
 
-            default:
-                return -FDT_ERR_BADSTRUCTURE;
+        default:
+            return -FDT_ERR_BADSTRUCTURE;
         }
     } while (level >= 0);
 
@@ -377,9 +381,9 @@ const void *qemu_devtree_getprop_offset(const void *fdt, int nodeoffset,
     return fdt_getprop(fdt, nodeoffset, name, lenp);
 }
 
-uint32_t qemu_devtree_int_array_index(const void* propval, unsigned int index)
+uint32_t qemu_devtree_int_array_index(const void *propval, unsigned int index)
 {
-    return be32_to_cpu(((uint32_t*)propval)[index]);
+    return be32_to_cpu(((uint32_t *)propval)[index]);
 }
 
 int qemu_devtree_node_check_compatible(const void *fdt, int nodeoffset,

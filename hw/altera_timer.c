@@ -1,18 +1,21 @@
 /*
  * QEMU model of the Altera timer.
  *
- * Copyright (c) 2012 Chris Wulff
+ * Copyright (c) 2012 Chris Wulff <crwulff@gmail.com>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
- * version 2 of the License, or (at your option) any later version.
+ * version 2.1 of the License, or (at your option) any later version.
  *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
  *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, see
+ * <http://www.gnu.org/licenses/lgpl-2.1.html>
  */
 
 #include "sysbus.h"
@@ -36,90 +39,96 @@
 #define CONTROL_STOP  0x0008
 
 struct altera_timer {
-  SysBusDevice  busdev;
-  MemoryRegion  mmio;
-  qemu_irq      irq;
-  uint32_t      freq_hz;
-  QEMUBH       *bh;
-  ptimer_state *ptimer;
-  uint32_t      regs[R_MAX];
+    SysBusDevice  busdev;
+    MemoryRegion  mmio;
+    qemu_irq      irq;
+    uint32_t      freq_hz;
+    QEMUBH       *bh;
+    ptimer_state *ptimer;
+    uint32_t      regs[R_MAX];
 };
 
-static uint64_t timer_read(void *opaque, target_phys_addr_t addr, unsigned int size) {
-  struct altera_timer *t = opaque;
-  uint32_t r = 0;
+static uint64_t timer_read(void *opaque, target_phys_addr_t addr,
+                           unsigned int size)
+{
+    struct altera_timer *t = opaque;
+    uint32_t r = 0;
 
-  addr >>= 2;
-  addr &= 0x7;
-  switch (addr) {
+    addr >>= 2;
+    addr &= 0x7;
+    switch (addr) {
     case R_STATUS:
-      r = t->regs[R_STATUS];
-      break;
+        r = t->regs[R_STATUS];
+        break;
 
     default:
-      if (addr < ARRAY_SIZE(t->regs)) {
-        r = t->regs[addr];
-      }
-      break;
-  }
+        if (addr < ARRAY_SIZE(t->regs)) {
+            r = t->regs[addr];
+        }
+        break;
+    }
 
-  qemu_set_irq(t->irq, t->regs[R_STATUS] & t->regs[R_CONTROL] & CONTROL_ITO);
+    qemu_set_irq(t->irq, t->regs[R_STATUS] & t->regs[R_CONTROL] & CONTROL_ITO);
 
-  return r;
+    return r;
 }
 
-static void timer_start(struct altera_timer *t) {
-  ptimer_stop(t->ptimer);
-  ptimer_set_count(t->ptimer, (t->regs[R_PERIODH]<<16) | t->regs[R_PERIODL]);
-  ptimer_run(t->ptimer, 1);
+static void timer_start(struct altera_timer *t)
+{
+    ptimer_stop(t->ptimer);
+    ptimer_set_count(t->ptimer, (t->regs[R_PERIODH]<<16) | t->regs[R_PERIODL]);
+    ptimer_run(t->ptimer, 1);
 }
 
-static void timer_write(void *opaque, target_phys_addr_t addr, uint64_t val64, unsigned int size) {
-  struct altera_timer *t = opaque;
-  uint32_t value = val64;
-  uint32_t count = 0;
+static void timer_write(void *opaque, target_phys_addr_t addr,
+                        uint64_t val64, unsigned int size)
+{
+    struct altera_timer *t = opaque;
+    uint32_t value = val64;
+    uint32_t count = 0;
 
-  addr >>= 2;
-  addr &= 0x7;
-  switch (addr) {
+    addr >>= 2;
+    addr &= 0x7;
+    switch (addr) {
     case R_STATUS:
-      /* Writing zero clears the timeout */
-      t->regs[R_STATUS] &= ~STATUS_TO;
-      break;
+        /* Writing zero clears the timeout */
+        t->regs[R_STATUS] &= ~STATUS_TO;
+        break;
 
     case R_CONTROL:
-      t->regs[R_CONTROL] = value & (CONTROL_ITO | CONTROL_CONT);
-      if ((value & CONTROL_START) && ((t->regs[R_STATUS] & STATUS_RUN) == 0)) {
-        timer_start(t);
-      }
-      if ((value & CONTROL_STOP) && (t->regs[R_STATUS] & STATUS_RUN)) {
-        ptimer_stop(t->ptimer);
-      }
-      break;
+        t->regs[R_CONTROL] = value & (CONTROL_ITO | CONTROL_CONT);
+        if ((value & CONTROL_START) &&
+            ((t->regs[R_STATUS] & STATUS_RUN) == 0)) {
+            timer_start(t);
+        }
+        if ((value & CONTROL_STOP) && (t->regs[R_STATUS] & STATUS_RUN)) {
+            ptimer_stop(t->ptimer);
+        }
+        break;
 
     case R_PERIODL:
     case R_PERIODH:
-      t->regs[addr] = value & 0xFFFF;
-      if (t->regs[R_STATUS] & STATUS_RUN) {
-        timer_start(t);
-      }
-      break;
+        t->regs[addr] = value & 0xFFFF;
+        if (t->regs[R_STATUS] & STATUS_RUN) {
+            timer_start(t);
+        }
+        break;
 
     case R_SNAPL:
     case R_SNAPH:
-      count = ptimer_get_count(t->ptimer);
-      t->regs[R_SNAPL] = count & 0xFFFF;
-      t->regs[R_SNAPH] = (count>>16) & 0xFFFF;
-      break;
- 
-    default:
-      if (addr < ARRAY_SIZE(t->regs)) {
-        t->regs[addr] = value;
-      }
-      break;
-  }
+        count = ptimer_get_count(t->ptimer);
+        t->regs[R_SNAPL] = count & 0xFFFF;
+        t->regs[R_SNAPH] = (count>>16) & 0xFFFF;
+        break;
 
-  qemu_set_irq(t->irq, t->regs[R_STATUS] & t->regs[R_CONTROL] & CONTROL_ITO);
+    default:
+        if (addr < ARRAY_SIZE(t->regs)) {
+            t->regs[addr] = value;
+        }
+        break;
+    }
+
+    qemu_set_irq(t->irq, t->regs[R_STATUS] & t->regs[R_CONTROL] & CONTROL_ITO);
 }
 
 static const MemoryRegionOps timer_ops = {
@@ -132,28 +141,31 @@ static const MemoryRegionOps timer_ops = {
     }
 };
 
-static void timer_hit(void *opaque) {
-  struct altera_timer *t = opaque;
-  t->regs[R_STATUS] |= STATUS_TO;
+static void timer_hit(void *opaque)
+{
+    struct altera_timer *t = opaque;
+    t->regs[R_STATUS] |= STATUS_TO;
 
-  if (t->regs[R_CONTROL] & CONTROL_CONT) {
-    timer_start(t);
-  }
-  qemu_set_irq(t->irq, t->regs[R_STATUS] & t->regs[R_CONTROL] & CONTROL_ITO);
+    if (t->regs[R_CONTROL] & CONTROL_CONT) {
+        timer_start(t);
+    }
+    qemu_set_irq(t->irq, t->regs[R_STATUS] & t->regs[R_CONTROL] & CONTROL_ITO);
 }
 
-static int altera_timer_init(SysBusDevice *dev) {
-  struct altera_timer *t = FROM_SYSBUS(typeof (*t), dev);
+static int altera_timer_init(SysBusDevice *dev)
+{
+    struct altera_timer *t = FROM_SYSBUS(typeof(*t), dev);
 
-  sysbus_init_irq(dev, &t->irq);
+    sysbus_init_irq(dev, &t->irq);
 
-  t->bh = qemu_bh_new(timer_hit, t);
-  t->ptimer = ptimer_init(t->bh);
-  ptimer_set_freq(t->ptimer, t->freq_hz);
+    t->bh = qemu_bh_new(timer_hit, t);
+    t->ptimer = ptimer_init(t->bh);
+    ptimer_set_freq(t->ptimer, t->freq_hz);
 
-  memory_region_init_io(&t->mmio, &timer_ops, t, "altera,timer", R_MAX * sizeof(uint32_t));
-  sysbus_init_mmio(dev, &t->mmio);
-  return 0;
+    memory_region_init_io(&t->mmio, &timer_ops, t, "altera,timer",
+                          R_MAX * sizeof(uint32_t));
+    sysbus_init_mmio(dev, &t->mmio);
+    return 0;
 }
 
 static Property altera_timer_properties[] = {
@@ -161,7 +173,8 @@ static Property altera_timer_properties[] = {
     DEFINE_PROP_END_OF_LIST(),
 };
 
-static void altera_timer_class_init(ObjectClass *klass, void *data) {
+static void altera_timer_class_init(ObjectClass *klass, void *data)
+{
     DeviceClass *dc = DEVICE_CLASS(klass);
     SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
 
@@ -176,7 +189,8 @@ static TypeInfo altera_timer_info = {
     .class_init    = altera_timer_class_init,
 };
 
-static void altera_timer_register(void) {
+static void altera_timer_register(void)
+{
     type_register_static(&altera_timer_info);
 }
 

@@ -2051,7 +2051,8 @@ static void tlb_info(Monitor *mon)
 
 #endif
 
-#if defined(TARGET_SPARC) || defined(TARGET_PPC) || defined(TARGET_XTENSA) || defined(TARGET_NIOS2)
+#if defined(TARGET_SPARC) || defined(TARGET_PPC) || defined(TARGET_XTENSA) || \
+    defined(TARGET_NIOS2)
 static void tlb_info(Monitor *mon)
 {
     CPUArchState *env1 = mon_get_cpu();

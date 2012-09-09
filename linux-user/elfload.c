@@ -808,7 +808,7 @@ static void elf_core_copy_regs(target_elf_gregset_t *regs, const CPUMBState *env
 
 #define ELF_START_MMAP 0x80000000
 
-#define elf_check_arch(x) ( (x) == EM_ALTERA_NIOS2 )
+#define elf_check_arch(x) ((x) == EM_ALTERA_NIOS2)
 
 #define ELF_CLASS   ELFCLASS32
 #define ELF_ARCH    EM_ALTERA_NIOS2
@@ -816,19 +816,19 @@ static void elf_core_copy_regs(target_elf_gregset_t *regs, const CPUMBState *env
 static inline void init_thread(struct target_pt_regs *regs,
                                struct image_info *infop)
 {
-    // TODO
+    /* TODO */
 }
 
 #define ELF_EXEC_PAGESIZE        4096
 
 #define USE_ELF_CORE_DUMP
-// TODO - #define ELF_NREG 38
+/* TODO - #define ELF_NREG 38 */
 typedef target_elf_greg_t target_elf_gregset_t[ELF_NREG];
 
 /* See linux kernel: arch/mips/kernel/process.c:elf_dump_regs.  */
 static void elf_core_copy_regs(target_elf_gregset_t *regs, const CPUState *env)
 {
-    // TODO
+    /* TODO */
 }
 
 #endif /* TARGET_NIOS2 */
