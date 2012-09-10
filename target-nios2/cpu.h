@@ -142,7 +142,7 @@ typedef struct CPUNios2State CPUNios2State;
 
 #define NB_MMU_MODES 2
 
-typedef struct CPUNios2State {
+struct CPUNios2State {
     uint32_t regs[NUM_CORE_REGS];
 
     /* Addresses that are hard-coded in the FPGA build settings */
@@ -155,7 +155,7 @@ typedef struct CPUNios2State {
 #endif
 
     CPU_COMMON
-} CPUNios2State;
+};
 
 #include "cpu-qom.h"
 
