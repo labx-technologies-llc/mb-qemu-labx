@@ -852,17 +852,11 @@ static void rol(DisasContext *dc, uint32_t code)
     R_TYPE(instr, code);
 
     TCGv t0 = tcg_temp_new();
-    TCGv t1 = tcg_temp_new();
 
     tcg_gen_andi_tl(t0, dc->cpu_R[instr->b], 31);
-    tcg_gen_movi_tl(t1, 32);
-    tcg_gen_sub_tl(t1, t1, t0);
-    tcg_gen_shri_tl(t1, dc->cpu_R[instr->a], t1);
-    tcg_gen_shli_tl(dc->cpu_R[instr->c], dc->cpu_R[instr->a], t0);
-    tcg_gen_or_tl(dc->cpu_R[instr->c], dc->cpu_R[instr->c], t1);
+    tcg_gen_rotl_i32(dc->cpu_R[instr->c], dc->cpu_R[instr->a], t0);
 
     tcg_temp_free(t0);
-    tcg_temp_free(t1);
 }
 
 /* */
@@ -944,17 +938,11 @@ static void ror(DisasContext *dc, uint32_t code)
     R_TYPE(instr, code);
 
     TCGv t0 = tcg_temp_new();
-    TCGv t1 = tcg_temp_new();
 
     tcg_gen_andi_tl(t0, dc->cpu_R[instr->b], 31);
-    tcg_gen_movi_tl(t1, 32);
-    tcg_gen_sub_tl(t1, t1, t0);
-    tcg_gen_shli_tl(t1, dc->cpu_R[instr->a], t1);
-    tcg_gen_shri_tl(dc->cpu_R[instr->c], dc->cpu_R[instr->a], t0);
-    tcg_gen_or_tl(dc->cpu_R[instr->c], dc->cpu_R[instr->c], t1);
+    tcg_gen_rotr_i32(dc->cpu_R[instr->c], dc->cpu_R[instr->a], t0);
 
     tcg_temp_free(t0);
-    tcg_temp_free(t1);
 }
 
 /* */
