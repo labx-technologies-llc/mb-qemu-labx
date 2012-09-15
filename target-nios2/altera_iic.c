@@ -24,22 +24,23 @@
 
 typedef struct AlteraIIC {
     SysBusDevice busdev;
-    Nios2CPU *cpu;
-    qemu_irq parent_irq;
+    void        *cpu;
+    qemu_irq     parent_irq;
 } AlteraIIC;
 
 static void update_irq(AlteraIIC *pv)
 {
     uint32_t i;
+    CPUNios2State *env = &((Nios2CPU*)(pv->cpu))->env;
 
-    if ((pv->cpu->env.regs[CR_STATUS] & CR_STATUS_PIE) == 0) {
+    if ((env->regs[CR_STATUS] & CR_STATUS_PIE) == 0) {
         qemu_irq_lower(pv->parent_irq);
         return;
     }
 
     for (i = 0; i < 32; i++) {
-        if (pv->cpu->env.regs[CR_IPENDING] &
-            pv->cpu->env.regs[CR_IENABLE] & (1 << i)) {
+        if (env->regs[CR_IPENDING] &
+            env->regs[CR_IENABLE] & (1 << i)) {
             break;
         }
     }
@@ -53,9 +54,10 @@ static void update_irq(AlteraIIC *pv)
 static void irq_handler(void *opaque, int irq, int level)
 {
     AlteraIIC *pv = opaque;
+    CPUNios2State *env = &((Nios2CPU*)(pv->cpu))->env;
 
-    pv->cpu->env.regs[CR_IPENDING] &= ~(1 << irq);
-    pv->cpu->env.regs[CR_IPENDING] |= level << irq;
+    env->regs[CR_IPENDING] &= ~(1 << irq);
+    env->regs[CR_IPENDING] |= level << irq;
 
     update_irq(pv);
 }
@@ -63,7 +65,6 @@ static void irq_handler(void *opaque, int irq, int level)
 static int altera_iic_init(SysBusDevice *dev)
 {
     AlteraIIC *pv = FROM_SYSBUS(typeof(*pv), dev);
-    pv->cpu = g_cpu; /* TODO: Get attached CPU instead somehow... */
 
     qdev_init_gpio_in(&dev->qdev, irq_handler, 32);
     sysbus_init_irq(dev, &pv->parent_irq);
@@ -72,6 +73,7 @@ static int altera_iic_init(SysBusDevice *dev)
 }
 
 static Property altera_iic_properties[] = {
+    DEFINE_PROP_PTR("cpu", AlteraIIC, cpu),
     DEFINE_PROP_END_OF_LIST(),
 };
 

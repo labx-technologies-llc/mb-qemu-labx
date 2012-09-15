@@ -168,7 +168,6 @@ typedef struct DevInfo {
 /*
  * Interrupt controller device
  */
-Nios2CPU *g_cpu;
 static qemu_irq irq[32] = {};
 static qemu_irq *cpu_irq;
 
@@ -176,6 +175,11 @@ static void cpu_probe(void *fdt, int node, uint32_t offset)
 {
     int i;
     DeviceState *dev;
+
+    Nios2CPU *cpu = cpu_nios2_init("nios2");
+
+    qemu_register_reset(main_cpu_reset, cpu);
+
 #if 0 /* TODO: Finish off the vectored-interrupt-controller */
     int reglen;
     const void *reg = qemu_devtree_getprop_offset(fdt, node, "reg", &reglen);
@@ -192,26 +196,26 @@ static void cpu_probe(void *fdt, int node, uint32_t offset)
     dev = altera_vic_create(irq_addr, cpu_irq[0], 2);
 #else
     /* Internal interrupt controller (IIC) */
-    cpu_irq = nios2_pic_init_cpu(&g_cpu->env);
-    dev = altera_iic_create(cpu_irq[0], 2);
+    cpu_irq = nios2_pic_init_cpu(&cpu->env);
+    dev = altera_iic_create(cpu, cpu_irq[0], 2);
 #endif
 
     /* TODO: use the entrypoint of the passed in elf file or
        the device-tree one */
 #if 0
-    g_cpu->env.reset_addr =
+    cpu->env.reset_addr =
         fdt_get_int_from_array(fdt, node, "ALTR,reset-addr", 0);
 #else
-    g_cpu->env.reset_addr = 0xc0000000;
+    cpu->env.reset_addr = 0xc0000000;
 #endif
 
-    g_cpu->env.exception_addr =
+    cpu->env.exception_addr =
         fdt_get_int_from_array(fdt, node, "ALTR,exception-addr", 0);
-    g_cpu->env.fast_tlb_miss_addr =
+    cpu->env.fast_tlb_miss_addr =
         fdt_get_int_from_array(fdt, node, "ALTR,fast-tlb-miss-addr", 0);
 
     /* reset again to use the new reset vector */
-    cpu_reset(CPU(g_cpu));
+    cpu_reset(CPU(cpu));
 
     for (i = 0; i < 32; i++) {
         irq[i] = qdev_get_gpio_in(dev, i);
@@ -557,14 +561,6 @@ labx_nios2_init(ram_addr_t ram_size,
     MemoryRegion *phys_lmb_bram = g_new(MemoryRegion, 1);
     MemoryRegion *phys_ram = g_new(MemoryRegion, 1);
     MemoryRegion *phys_ram_alias = g_new(MemoryRegion, 1);
-
-    /* init CPUs */
-    if (cpu_model == NULL) {
-        cpu_model = "nios2";
-    }
-    g_cpu = cpu_nios2_init(cpu_model);
-
-    qemu_register_reset(main_cpu_reset, g_cpu);
 
     /* Attach emulated BRAM through the LMB. LMB size is not specified
        in the device-tree but there must be one to hold the vector table. */

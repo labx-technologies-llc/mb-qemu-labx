@@ -35,11 +35,12 @@ altera_vic_create(target_phys_addr_t base, qemu_irq irq, int kind_of_intr)
 }
 
 static inline DeviceState *
-altera_iic_create(qemu_irq irq, int kind_of_intr)
+altera_iic_create(Nios2CPU *cpu, qemu_irq irq, int kind_of_intr)
 {
     DeviceState *dev;
 
     dev = qdev_create(NULL, "altera,iic");
+    qdev_prop_set_ptr(dev, "cpu", cpu);
     qdev_init_nofail(dev);
     sysbus_connect_irq(sysbus_from_qdev(dev), 0, irq);
     return dev;
