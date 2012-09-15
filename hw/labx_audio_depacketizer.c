@@ -26,11 +26,11 @@
 #define min_bits qemu_fls
 #define RAM_INDEX(addr, size) (((addr)>>2)&((1<<min_bits((size)-1))-1))
 
-struct clock_domain_info {
+typedef struct ClockDomainInfo {
     uint32_t tsInterval;
-};
+} ClockDomainInfo;
 
-typedef struct audio_depacketizer {
+typedef struct Depacketizer {
     SysBusDevice busdev;
 
     MemoryRegion  mmio_depacketizer;
@@ -57,11 +57,11 @@ typedef struct audio_depacketizer {
     uint32_t *microcodeRam;
 
     /* Clock domain information */
-    struct clock_domain_info *clockDomainInfo;
+    ClockDomainInfo *clockDomainInfo;
 
     /* Attached DMA (if hasDMA > 0) */
     DeviceState *dma;
-} depacketizer_t;
+} Depacketizer;
 
 /*
  * Depacketizer registers
@@ -69,7 +69,7 @@ typedef struct audio_depacketizer {
 static uint64_t depacketizer_regs_read(void *opaque, target_phys_addr_t addr,
                                        unsigned int size)
 {
-    depacketizer_t *p = opaque;
+    Depacketizer *p = opaque;
 
     uint32_t retval = 0;
 
@@ -147,7 +147,7 @@ static uint64_t depacketizer_regs_read(void *opaque, target_phys_addr_t addr,
 static void depacketizer_regs_write(void *opaque, target_phys_addr_t addr,
                                     uint64_t val64, unsigned int size)
 {
-    /*depacketizer_t *p = opaque; */
+    /*Depacketizer *p = opaque; */
     uint32_t value = val64;
 
     switch ((addr>>2) & 0xFF) {
@@ -229,7 +229,7 @@ static const MemoryRegionOps depacketizer_regs_ops = {
 static uint64_t clock_domain_regs_read(void *opaque, target_phys_addr_t addr,
                                        unsigned int size)
 {
-    depacketizer_t *p = opaque;
+    Depacketizer *p = opaque;
 
     uint32_t retval = 0;
     int domain = (addr>>6) & ((1<<min_bits(p->clockDomains-1))-1);
@@ -261,7 +261,7 @@ static uint64_t clock_domain_regs_read(void *opaque, target_phys_addr_t addr,
 static void clock_domain_regs_write(void *opaque, target_phys_addr_t addr,
                                     uint64_t val64, unsigned int size)
 {
-    depacketizer_t *p = opaque;
+    Depacketizer *p = opaque;
     uint32_t value = val64;
     int domain = (addr>>6) & ((1<<min_bits(p->clockDomains-1))-1);
 
@@ -304,7 +304,7 @@ static const MemoryRegionOps clock_domain_regs_ops = {
 static uint64_t microcode_ram_read(void *opaque, target_phys_addr_t addr,
                                    unsigned int size)
 {
-    depacketizer_t *p = opaque;
+    Depacketizer *p = opaque;
 
     return p->microcodeRam[RAM_INDEX(addr, p->microcodeWords)];
 }
@@ -312,7 +312,7 @@ static uint64_t microcode_ram_read(void *opaque, target_phys_addr_t addr,
 static void microcode_ram_write(void *opaque, target_phys_addr_t addr,
                                uint64_t val64, unsigned int size)
 {
-    depacketizer_t *p = opaque;
+    Depacketizer *p = opaque;
     uint32_t value = val64;
 
     p->microcodeRam[RAM_INDEX(addr, p->microcodeWords)] = value;
@@ -331,11 +331,11 @@ static const MemoryRegionOps microcode_ram_ops = {
 
 static int labx_audio_depacketizer_init(SysBusDevice *dev)
 {
-    depacketizer_t *p = FROM_SYSBUS(typeof(*p), dev);
+    Depacketizer *p = FROM_SYSBUS(typeof(*p), dev);
 
     /* Initialize defaults */
     p->microcodeRam = g_malloc0(p->microcodeWords*4);
-    p->clockDomainInfo = g_malloc0(sizeof(struct clock_domain_info) *
+    p->clockDomainInfo = g_malloc0(sizeof(ClockDomainInfo) *
                                    p->clockDomains);
 
     /* Set up the IRQ */
@@ -372,15 +372,15 @@ static int labx_audio_depacketizer_init(SysBusDevice *dev)
 }
 
 static Property labx_audio_depacketizer_properties[] = {
-    DEFINE_PROP_UINT32("baseAddress",    depacketizer_t, baseAddress,    0),
-    DEFINE_PROP_UINT32("clockDomains",   depacketizer_t, clockDomains,   1),
-    DEFINE_PROP_UINT32("cacheDataWords", depacketizer_t, cacheDataWords, 1024),
-    DEFINE_PROP_UINT32("paramWords",     depacketizer_t, paramWords,     1024),
-    DEFINE_PROP_UINT32("microcodeWords", depacketizer_t, microcodeWords, 1024),
-    DEFINE_PROP_UINT32("maxStreamSlots", depacketizer_t, maxStreamSlots, 32),
-    DEFINE_PROP_UINT32("maxStreams",     depacketizer_t, maxStreams,     128),
-    DEFINE_PROP_UINT32("hasDMA",         depacketizer_t, hasDMA,         1),
-    DEFINE_PROP_UINT32("matchArch",      depacketizer_t, matchArch,      255),
+    DEFINE_PROP_UINT32("baseAddress",    Depacketizer, baseAddress,    0),
+    DEFINE_PROP_UINT32("clockDomains",   Depacketizer, clockDomains,   1),
+    DEFINE_PROP_UINT32("cacheDataWords", Depacketizer, cacheDataWords, 1024),
+    DEFINE_PROP_UINT32("paramWords",     Depacketizer, paramWords,     1024),
+    DEFINE_PROP_UINT32("microcodeWords", Depacketizer, microcodeWords, 1024),
+    DEFINE_PROP_UINT32("maxStreamSlots", Depacketizer, maxStreamSlots, 32),
+    DEFINE_PROP_UINT32("maxStreams",     Depacketizer, maxStreams,     128),
+    DEFINE_PROP_UINT32("hasDMA",         Depacketizer, hasDMA,         1),
+    DEFINE_PROP_UINT32("matchArch",      Depacketizer, matchArch,      255),
     DEFINE_PROP_END_OF_LIST(),
 };
 
@@ -396,7 +396,7 @@ static void labx_audio_depacketizer_class_init(ObjectClass *klass, void *data)
 static TypeInfo labx_audio_depacketizer_info = {
     .name          = "labx,audio-depacketizer",
     .parent        = TYPE_SYS_BUS_DEVICE,
-    .instance_size = sizeof(depacketizer_t),
+    .instance_size = sizeof(Depacketizer),
     .class_init    = labx_audio_depacketizer_class_init,
 };
 

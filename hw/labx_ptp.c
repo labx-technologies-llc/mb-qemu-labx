@@ -30,7 +30,7 @@
 #define PTP_RAM_BYTES        (PTP_MAX_PACKETS*PTP_MAX_PACKET_BYTES)
 #define PTP_HOST_RAM_WORDS   (PTP_RAM_BYTES/4)
 
-struct labx_ptp {
+typedef struct LabXPTP {
     SysBusDevice busdev;
 
     MemoryRegion  mmio_ptp;
@@ -47,7 +47,7 @@ struct labx_ptp {
 
     /* Rx buffers */
     uint32_t *rxRam;
-};
+} LabXPTP;
 
 /*
  * PTP registers
@@ -55,7 +55,7 @@ struct labx_ptp {
 static uint64_t ptp_regs_read(void *opaque, target_phys_addr_t addr,
                               unsigned int size)
 {
-    /*struct labx_ptp *p = opaque; */
+    /*LabXPTP *p = opaque; */
 
     uint32_t retval = 0;
 
@@ -111,7 +111,7 @@ static uint64_t ptp_regs_read(void *opaque, target_phys_addr_t addr,
 static void ptp_regs_write(void *opaque, target_phys_addr_t addr,
                            uint64_t val64, unsigned int size)
 {
-    /*struct labx_ptp *p = opaque; */
+    /*LabXPTP *p = opaque; */
     uint32_t value = val64;
 
     switch ((addr>>2) & 0x0F) {
@@ -178,7 +178,7 @@ static const MemoryRegionOps ptp_regs_ops = {
 static uint64_t tx_ram_read(void *opaque, target_phys_addr_t addr,
                             unsigned int size)
 {
-    struct labx_ptp *p = opaque;
+    LabXPTP *p = opaque;
 
     return p->txRam[RAM_INDEX(addr, PTP_HOST_RAM_WORDS)];
 }
@@ -186,7 +186,7 @@ static uint64_t tx_ram_read(void *opaque, target_phys_addr_t addr,
 static void tx_ram_write(void *opaque, target_phys_addr_t addr,
                          uint64_t val64, unsigned int size)
 {
-    struct labx_ptp *p = opaque;
+    LabXPTP *p = opaque;
     uint32_t value = val64;
 
     p->txRam[RAM_INDEX(addr, PTP_HOST_RAM_WORDS)] = value;
@@ -209,7 +209,7 @@ static const MemoryRegionOps tx_ram_ops = {
 static uint64_t rx_ram_read(void *opaque, target_phys_addr_t addr,
                             unsigned int size)
 {
-    struct labx_ptp *p = opaque;
+    LabXPTP *p = opaque;
 
     return p->rxRam[RAM_INDEX(addr, PTP_HOST_RAM_WORDS)];
 }
@@ -217,7 +217,7 @@ static uint64_t rx_ram_read(void *opaque, target_phys_addr_t addr,
 static void rx_ram_write(void *opaque, target_phys_addr_t addr,
                          uint64_t val64, unsigned int size)
 {
-    struct labx_ptp *p = opaque;
+    LabXPTP *p = opaque;
     uint32_t value = val64;
 
     p->rxRam[RAM_INDEX(addr, PTP_HOST_RAM_WORDS)] = value;
@@ -236,7 +236,7 @@ static const MemoryRegionOps rx_ram_ops = {
 
 static int labx_ptp_init(SysBusDevice *dev)
 {
-    struct labx_ptp *p = FROM_SYSBUS(typeof(*p), dev);
+    LabXPTP *p = FROM_SYSBUS(typeof(*p), dev);
 
     /* Initialize defaults */
     p->txRam = g_malloc0(PTP_RAM_BYTES);
@@ -262,7 +262,7 @@ static int labx_ptp_init(SysBusDevice *dev)
 }
 
 static Property labx_ptp_properties[] = {
-    DEFINE_PROP_UINT32("baseAddress", struct labx_ptp, baseAddress, 0),
+    DEFINE_PROP_UINT32("baseAddress", LabXPTP, baseAddress, 0),
     DEFINE_PROP_END_OF_LIST(),
 };
 
@@ -278,7 +278,7 @@ static void labx_ptp_class_init(ObjectClass *klass, void *data)
 static TypeInfo labx_ptp_info = {
     .name          = "labx,ptp",
     .parent        = TYPE_SYS_BUS_DEVICE,
-    .instance_size = sizeof(struct labx_ptp),
+    .instance_size = sizeof(LabXPTP),
     .class_init    = labx_ptp_class_init,
 };
 

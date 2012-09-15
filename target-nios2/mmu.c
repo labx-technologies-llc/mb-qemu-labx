@@ -58,7 +58,7 @@ uint32_t mmu_read(CPUNios2State *env, uint32_t rn)
 
 /* rw - 0 = read, 1 = write, 2 = fetch.  */
 unsigned int mmu_translate(CPUNios2State *env,
-                           struct nios2_mmu_lookup *lu,
+                           Nios2MMULookup *lu,
                            target_ulong vaddr, int rw, int mmu_idx)
 {
     int pid = (env->mmu.tlbmisc_wr & CR_TLBMISC_PID_MASK) >> 4;
@@ -70,7 +70,7 @@ unsigned int mmu_translate(CPUNios2State *env,
     int way;
     for (way = 0; way < env->mmu.tlb_num_ways; way++) {
 
-        struct nios2_tlb_entry *entry =
+        Nios2TLBEntry *entry =
             &env->mmu.tlb[(way * env->mmu.tlb_num_ways) +
                           (vpn & env->mmu.tlb_entry_mask)];
 
@@ -105,7 +105,7 @@ static void mmu_flush_pid(CPUNios2State *env, uint32_t pid)
     MMU_LOG(qemu_log("TLB Flush PID %d\n", pid));
 
     for (idx = 0; idx < env->mmu.tlb_num_entries; idx++) {
-        struct nios2_tlb_entry *entry = &env->mmu.tlb[idx];
+        Nios2TLBEntry *entry = &env->mmu.tlb[idx];
 
         MMU_LOG(qemu_log("TLB[%d] => %08X %08X\n",
                          idx, entry->tag, entry->data));
@@ -143,7 +143,7 @@ void mmu_write(CPUNios2State *env, uint32_t rn, uint32_t v)
             int pid = (env->mmu.tlbmisc_wr & CR_TLBMISC_PID_MASK) >> 4;
             int g = (v & CR_TLBACC_G) ? 1 : 0;
             int valid = ((vpn & CR_TLBACC_PFN_MASK) < 0xC0000) ? 1 : 0;
-            struct nios2_tlb_entry *entry =
+            Nios2TLBEntry *entry =
                 &env->mmu.tlb[(way * env->mmu.tlb_num_ways) +
                               (vpn & env->mmu.tlb_entry_mask)];
             uint32_t newTag = (vpn << 12) | (g << 11) | (valid << 10) | pid;
@@ -194,7 +194,7 @@ void mmu_write(CPUNios2State *env, uint32_t rn, uint32_t v)
         if (v & CR_TLBMISC_RD) {
             int way = (v >> CR_TLBMISC_WAY_SHIFT);
             int vpn = (env->mmu.pteaddr_wr & CR_PTEADDR_VPN_MASK) >> 2;
-            struct nios2_tlb_entry *entry =
+            Nios2TLBEntry *entry =
                 &env->mmu.tlb[(way * env->mmu.tlb_num_ways) +
                               (vpn & env->mmu.tlb_entry_mask)];
 
@@ -235,7 +235,7 @@ void mmu_write(CPUNios2State *env, uint32_t rn, uint32_t v)
     }
 }
 
-void mmu_init(struct nios2_mmu *mmu)
+void mmu_init(Nios2MMU *mmu)
 {
     MMU_LOG(qemu_log("mmu_init\n"));
 
@@ -244,8 +244,8 @@ void mmu_init(struct nios2_mmu *mmu)
     mmu->tlb_num_entries = 256; /* TODO: get this from ALTR,tlb-num-entries */
     mmu->tlb_entry_mask = (mmu->tlb_num_entries/mmu->tlb_num_ways) - 1;
 
-    mmu->tlb = (struct nios2_tlb_entry *)g_malloc0(
-        sizeof(struct nios2_tlb_entry) * mmu->tlb_num_entries);
+    mmu->tlb = (Nios2TLBEntry *)g_malloc0(
+        sizeof(Nios2TLBEntry) * mmu->tlb_num_entries);
 }
 
 void dump_mmu(FILE *f, fprintf_function cpu_fprintf, CPUNios2State *env)
@@ -256,7 +256,7 @@ void dump_mmu(FILE *f, fprintf_function cpu_fprintf, CPUNios2State *env)
                 env->mmu.pid_bits);
 
     for (i = 0; i < env->mmu.tlb_num_entries; i++) {
-        struct nios2_tlb_entry *entry = &env->mmu.tlb[i];
+        Nios2TLBEntry *entry = &env->mmu.tlb[i];
         cpu_fprintf(f, "TLB[%d] = %08X %08X %c VPN %05X "
                     "PID %02X %c PFN %05X %c%c%c%c\n",
                     i, entry->tag, entry->data,

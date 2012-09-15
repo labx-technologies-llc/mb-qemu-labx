@@ -26,7 +26,7 @@
 #define RAM_INDEX(addr, size) (((addr)>>2)&((1<<min_bits((size)-1))-1))
 
 
-struct labx_dma {
+typedef struct LabXDMA {
     SysBusDevice busdev;
 
     MemoryRegion  mmio_dma;
@@ -44,7 +44,7 @@ struct labx_dma {
 
     /* Microcode buffer */
     uint32_t *microcodeRam;
-};
+} LabXDMA;
 
 /*
  * DMA registers
@@ -52,7 +52,7 @@ struct labx_dma {
 static uint64_t dma_regs_read(void *opaque, target_phys_addr_t addr,
                               unsigned int size)
 {
-    struct labx_dma *p = opaque;
+    LabXDMA *p = opaque;
 
     uint32_t retval = 0;
 
@@ -102,7 +102,7 @@ static uint64_t dma_regs_read(void *opaque, target_phys_addr_t addr,
 static void dma_regs_write(void *opaque, target_phys_addr_t addr,
                            uint64_t val64, unsigned int size)
 {
-    /*struct labx_dma *p = opaque; */
+    /*LabXDMA *p = opaque; */
     uint32_t value = val64;
 
     if ((addr>>2) & 0x80) {
@@ -158,7 +158,7 @@ static const MemoryRegionOps dma_regs_ops = {
 static uint64_t microcode_ram_read(void *opaque, target_phys_addr_t addr,
                                    unsigned int size)
 {
-    struct labx_dma *p = opaque;
+    LabXDMA *p = opaque;
 
     return p->microcodeRam[RAM_INDEX(addr, p->microcodeWords)];
 }
@@ -166,7 +166,7 @@ static uint64_t microcode_ram_read(void *opaque, target_phys_addr_t addr,
 static void microcode_ram_write(void *opaque, target_phys_addr_t addr,
                                 uint64_t val64, unsigned int size)
 {
-    struct labx_dma *p = opaque;
+    LabXDMA *p = opaque;
     uint32_t value = val64;
 
     p->microcodeRam[RAM_INDEX(addr, p->microcodeWords)] = value;
@@ -185,7 +185,7 @@ static const MemoryRegionOps microcode_ram_ops = {
 
 static int labx_dma_init(SysBusDevice *dev)
 {
-    struct labx_dma *p = FROM_SYSBUS(typeof(*p), dev);
+    LabXDMA *p = FROM_SYSBUS(typeof(*p), dev);
 
     /* Initialize defaults */
     p->microcodeRam = g_malloc0(p->microcodeWords*4);
@@ -207,12 +207,12 @@ static int labx_dma_init(SysBusDevice *dev)
 }
 
 static Property labx_dma_properties[] = {
-    DEFINE_PROP_UINT32("baseAddress",    struct labx_dma, baseAddress,    0),
-    DEFINE_PROP_UINT32("paramWords",     struct labx_dma, paramWords,     1024),
-    DEFINE_PROP_UINT32("microcodeWords", struct labx_dma, microcodeWords, 1024),
-    DEFINE_PROP_UINT32("numIndexRegs",   struct labx_dma, numIndexRegs,   4),
-    DEFINE_PROP_UINT32("numChannels",    struct labx_dma, numChannels,    1),
-    DEFINE_PROP_UINT32("numAlus",        struct labx_dma, numAlus,        1),
+    DEFINE_PROP_UINT32("baseAddress",    LabXDMA, baseAddress,    0),
+    DEFINE_PROP_UINT32("paramWords",     LabXDMA, paramWords,     1024),
+    DEFINE_PROP_UINT32("microcodeWords", LabXDMA, microcodeWords, 1024),
+    DEFINE_PROP_UINT32("numIndexRegs",   LabXDMA, numIndexRegs,   4),
+    DEFINE_PROP_UINT32("numChannels",    LabXDMA, numChannels,    1),
+    DEFINE_PROP_UINT32("numAlus",        LabXDMA, numAlus,        1),
     DEFINE_PROP_END_OF_LIST(),
 };
 
@@ -228,7 +228,7 @@ static void labx_dma_class_init(ObjectClass *klass, void *data)
 static TypeInfo labx_dma_info = {
     .name          = "labx,dma",
     .parent        = TYPE_SYS_BUS_DEVICE,
-    .instance_size = sizeof(struct labx_dma),
+    .instance_size = sizeof(LabXDMA),
     .class_init    = labx_dma_class_init,
 };
 

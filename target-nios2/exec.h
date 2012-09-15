@@ -23,7 +23,7 @@
 
 #include "dyngen-exec.h"
 
-register struct CPUNios2State *env asm(AREG0);
+register CPUNios2State *env asm(AREG0);
 
 #include "cpu.h"
 #include "exec-all.h"

@@ -158,12 +158,12 @@ static ram_addr_t get_dram_base(void *fdt)
 
 typedef void (*device_init_func_t)(void *fdt, int node, uint32_t offset);
 
-typedef struct {
+typedef struct DevInfo {
     device_init_func_t probe;
     int pass;
     const char **compat;
 
-} devinfo_t;
+} DevInfo;
 
 /*
  * Interrupt controller device
@@ -218,7 +218,7 @@ static void cpu_probe(void *fdt, int node, uint32_t offset)
     }
 }
 
-devinfo_t cpu_device = {
+DevInfo cpu_device = {
     .probe = &cpu_probe,
     .pass = 0,
     .compat = (const char * []) {
@@ -250,7 +250,7 @@ static void flash_probe(void *fdt, int node, uint32_t offset)
                                flash_addr, flash_size), flash_addr);
 }
 
-devinfo_t flash_device = {
+DevInfo flash_device = {
     .probe = &flash_probe,
     .pass = 1,
     .compat = (const char * []) { "cfi-flash", NULL }
@@ -274,7 +274,7 @@ static void labx_audio_packetizer_probe(void *fdt, int node, uint32_t offset)
                                  clock_domains, cache_words);
 }
 
-devinfo_t labx_audio_packetizer_device = {
+DevInfo labx_audio_packetizer_device = {
     .probe = &labx_audio_packetizer_probe,
     .pass = 1,
     .compat = (const char * []) { "labx,labx_audio_packetizer-1.0", NULL }
@@ -303,7 +303,7 @@ static void labx_audio_depacketizer_probe(void *fdt, int node, uint32_t offset)
                                    clock_domains, cache_words, hasDMA);
 }
 
-devinfo_t labx_audio_depacketizer_device = {
+DevInfo labx_audio_depacketizer_device = {
     .probe = &labx_audio_depacketizer_probe,
     .pass = 1,
     .compat = (const char * []) {
@@ -323,7 +323,7 @@ static void labx_dma_probe(void *fdt, int node, uint32_t offset)
     labx_dma_create(dma_addr, 1024);
 }
 
-devinfo_t labx_dma_device = {
+DevInfo labx_dma_device = {
     .probe = &labx_dma_probe,
     .pass = 1,
     .compat = (const char * []) { "labx,labx_dma-1.0", NULL }
@@ -347,7 +347,7 @@ static void labx_ethernet_probe(void *fdt, int node, uint32_t offset)
                          irq[host_irq], irq[fifo_irq], irq[phy_irq]);
 }
 
-devinfo_t labx_ethernet_device = {
+DevInfo labx_ethernet_device = {
     .probe = &labx_ethernet_probe,
     .pass = 1,
     .compat = (const char * []) { "labx,labx_ethernet-1.0", NULL }
@@ -363,7 +363,7 @@ static void labx_ptp_probe(void *fdt, int node, uint32_t offset)
     labx_ptp_create(ptp_addr);
 }
 
-devinfo_t labx_ptp_device = {
+DevInfo labx_ptp_device = {
     .probe = &labx_ptp_probe,
     .pass = 1,
     .compat = (const char * []) { "labx,labx_ptp-1.0", NULL }
@@ -382,7 +382,7 @@ static void altera_uart_probe(void *fdt, int node, uint32_t offset)
     sysbus_create_simple("altera,uart", uart_addr, irq[uart_irq]);
 }
 
-devinfo_t altera_uart_device = {
+DevInfo altera_uart_device = {
     .probe = &altera_uart_probe,
     .pass = 1,
     .compat = (const char * []) { "ALTR,uart-1.0", NULL }
@@ -404,7 +404,7 @@ static void altera_timer_probe(void *fdt, int node, uint32_t offset)
     altera_timer_create(timer_addr, irq[timer_irq], timer_freq);
 }
 
-devinfo_t altera_timer_device = {
+DevInfo altera_timer_device = {
     .probe = &altera_timer_probe,
     .pass = 1,
     .compat = (const char * []) { "ALTR,timer-1.0", NULL }
@@ -441,7 +441,7 @@ static void altera_bridge_probe(void *fdt, int node, uint32_t offset)
     } while (again);
 }
 
-devinfo_t altera_bridge_device = {
+DevInfo altera_bridge_device = {
     .probe = &altera_bridge_probe,
     .pass = 1,
     .compat = (const char * []) { "simple-bus", NULL }
@@ -450,7 +450,7 @@ devinfo_t altera_bridge_device = {
 /*
  * Table of available devices
  */
-devinfo_t *devices[] = {
+DevInfo *devices[] = {
     &cpu_device,
     &flash_device,
     &labx_audio_packetizer_device,
@@ -466,7 +466,7 @@ devinfo_t *devices[] = {
 
 static int sopc_device_probe(void *fdt, int node, int pass, uint32_t offset)
 {
-    devinfo_t **dev = &(devices[0]);
+    DevInfo **dev = &(devices[0]);
 
     while (*dev) {
         const char **compat = &((*dev)->compat[0]);

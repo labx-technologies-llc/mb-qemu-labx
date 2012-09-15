@@ -32,24 +32,24 @@
  */
 
 /* I-Type instruction */
-struct i_type {
+typedef struct Nios2IType {
     uint32_t op:6;
     uint32_t imm16:16;
     uint32_t b:5;
     uint32_t a:5;
-} __attribute__((packed));
+} QEMU_PACKED Nios2IType;
 
 union i_type_u {
     uint32_t      v;
-    struct i_type i;
+    Nios2IType i;
 };
 
 #define I_TYPE(instr, op) \
     union i_type_u instr_u = { .v = op }; \
-    struct i_type *instr = &instr_u.i
+    Nios2IType *instr = &instr_u.i
 
 /* R-Type instruction */
-struct r_type {
+typedef struct Nios2RType {
     uint32_t op:6;
     /*
      * Some R-Type instructions embed a small immediate value in the
@@ -60,25 +60,25 @@ struct r_type {
     uint32_t c:5;
     uint32_t b:5;
     uint32_t a:5;
-} __attribute__((packed));
+} QEMU_PACKED Nios2RType;
 
 union r_type_u {
     uint32_t      v;
-    struct r_type i;
+    Nios2RType i;
 };
 
 #define R_TYPE(instr, op) \
     union r_type_u instr_u = { .v = op }; \
-    struct r_type *instr = &instr_u.i
+    Nios2RType *instr = &instr_u.i
 
 /* J-Type instruction */
-struct j_type {
+typedef struct Nios2JType {
     uint32_t op:6;
     uint32_t imm26:26;
-} __attribute__((packed));
+} QEMU_PACKED Nios2JType;
 
 #define J_TYPE(instr, op) \
-    struct j_type *instr = (struct j_type *) &op
+    Nios2JType *instr = (Nios2JType *) &op
 
 /*
  * Instruction Opcodes
@@ -244,19 +244,19 @@ enum {
     })
 
 typedef struct DisasContext {
-    CPUNios2State           *env;
-    TCGv                    *cpu_R;
-    int                      is_jmp;
-    target_ulong             pc;
-    struct TranslationBlock *tb;
+    CPUNios2State    *env;
+    TCGv             *cpu_R;
+    int               is_jmp;
+    target_ulong      pc;
+    TranslationBlock *tb;
 } DisasContext;
 
 typedef void (*instruction_handler)(DisasContext *dc, uint32_t opcode);
 
-struct instruction {
-    const char *name;
+typedef struct Nios2Instruction {
+    const char         *name;
     instruction_handler handler;
-};
+} Nios2Instruction;
 
 /*
  * Stringification macro (taken from Linux Kernel source code)

@@ -743,7 +743,7 @@ static void xorhi(DisasContext *dc, uint32_t code)
                     instr->imm16 << 16);
 }
 
-static struct instruction i_type_instructions[I_TYPE_COUNT] = {
+static Nios2Instruction i_type_instructions[I_TYPE_COUNT] = {
     [CALL]    = INSTRUCTION(call),
     [JMPI]    = INSTRUCTION(jmpi),
     [0x02]    = INSTRUCTION_ILLEGAL(),
@@ -1334,7 +1334,7 @@ static void sra(DisasContext *dc, uint32_t code)
     tcg_temp_free(t0);
 }
 
-static struct instruction r_type_instructions[R_TYPE_COUNT] = {
+static Nios2Instruction r_type_instructions[R_TYPE_COUNT] = {
     [0x00]   = INSTRUCTION_ILLEGAL(),
     [ERET]   = INSTRUCTION(eret),
     [ROLI]   = INSTRUCTION(roli),

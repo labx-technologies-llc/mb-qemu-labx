@@ -22,13 +22,13 @@
 #include "dyngen-exec.h"
 #include "cpu.h"
 
-struct altera_iic {
+typedef struct AlteraIIC {
     SysBusDevice busdev;
     Nios2CPU *cpu;
     qemu_irq parent_irq;
-};
+} AlteraIIC;
 
-static void update_irq(struct altera_iic *pv)
+static void update_irq(AlteraIIC *pv)
 {
     uint32_t i;
 
@@ -52,7 +52,7 @@ static void update_irq(struct altera_iic *pv)
 
 static void irq_handler(void *opaque, int irq, int level)
 {
-    struct altera_iic *pv = opaque;
+    AlteraIIC *pv = opaque;
 
     pv->cpu->env.regs[CR_IPENDING] &= ~(1 << irq);
     pv->cpu->env.regs[CR_IPENDING] |= level << irq;
@@ -62,7 +62,7 @@ static void irq_handler(void *opaque, int irq, int level)
 
 static int altera_iic_init(SysBusDevice *dev)
 {
-    struct altera_iic *pv = FROM_SYSBUS(typeof(*pv), dev);
+    AlteraIIC *pv = FROM_SYSBUS(typeof(*pv), dev);
     pv->cpu = g_cpu; /* TODO: Get attached CPU instead somehow... */
 
     qdev_init_gpio_in(&dev->qdev, irq_handler, 32);
@@ -87,7 +87,7 @@ static void altera_iic_class_init(ObjectClass *klass, void *data)
 static TypeInfo altera_iic_info = {
     .name          = "altera,iic",
     .parent        = TYPE_SYS_BUS_DEVICE,
-    .instance_size = sizeof(struct altera_iic),
+    .instance_size = sizeof(AlteraIIC),
     .class_init    = altera_iic_class_init,
 };
 

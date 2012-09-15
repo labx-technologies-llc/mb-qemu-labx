@@ -151,7 +151,7 @@ typedef struct CPUNios2State {
     uint32_t fast_tlb_miss_addr;
 
 #if !defined(CONFIG_USER_ONLY)
-    struct nios2_mmu mmu;
+    Nios2MMU mmu;
 #endif
 
     CPU_COMMON

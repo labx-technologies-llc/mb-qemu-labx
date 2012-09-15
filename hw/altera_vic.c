@@ -36,16 +36,16 @@
 #define R_VEC_TBL_ADDR     43
 #define R_MAX              44
 
-struct altera_vic {
+typedef struct AlteraVIC {
     SysBusDevice busdev;
     MemoryRegion mmio;
     qemu_irq parent_irq;
 
     /* Runtime control registers.  */
     uint32_t regs[R_MAX];
-};
+} AlteraVIC;
 
-static void update_irq(struct altera_vic *pv)
+static void update_irq(AlteraVIC *pv)
 {
     uint32_t i;
     pv->regs[R_INT_PENDING] = (pv->regs[R_INT_RAW_STATUS] |
@@ -72,7 +72,7 @@ static void update_irq(struct altera_vic *pv)
 static uint64_t pic_read(void *opaque, target_phys_addr_t addr,
                          unsigned int size)
 {
-    struct altera_vic *pv = opaque;
+    AlteraVIC *pv = opaque;
     uint32_t r = 0;
 
     addr >>= 2;
@@ -86,7 +86,7 @@ static uint64_t pic_read(void *opaque, target_phys_addr_t addr,
 static void pic_write(void *opaque, target_phys_addr_t addr,
                       uint64_t val64, unsigned int size)
 {
-    struct altera_vic *pv = opaque;
+    AlteraVIC *pv = opaque;
     uint32_t value = val64;
 
     addr >>= 2;
@@ -144,7 +144,7 @@ static const MemoryRegionOps pic_ops = {
 
 static void irq_handler(void *opaque, int irq, int level)
 {
-    struct altera_vic *pv = opaque;
+    AlteraVIC *pv = opaque;
 
     pv->regs[R_INT_RAW_STATUS] &= ~(1 << irq);
     pv->regs[R_INT_RAW_STATUS] |= level << irq;
@@ -154,7 +154,7 @@ static void irq_handler(void *opaque, int irq, int level)
 
 static int altera_vic_init(SysBusDevice *dev)
 {
-    struct altera_vic *pv = FROM_SYSBUS(typeof(*pv), dev);
+    AlteraVIC *pv = FROM_SYSBUS(typeof(*pv), dev);
 
     qdev_init_gpio_in(&dev->qdev, irq_handler, 32);
     sysbus_init_irq(dev, &pv->parent_irq);
@@ -182,7 +182,7 @@ static void altera_vic_class_init(ObjectClass *klass, void *data)
 static TypeInfo altera_vic_info = {
     .name          = "altera,vic",
     .parent        = TYPE_SYS_BUS_DEVICE,
-    .instance_size = sizeof(struct altera_vic),
+    .instance_size = sizeof(AlteraVIC),
     .class_init    = altera_vic_class_init,
 };
 

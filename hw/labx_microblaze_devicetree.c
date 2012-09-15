@@ -157,12 +157,12 @@ static ram_addr_t get_dram_base(void *fdt)
 
 typedef void (*device_init_func_t)(void *fdt, int node);
 
-typedef struct {
+typedef struct DevInfo {
     device_init_func_t probe;
     int pass;
     const char **compat;
 
-} devinfo_t;
+} DevInfo;
 
 /*
  * Xilinx interrupt controller device
@@ -193,7 +193,7 @@ static void xilinx_interrupt_controller_probe(void *fdt, int node)
     }
 }
 
-devinfo_t xilinx_interrupt_controller_device = {
+DevInfo xilinx_interrupt_controller_device = {
     .probe = &xilinx_interrupt_controller_probe,
     .pass = 0,
     .compat = (const char * []) { "xlnx,xps-intc-1.00.a", NULL }
@@ -221,7 +221,7 @@ static void flash_probe(void *fdt, int node)
            flash_addr);
 }
 
-devinfo_t flash_device = {
+DevInfo flash_device = {
     .probe = &flash_probe,
     .pass = 1,
     .compat = (const char * []) { "cfi-flash", NULL }
@@ -241,7 +241,7 @@ static void xilinx_timer_probe(void *fdt, int node)
     xilinx_timer_create(timer_addr, irq[timer_irq], 0, 62 * 1000000);
 }
 
-devinfo_t xilinx_timer_device = {
+DevInfo xilinx_timer_device = {
     .probe = &xilinx_timer_probe,
     .pass = 1,
     .compat = (const char * []) { "xlnx,xps-timer-1.00.a", NULL }
@@ -260,7 +260,7 @@ static void xilinx_uartlite_probe(void *fdt, int node)
     sysbus_create_simple("xlnx.xps-uartlite", uart_addr, irq[uart_irq]);
 }
 
-devinfo_t xilinx_uartlite_device = {
+DevInfo xilinx_uartlite_device = {
     .probe = &xilinx_uartlite_probe,
     .pass = 1,
     .compat = (const char * []) { "xlnx,xps-uartlite-1.00.a", NULL }
@@ -278,7 +278,7 @@ static void xilinx_ethlite_probe(void *fdt, int node)
                           irq[eth_irq], 0, 0);
 }
 
-devinfo_t xilinx_ethlite_device = {
+DevInfo xilinx_ethlite_device = {
     .probe = &xilinx_ethlite_probe,
     .pass = 1,
     .compat = (const char * []) { "xlnx,xps-ethernetlite-2.00.b", NULL }
@@ -301,7 +301,7 @@ static void labx_audio_packetizer_probe(void *fdt, int node)
                                  clock_domains, cache_words);
 }
 
-devinfo_t labx_audio_packetizer_device = {
+DevInfo labx_audio_packetizer_device = {
     .probe = &labx_audio_packetizer_probe,
     .pass = 1,
     .compat = (const char * []) { "xlnx,labx-audio-packetizer-1.00.a", NULL }
@@ -329,7 +329,7 @@ static void labx_audio_depacketizer_probe(void *fdt, int node)
                                    clock_domains, cache_words, hasDMA);
 }
 
-devinfo_t labx_audio_depacketizer_device = {
+DevInfo labx_audio_depacketizer_device = {
     .probe = &labx_audio_depacketizer_probe,
     .pass = 1,
     .compat = (const char * []) {
@@ -349,7 +349,7 @@ static void labx_dma_probe(void *fdt, int node)
     labx_dma_create(dma_addr, 1024);
 }
 
-devinfo_t labx_dma_device = {
+DevInfo labx_dma_device = {
     .probe = &labx_dma_probe,
     .pass = 1,
     .compat = (const char * []) {
@@ -377,7 +377,7 @@ static void labx_ethernet_probe(void *fdt, int node)
                          irq[host_irq], irq[fifo_irq], irq[phy_irq]);
 }
 
-devinfo_t labx_ethernet_device = {
+DevInfo labx_ethernet_device = {
     .probe = &labx_ethernet_probe,
     .pass = 1,
     .compat = (const char * []) { "xlnx,labx-ethernet-1.00.a", NULL }
@@ -393,7 +393,7 @@ static void labx_ptp_probe(void *fdt, int node)
     labx_ptp_create(ptp_addr);
 }
 
-devinfo_t labx_ptp_device = {
+DevInfo labx_ptp_device = {
     .probe = &labx_ptp_probe,
     .pass = 1,
     .compat = (const char * []) { "xlnx,labx-ptp-1.00.a", NULL }
@@ -402,7 +402,7 @@ devinfo_t labx_ptp_device = {
 /*
  * Table of available devices
  */
-devinfo_t *devices[] = {
+DevInfo *devices[] = {
     &xilinx_interrupt_controller_device,
     &flash_device,
     &xilinx_timer_device,
@@ -418,7 +418,7 @@ devinfo_t *devices[] = {
 
 static int plb_device_probe(void *fdt, int node, int pass)
 {
-    devinfo_t **dev = &(devices[0]);
+    DevInfo **dev = &(devices[0]);
 
     while (*dev) {
         const char **compat = &((*dev)->compat[0]);

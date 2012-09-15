@@ -182,12 +182,12 @@ static void gen_intermediate_code_internal(
 #endif
 }
 
-void gen_intermediate_code(CPUNios2State *env, struct TranslationBlock *tb)
+void gen_intermediate_code(CPUNios2State *env, TranslationBlock *tb)
 {
     gen_intermediate_code_internal(env, tb, 0);
 }
 
-void gen_intermediate_code_pc(CPUNios2State *env, struct TranslationBlock *tb)
+void gen_intermediate_code_pc(CPUNios2State *env, TranslationBlock *tb)
 {
     gen_intermediate_code_internal(env, tb, 1);
 }

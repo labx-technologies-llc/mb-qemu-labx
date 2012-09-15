@@ -38,7 +38,7 @@
 #define CONTROL_START 0x0004
 #define CONTROL_STOP  0x0008
 
-struct altera_timer {
+typedef struct AlteraTimer {
     SysBusDevice  busdev;
     MemoryRegion  mmio;
     qemu_irq      irq;
@@ -46,12 +46,12 @@ struct altera_timer {
     QEMUBH       *bh;
     ptimer_state *ptimer;
     uint32_t      regs[R_MAX];
-};
+} AlteraTimer;
 
 static uint64_t timer_read(void *opaque, target_phys_addr_t addr,
                            unsigned int size)
 {
-    struct altera_timer *t = opaque;
+    AlteraTimer *t = opaque;
     uint32_t r = 0;
 
     addr >>= 2;
@@ -73,7 +73,7 @@ static uint64_t timer_read(void *opaque, target_phys_addr_t addr,
     return r;
 }
 
-static void timer_start(struct altera_timer *t)
+static void timer_start(AlteraTimer *t)
 {
     ptimer_stop(t->ptimer);
     ptimer_set_count(t->ptimer, (t->regs[R_PERIODH]<<16) | t->regs[R_PERIODL]);
@@ -83,7 +83,7 @@ static void timer_start(struct altera_timer *t)
 static void timer_write(void *opaque, target_phys_addr_t addr,
                         uint64_t val64, unsigned int size)
 {
-    struct altera_timer *t = opaque;
+    AlteraTimer *t = opaque;
     uint32_t value = val64;
     uint32_t count = 0;
 
@@ -143,7 +143,7 @@ static const MemoryRegionOps timer_ops = {
 
 static void timer_hit(void *opaque)
 {
-    struct altera_timer *t = opaque;
+    AlteraTimer *t = opaque;
     t->regs[R_STATUS] |= STATUS_TO;
 
     if (t->regs[R_CONTROL] & CONTROL_CONT) {
@@ -154,7 +154,7 @@ static void timer_hit(void *opaque)
 
 static int altera_timer_init(SysBusDevice *dev)
 {
-    struct altera_timer *t = FROM_SYSBUS(typeof(*t), dev);
+    AlteraTimer *t = FROM_SYSBUS(typeof(*t), dev);
 
     sysbus_init_irq(dev, &t->irq);
 
@@ -169,7 +169,7 @@ static int altera_timer_init(SysBusDevice *dev)
 }
 
 static Property altera_timer_properties[] = {
-    DEFINE_PROP_UINT32("frequency", struct altera_timer, freq_hz, 0),
+    DEFINE_PROP_UINT32("frequency", AlteraTimer, freq_hz, 0),
     DEFINE_PROP_END_OF_LIST(),
 };
 
@@ -185,7 +185,7 @@ static void altera_timer_class_init(ObjectClass *klass, void *data)
 static TypeInfo altera_timer_info = {
     .name          = "altera,timer",
     .parent        = TYPE_SYS_BUS_DEVICE,
-    .instance_size = sizeof(struct altera_timer),
+    .instance_size = sizeof(AlteraTimer),
     .class_init    = altera_timer_class_init,
 };
 

@@ -18,12 +18,12 @@
  * <http://www.gnu.org/licenses/lgpl-2.1.html>
  */
 
-struct nios2_tlb_entry {
+typedef struct Nios2TLBEntry {
     target_ulong tag;
     target_ulong data;
-};
+} Nios2TLBEntry;
 
-struct nios2_mmu {
+typedef struct Nios2MMU {
     int pid_bits;
     int tlb_num_ways;
     int tlb_num_entries;
@@ -31,19 +31,19 @@ struct nios2_mmu {
     uint32_t pteaddr_wr;
     uint32_t tlbacc_wr;
     uint32_t tlbmisc_wr;
-    struct nios2_tlb_entry *tlb;
-};
+    Nios2TLBEntry *tlb;
+} Nios2MMU;
 
-struct nios2_mmu_lookup {
+typedef struct Nios2MMULookup {
     target_ulong vaddr;
     target_ulong paddr;
     int prot;
-};
+} Nios2MMULookup;
 
 void mmu_flip_um(CPUNios2State *env, unsigned int um);
 unsigned int mmu_translate(CPUNios2State *env,
-                           struct nios2_mmu_lookup *lu,
+                           Nios2MMULookup *lu,
                            target_ulong vaddr, int rw, int mmu_idx);
 uint32_t mmu_read(CPUNios2State *env, uint32_t rn);
 void mmu_write(CPUNios2State *env, uint32_t rn, uint32_t v);
-void mmu_init(struct nios2_mmu *mmu);
+void mmu_init(Nios2MMU *mmu);

@@ -25,12 +25,12 @@
 #define min_bits qemu_fls
 #define RAM_INDEX(addr, size) (((addr)>>2)&((1<<min_bits((size)-1))-1))
 
-struct clock_domain_info {
+typedef struct ClockDomainInfo {
     uint32_t tsInterval;
     uint32_t domainEnabled;
-};
+} ClockDomainInfo;
 
-typedef struct audio_packetizer {
+typedef struct Packetizer {
     SysBusDevice busdev;
 
     MemoryRegion  mmio_packetizer;
@@ -63,8 +63,8 @@ typedef struct audio_packetizer {
     uint32_t *templateRam;
 
     /* Clock domain information */
-    struct clock_domain_info *clockDomainInfo;
-} packetizer_t;
+    ClockDomainInfo *clockDomainInfo;
+} Packetizer;
 
 /*
  * Packetizer registers
@@ -72,7 +72,7 @@ typedef struct audio_packetizer {
 static uint64_t packetizer_regs_read(void *opaque, target_phys_addr_t addr,
                                      unsigned int size)
 {
-    packetizer_t *p = opaque;
+    Packetizer *p = opaque;
 
     uint32_t retval = 0;
 
@@ -127,7 +127,7 @@ static uint64_t packetizer_regs_read(void *opaque, target_phys_addr_t addr,
 static void packetizer_regs_write(void *opaque, target_phys_addr_t addr,
                                   uint64_t val64, unsigned int size)
 {
-    packetizer_t *p = opaque;
+    Packetizer *p = opaque;
     uint32_t value = val64;
 
     switch ((addr>>2) & 0xFF) {
@@ -191,7 +191,7 @@ static const MemoryRegionOps packetizer_regs_ops = {
 static uint64_t clock_domain_regs_read(void *opaque, target_phys_addr_t addr,
                                        unsigned int size)
 {
-    packetizer_t *p = opaque;
+    Packetizer *p = opaque;
 
     uint32_t retval = 0;
     int domain = (addr>>3) & ((1<<min_bits(p->clockDomains-1))-1);
@@ -215,7 +215,7 @@ static uint64_t clock_domain_regs_read(void *opaque, target_phys_addr_t addr,
 static void clock_domain_regs_write(void *opaque, target_phys_addr_t addr,
                                     uint64_t val64, unsigned int size)
 {
-    packetizer_t *p = opaque;
+    Packetizer *p = opaque;
     uint32_t value = val64;
 
     int domain = (addr>>3) & ((1<<min_bits(p->clockDomains-1))-1);
@@ -251,7 +251,7 @@ static const MemoryRegionOps clock_domain_regs_ops = {
 static uint64_t template_ram_read(void *opaque, target_phys_addr_t addr,
                                   unsigned int size)
 {
-    packetizer_t *p = opaque;
+    Packetizer *p = opaque;
 
     return p->templateRam[RAM_INDEX(addr, p->templateWords)];
 }
@@ -259,7 +259,7 @@ static uint64_t template_ram_read(void *opaque, target_phys_addr_t addr,
 static void template_ram_write(void *opaque, target_phys_addr_t addr,
                                uint64_t val64, unsigned int size)
 {
-    packetizer_t *p = opaque;
+    Packetizer *p = opaque;
     uint32_t value = val64;
 
     p->templateRam[RAM_INDEX(addr, p->templateWords)] = value;
@@ -282,7 +282,7 @@ static const MemoryRegionOps template_ram_ops = {
 static uint64_t microcode_ram_read(void *opaque, target_phys_addr_t addr,
                                    unsigned int size)
 {
-    packetizer_t *p = opaque;
+    Packetizer *p = opaque;
 
     return p->microcodeRam[RAM_INDEX(addr, p->microcodeWords)];
 }
@@ -290,7 +290,7 @@ static uint64_t microcode_ram_read(void *opaque, target_phys_addr_t addr,
 static void microcode_ram_write(void *opaque, target_phys_addr_t addr,
                                 uint64_t val64, unsigned int size)
 {
-    packetizer_t *p = opaque;
+    Packetizer *p = opaque;
     uint32_t value = val64;
 
     p->microcodeRam[RAM_INDEX(addr, p->microcodeWords)] = value;
@@ -308,7 +308,7 @@ static const MemoryRegionOps microcode_ram_ops = {
 
 static int labx_audio_packetizer_init(SysBusDevice *dev)
 {
-    packetizer_t *p = FROM_SYSBUS(typeof(*p), dev);
+    Packetizer *p = FROM_SYSBUS(typeof(*p), dev);
 
     /* Initialize defaults */
     p->tsOffset = 0x00000000;
@@ -316,7 +316,7 @@ static int labx_audio_packetizer_init(SysBusDevice *dev)
     p->idleSlope = 0x00000000;
     p->templateRam = g_malloc0(p->templateWords*4);
     p->microcodeRam = g_malloc0(p->microcodeWords*4);
-    p->clockDomainInfo = g_malloc0(sizeof(struct clock_domain_info) *
+    p->clockDomainInfo = g_malloc0(sizeof(ClockDomainInfo) *
                                    p->clockDomains);
 
     /* Set up the IRQ */
@@ -353,21 +353,21 @@ static int labx_audio_packetizer_init(SysBusDevice *dev)
 }
 
 static Property labx_audio_packetizer_properties[] = {
-    DEFINE_PROP_UINT32("baseAddress",        packetizer_t, baseAddress,
+    DEFINE_PROP_UINT32("baseAddress",        Packetizer, baseAddress,
                        0),
-    DEFINE_PROP_UINT32("clockDomains",       packetizer_t, clockDomains,
+    DEFINE_PROP_UINT32("clockDomains",       Packetizer, clockDomains,
                        1),
-    DEFINE_PROP_UINT32("cacheDataWords",     packetizer_t, cacheDataWords,
+    DEFINE_PROP_UINT32("cacheDataWords",     Packetizer, cacheDataWords,
                        1024),
-    DEFINE_PROP_UINT32("templateWords",      packetizer_t, templateWords,
+    DEFINE_PROP_UINT32("templateWords",      Packetizer, templateWords,
                        1024),
-    DEFINE_PROP_UINT32("microcodeWords",     packetizer_t, microcodeWords,
+    DEFINE_PROP_UINT32("microcodeWords",     Packetizer, microcodeWords,
                        1024),
-    DEFINE_PROP_UINT32("shaperFractionBits", packetizer_t, shaperFractionBits,
+    DEFINE_PROP_UINT32("shaperFractionBits", Packetizer, shaperFractionBits,
                        16),
-    DEFINE_PROP_UINT32("maxStreamSlots",     packetizer_t, maxStreamSlots,
+    DEFINE_PROP_UINT32("maxStreamSlots",     Packetizer, maxStreamSlots,
                        32),
-    DEFINE_PROP_UINT32("dualOutput",         packetizer_t, dualOutput,
+    DEFINE_PROP_UINT32("dualOutput",         Packetizer, dualOutput,
                        1),
     DEFINE_PROP_END_OF_LIST(),
 };
@@ -384,7 +384,7 @@ static void labx_audio_packetizer_class_init(ObjectClass *klass, void *data)
 static TypeInfo labx_audio_packetizer_info = {
     .name          = "labx,audio-packetizer",
     .parent        = TYPE_SYS_BUS_DEVICE,
-    .instance_size = sizeof(packetizer_t),
+    .instance_size = sizeof(Packetizer),
     .class_init    = labx_audio_packetizer_class_init,
 };
 

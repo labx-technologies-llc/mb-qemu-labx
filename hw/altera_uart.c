@@ -56,16 +56,16 @@
 #define CONTROL_RTS      0x0800
 #define CONTROL_IEOP     0x1000
 
-struct altera_uart {
+typedef struct AlteraUART {
     SysBusDevice busdev;
     MemoryRegion mmio;
     CharDriverState *chr;
     qemu_irq irq;
 
     uint32_t regs[R_MAX];
-};
+} AlteraUART;
 
-static void uart_update_irq(struct altera_uart *s)
+static void uart_update_irq(AlteraUART *s)
 {
     unsigned int irq;
 
@@ -79,7 +79,7 @@ static void uart_update_irq(struct altera_uart *s)
 static uint64_t uart_read(void *opaque, target_phys_addr_t addr,
                           unsigned int size)
 {
-    struct altera_uart *s = opaque;
+    AlteraUART *s = opaque;
     uint32_t r = 0;
     addr >>= 2;
     addr &= 0x7;
@@ -111,7 +111,7 @@ static uint64_t uart_read(void *opaque, target_phys_addr_t addr,
 static void uart_write(void *opaque, target_phys_addr_t addr,
                        uint64_t val64, unsigned int size)
 {
-    struct altera_uart *s = opaque;
+    AlteraUART *s = opaque;
     uint32_t value = val64;
     unsigned char ch = value;
 
@@ -141,7 +141,7 @@ static void uart_write(void *opaque, target_phys_addr_t addr,
 
 static void uart_rx(void *opaque, const uint8_t *buf, int size)
 {
-    struct altera_uart *s = opaque;
+    AlteraUART *s = opaque;
 
     s->regs[R_RXDATA] = *buf;
     s->regs[R_STATUS] |= STATUS_RRDY;
@@ -151,7 +151,7 @@ static void uart_rx(void *opaque, const uint8_t *buf, int size)
 
 static int uart_can_rx(void *opaque)
 {
-    struct altera_uart *s = opaque;
+    AlteraUART *s = opaque;
     return ((s->regs[R_STATUS] & STATUS_RRDY) == 0);
 }
 
@@ -171,7 +171,7 @@ static const MemoryRegionOps uart_ops = {
 
 static int altera_uart_init(SysBusDevice *dev)
 {
-    struct altera_uart *s = FROM_SYSBUS(typeof(*s), dev);
+    AlteraUART *s = FROM_SYSBUS(typeof(*s), dev);
 
     s->regs[R_STATUS] = STATUS_TMT | STATUS_TRDY; /* Always ready to tx */
 
@@ -205,7 +205,7 @@ static void altera_uart_class_init(ObjectClass *klass, void *data)
 static TypeInfo altera_uart_info = {
     .name          = "altera,uart",
     .parent        = TYPE_SYS_BUS_DEVICE,
-    .instance_size = sizeof(struct altera_uart),
+    .instance_size = sizeof(AlteraUART),
     .class_init    = altera_uart_class_init,
 };
 

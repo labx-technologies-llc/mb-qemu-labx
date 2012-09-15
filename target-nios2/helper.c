@@ -191,7 +191,7 @@ static int cpu_nios2_handle_virtual_page(
     CPUNios2State *env, target_ulong address, int rw, int mmu_idx)
 {
     target_ulong vaddr, paddr;
-    struct nios2_mmu_lookup lu;
+    Nios2MMULookup lu;
     unsigned int hit;
     hit = mmu_translate(env, &lu, address, rw, mmu_idx);
     if (hit) {
@@ -269,7 +269,7 @@ target_phys_addr_t cpu_get_phys_page_debug(CPUNios2State *env,
                                            target_ulong addr)
 {
     target_ulong vaddr, paddr = 0;
-    struct nios2_mmu_lookup lu;
+    Nios2MMULookup lu;
     unsigned int hit;
 
     if (has_mmu && (addr < 0xC0000000)) {
