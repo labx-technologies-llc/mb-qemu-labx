@@ -20,10 +20,8 @@
 
 #include "cpu.h"
 #include "helper.h"
-#include "host-utils.h"
 
 #if !defined(CONFIG_USER_ONLY)
-#include "dyngen-exec.h"
 #include "softmmu_exec.h"
 #define MMUSUFFIX _mmu
 #define SHIFT 0
@@ -35,15 +33,11 @@
 #define SHIFT 3
 #include "softmmu_template.h"
 
-void tlb_fill(CPUNios2State *env1, target_ulong addr, int is_write, int mmu_idx,
+void tlb_fill(CPUNios2State *env, target_ulong addr, int is_write, int mmu_idx,
               uintptr_t retaddr)
 {
     TranslationBlock *tb;
-    CPUNios2State *saved_env;
     int ret;
-
-    saved_env = env;
-    env = env1;
 
     ret = cpu_nios2_handle_mmu_fault(env, addr, is_write, mmu_idx, 1);
     if (unlikely(ret)) {
@@ -58,10 +52,9 @@ void tlb_fill(CPUNios2State *env1, target_ulong addr, int is_write, int mmu_idx,
         }
         cpu_loop_exit(env);
     }
-    env = saved_env;
 }
 
-void helper_raise_exception(uint32_t index)
+void helper_raise_exception(CPUNios2State *env, uint32_t index)
 {
     env->exception_index = index;
     cpu_loop_exit(env);
@@ -77,14 +70,14 @@ void helper_mmu_write(CPUNios2State *env, uint32_t rn, uint32_t v)
     mmu_write(env, rn, v);
 }
 
-void helper_memalign(uint32_t addr, uint32_t dr, uint32_t wr, uint32_t mask)
+void helper_memalign(CPUNios2State *env, uint32_t addr, uint32_t dr, uint32_t wr, uint32_t mask)
 {
     if (addr & mask) {
         qemu_log("unaligned access addr=%x mask=%x, wr=%d dr=r%d\n",
                  addr, mask, wr, dr);
         env->regs[CR_BADADDR] = addr;
         env->regs[CR_EXCEPTION] = EXCP_UNALIGN << 2;
-        helper_raise_exception(EXCP_UNALIGN);
+        helper_raise_exception(env, EXCP_UNALIGN);
     }
 }
 

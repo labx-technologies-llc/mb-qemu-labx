@@ -19,7 +19,6 @@
  */
 
 #include "hw/sysbus.h"
-#include "dyngen-exec.h"
 #include "cpu.h"
 
 typedef struct AlteraIIC {

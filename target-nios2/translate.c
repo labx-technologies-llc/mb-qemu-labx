@@ -117,7 +117,7 @@ static void gen_intermediate_code_internal(
         }
 
         /* Decode an instruction */
-        handle_instruction(dc);
+        handle_instruction(dc, env);
 
         dc->pc += 4;
         num_insns++;

@@ -46,7 +46,7 @@ static inline void t_gen_helper_raise_exception(DisasContext *dc,
     TCGv_i32 tmp = tcg_const_i32(index);
 
     tcg_gen_movi_tl(dc->cpu_R[R_PC], dc->pc);
-    gen_helper_raise_exception(tmp);
+    gen_helper_raise_exception(dc->cpu_env, tmp);
     tcg_temp_free_i32(tmp);
     dc->is_jmp = DISAS_UPDATE;
 }
@@ -1359,9 +1359,9 @@ illegal_op:
     t_gen_helper_raise_exception(dc, EXCP_ILLEGAL);
 }
 
-void handle_instruction(DisasContext *dc)
+void handle_instruction(DisasContext *dc, CPUNios2State *env)
 {
-    uint32_t insn = ldl_code(dc->pc);
+    uint32_t insn = cpu_ldl_code(env, dc->pc);
     uint32_t op = get_opcode(insn);
 
     LOG_DIS("%8.8x\t", insn);

@@ -264,7 +264,7 @@ typedef struct Nios2Instruction {
 #define INSTRUCTION_UNIMPLEMENTED(name)  { stringify(name), unimplemented }
 #define INSTRUCTION_ILLEGAL()  { "", illegal_instruction }
 
-extern void handle_instruction(DisasContext *dc);
+extern void handle_instruction(DisasContext *dc, CPUNios2State *env);
 extern const char *instruction_get_string(uint32_t code);
 
 #define SIM_COMPAT 0
