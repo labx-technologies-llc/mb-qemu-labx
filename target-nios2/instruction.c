@@ -51,6 +51,20 @@ static inline void t_gen_helper_raise_exception(DisasContext *dc,
     dc->is_jmp = DISAS_UPDATE;
 }
 
+static inline void gen_goto_tb(DisasContext *dc, int n, uint32_t dest)
+{
+    TranslationBlock *tb = dc->tb;
+
+    if ((tb->pc & TARGET_PAGE_MASK) == (dest & TARGET_PAGE_MASK)) {
+        tcg_gen_goto_tb(n);
+        tcg_gen_movi_tl(dc->cpu_R[R_PC], dest);
+        tcg_gen_exit_tb((tcg_target_long)tb + n);
+    } else {
+        tcg_gen_movi_tl(dc->cpu_R[R_PC], dest);
+        tcg_gen_exit_tb(0);
+    }
+}
+
 /*
  * Instructions not implemented by the simulator.
  */
@@ -117,10 +131,10 @@ static void call(DisasContext *dc, uint32_t code)
 #endif
 
     tcg_gen_movi_tl(dc->cpu_R[R_RA], dc->pc + 4);
-    tcg_gen_movi_tl(dc->cpu_R[R_PC],
-                    (dc->pc & 0xF0000000) | (instr->imm26 * 4));
 
-    dc->is_jmp = DISAS_JUMP;
+    gen_goto_tb(dc, 0, (dc->pc & 0xF0000000) | (instr->imm26 * 4));
+
+    dc->is_jmp = DISAS_TB_JUMP;
 }
 
 /* PC <- (PC(31..28) : IMM26 * 4) */
@@ -128,10 +142,9 @@ static void jmpi(DisasContext *dc, uint32_t code)
 {
     J_TYPE(instr, code);
 
-    tcg_gen_movi_tl(dc->cpu_R[R_PC],
-                    (dc->pc & 0xF0000000) | (instr->imm26 * 4));
+    gen_goto_tb(dc, 0, (dc->pc & 0xF0000000) | (instr->imm26 * 4));
 
-    dc->is_jmp = DISAS_JUMP;
+    dc->is_jmp = DISAS_TB_JUMP;
 }
 
 /*
@@ -144,8 +157,8 @@ static void ldbu(DisasContext *dc, uint32_t code)
     I_TYPE(instr, code);
 
     TCGv addr = tcg_temp_new();
-    tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
-    tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
+    tcg_gen_addi_tl(addr, dc->cpu_R[instr->a],
+                    (int32_t)((int16_t)instr->imm16));
 
     tcg_gen_qemu_ld8u(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
@@ -158,10 +171,8 @@ static void addi(DisasContext *dc, uint32_t code)
     I_TYPE(instr, code);
 
     TCGv imm = tcg_temp_new();
-    tcg_gen_movi_tl(imm, (int32_t)((int16_t)instr->imm16));
-
-    tcg_gen_add_tl(dc->cpu_R[instr->b], dc->cpu_R[instr->a], imm);
-
+    tcg_gen_addi_tl(dc->cpu_R[instr->b], dc->cpu_R[instr->a],
+                    (int32_t)((int16_t)instr->imm16));
     tcg_temp_free(imm);
 }
 
@@ -171,8 +182,8 @@ static void stb(DisasContext *dc, uint32_t code)
     I_TYPE(instr, code);
 
     TCGv addr = tcg_temp_new();
-    tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
-    tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
+    tcg_gen_addi_tl(addr, dc->cpu_R[instr->a],
+                    (int32_t)((int16_t)instr->imm16));
 
     tcg_gen_qemu_st8(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
@@ -184,9 +195,9 @@ static void br(DisasContext *dc, uint32_t code)
 {
     I_TYPE(instr, code);
 
-    tcg_gen_movi_tl(dc->cpu_R[R_PC],
-                    dc->pc + 4 + (int16_t)(instr->imm16 & 0xFFFC));
-    dc->is_jmp = DISAS_JUMP;
+    gen_goto_tb(dc, 0, dc->pc + 4 + (int16_t)(instr->imm16 & 0xFFFC));
+
+    dc->is_jmp = DISAS_TB_JUMP;
 }
 
 /* rB <- @(Mem8[rA + @(IMM16)]) */
@@ -195,8 +206,8 @@ static void ldb(DisasContext *dc, uint32_t code)
     I_TYPE(instr, code);
 
     TCGv addr = tcg_temp_new();
-    tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
-    tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
+    tcg_gen_addi_tl(addr, dc->cpu_R[instr->a],
+                    (int32_t)((int16_t)instr->imm16));
 
     tcg_gen_qemu_ld8s(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
@@ -223,8 +234,8 @@ static void ldhu(DisasContext *dc, uint32_t code)
     I_TYPE(instr, code);
 
     TCGv addr = tcg_temp_new();
-    tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
-    tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
+    tcg_gen_addi_tl(addr, dc->cpu_R[instr->a],
+                    (int32_t)((int16_t)instr->imm16));
 
     tcg_gen_qemu_ld16u(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
@@ -245,8 +256,8 @@ static void sth(DisasContext *dc, uint32_t code)
     I_TYPE(instr, code);
 
     TCGv addr = tcg_temp_new();
-    tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
-    tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
+    tcg_gen_addi_tl(addr, dc->cpu_R[instr->a],
+                    (int32_t)((int16_t)instr->imm16));
 
     tcg_gen_qemu_st16(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
@@ -265,14 +276,16 @@ static void bge(DisasContext *dc, uint32_t code)
 
     int l1 = gen_new_label();
 
-    tcg_gen_movi_tl(dc->cpu_R[R_PC],
-                    dc->pc + 4 + (int16_t)(instr->imm16 & 0xFFFC));
     tcg_gen_brcond_tl(TCG_COND_GE, dc->cpu_R[instr->a],
                       dc->cpu_R[instr->b], l1);
-    tcg_gen_movi_tl(dc->cpu_R[R_PC], dc->pc + 4);
+
+    gen_goto_tb(dc, 0, dc->pc + 4);
+
     gen_set_label(l1);
 
-    dc->is_jmp = DISAS_JUMP;
+    gen_goto_tb(dc, 1, dc->pc + 4 + (int16_t)(instr->imm16 & 0xFFFC));
+
+    dc->is_jmp = DISAS_TB_JUMP;
 }
 
 /* rB <- Mem16[rA + @IMM16)] */
@@ -281,8 +294,8 @@ static void ldh(DisasContext *dc, uint32_t code)
     I_TYPE(instr, code);
 
     TCGv addr = tcg_temp_new();
-    tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
-    tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
+    tcg_gen_addi_tl(addr, dc->cpu_R[instr->a],
+                    (int32_t)((int16_t)instr->imm16));
 
     tcg_gen_qemu_ld16s(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
@@ -324,8 +337,8 @@ static void stw(DisasContext *dc, uint32_t code)
     I_TYPE(instr, code);
 
     TCGv addr = tcg_temp_new();
-    tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
-    tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
+    tcg_gen_addi_tl(addr, dc->cpu_R[instr->a],
+                    (int32_t)((int16_t)instr->imm16));
 
     tcg_gen_qemu_st32(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
@@ -344,14 +357,16 @@ static void blt(DisasContext *dc, uint32_t code)
 
     int l1 = gen_new_label();
 
-    tcg_gen_movi_tl(dc->cpu_R[R_PC],
-                    dc->pc + 4 + (int16_t)(instr->imm16 & 0xFFFC));
     tcg_gen_brcond_tl(TCG_COND_LT, dc->cpu_R[instr->a],
                       dc->cpu_R[instr->b], l1);
-    tcg_gen_movi_tl(dc->cpu_R[R_PC], dc->pc + 4);
+
+    gen_goto_tb(dc, 0, dc->pc + 4);
+
     gen_set_label(l1);
 
-    dc->is_jmp = DISAS_JUMP;
+    gen_goto_tb(dc, 1, dc->pc + 4 + (int16_t)(instr->imm16 & 0xFFFC));
+
+    dc->is_jmp = DISAS_TB_JUMP;
 }
 
 /* rB <- @(Mem32[rA + @(IMM16)]) */
@@ -360,8 +375,8 @@ static void ldw(DisasContext *dc, uint32_t code)
     I_TYPE(instr, code);
 
     TCGv addr = tcg_temp_new();
-    tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
-    tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
+    tcg_gen_addi_tl(addr, dc->cpu_R[instr->a],
+                    (int32_t)((int16_t)instr->imm16));
 
     tcg_gen_qemu_ld32u(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
@@ -402,14 +417,16 @@ static void bne(DisasContext *dc, uint32_t code)
 
     int l1 = gen_new_label();
 
-    tcg_gen_movi_tl(dc->cpu_R[R_PC],
-                    dc->pc + 4 + (int16_t)(instr->imm16 & 0xFFFC));
     tcg_gen_brcond_tl(TCG_COND_NE, dc->cpu_R[instr->a],
                       dc->cpu_R[instr->b], l1);
-    tcg_gen_movi_tl(dc->cpu_R[R_PC], dc->pc + 4);
+
+    gen_goto_tb(dc, 0, dc->pc + 4);
+
     gen_set_label(l1);
 
-    dc->is_jmp = DISAS_JUMP;
+    gen_goto_tb(dc, 1, dc->pc + 4 + (int16_t)(instr->imm16 & 0xFFFC));
+
+    dc->is_jmp = DISAS_TB_JUMP;
 }
 
 /*
@@ -432,8 +449,8 @@ static void ldbuio(DisasContext *dc, uint32_t code)
     I_TYPE(instr, code);
 
     TCGv addr = tcg_temp_new();
-    tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
-    tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
+    tcg_gen_addi_tl(addr, dc->cpu_R[instr->a],
+                    (int32_t)((int16_t)instr->imm16));
 
     tcg_gen_qemu_ld8u(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
@@ -446,8 +463,8 @@ static void muli(DisasContext *dc, uint32_t code)
     I_TYPE(instr, code);
 
     TCGv imm = tcg_temp_new();
-    tcg_gen_movi_tl(imm, (int32_t)((int16_t)instr->imm16));
-    tcg_gen_mul_i32(dc->cpu_R[instr->b], dc->cpu_R[instr->a], imm);
+    tcg_gen_muli_i32(dc->cpu_R[instr->b], dc->cpu_R[instr->a],
+                     (int32_t)((int16_t)instr->imm16));
     tcg_temp_free(imm);
 }
 
@@ -457,8 +474,8 @@ static void stbio(DisasContext *dc, uint32_t code)
     I_TYPE(instr, code);
 
     TCGv addr = tcg_temp_new();
-    tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
-    tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
+    tcg_gen_addi_tl(addr, dc->cpu_R[instr->a],
+                    (int32_t)((int16_t)instr->imm16));
 
     tcg_gen_qemu_st8(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
@@ -477,14 +494,16 @@ static void beq(DisasContext *dc, uint32_t code)
 
     int l1 = gen_new_label();
 
-    tcg_gen_movi_tl(dc->cpu_R[R_PC],
-                    dc->pc + 4 + (int16_t)(instr->imm16 & 0xFFFC));
     tcg_gen_brcond_tl(TCG_COND_EQ, dc->cpu_R[instr->a],
                       dc->cpu_R[instr->b], l1);
-    tcg_gen_movi_tl(dc->cpu_R[R_PC], dc->pc + 4);
+
+    gen_goto_tb(dc, 0, dc->pc + 4);
+
     gen_set_label(l1);
 
-    dc->is_jmp = DISAS_JUMP;
+    gen_goto_tb(dc, 1, dc->pc + 4 + (int16_t)(instr->imm16 & 0xFFFC));
+
+    dc->is_jmp = DISAS_TB_JUMP;
 }
 
 /* rB <- @(Mem8[rA + @(IMM16)]) (bypassing cache) */
@@ -493,8 +512,8 @@ static void ldbio(DisasContext *dc, uint32_t code)
     I_TYPE(instr, code);
 
     TCGv addr = tcg_temp_new();
-    tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
-    tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
+    tcg_gen_addi_tl(addr, dc->cpu_R[instr->a],
+                    (int32_t)((int16_t)instr->imm16));
 
     tcg_gen_qemu_ld8s(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
@@ -521,8 +540,8 @@ static void ldhuio(DisasContext *dc, uint32_t code)
     I_TYPE(instr, code);
 
     TCGv addr = tcg_temp_new();
-    tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
-    tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
+    tcg_gen_addi_tl(addr, dc->cpu_R[instr->a],
+                    (int32_t)((int16_t)instr->imm16));
 
     tcg_gen_qemu_ld16u(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
@@ -544,8 +563,8 @@ static void sthio(DisasContext *dc, uint32_t code)
     I_TYPE(instr, code);
 
     TCGv addr = tcg_temp_new();
-    tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
-    tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
+    tcg_gen_addi_tl(addr, dc->cpu_R[instr->a],
+                    (int32_t)((int16_t)instr->imm16));
 
     tcg_gen_qemu_st16(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
@@ -564,14 +583,16 @@ static void bgeu(DisasContext *dc, uint32_t code)
 
     int l1 = gen_new_label();
 
-    tcg_gen_movi_tl(dc->cpu_R[R_PC],
-                    dc->pc + 4 + (int16_t)(instr->imm16 & 0xFFFC));
     tcg_gen_brcond_tl(TCG_COND_GEU, dc->cpu_R[instr->a],
                       dc->cpu_R[instr->b], l1);
-    tcg_gen_movi_tl(dc->cpu_R[R_PC], dc->pc + 4);
+
+    gen_goto_tb(dc, 0, dc->pc + 4);
+
     gen_set_label(l1);
 
-    dc->is_jmp = DISAS_JUMP;
+    gen_goto_tb(dc, 1, dc->pc + 4 + (int16_t)(instr->imm16 & 0xFFFC));
+
+    dc->is_jmp = DISAS_TB_JUMP;
 }
 
 /* rB <- Mem16[rA + @IMM16)] (bypassing cache) */
@@ -580,8 +601,8 @@ static void ldhio(DisasContext *dc, uint32_t code)
     I_TYPE(instr, code);
 
     TCGv addr = tcg_temp_new();
-    tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
-    tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
+    tcg_gen_addi_tl(addr, dc->cpu_R[instr->a],
+                    (int32_t)((int16_t)instr->imm16));
 
     tcg_gen_qemu_ld16s(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
@@ -624,8 +645,8 @@ static void stwio(DisasContext *dc, uint32_t code)
     I_TYPE(instr, code);
 
     TCGv addr = tcg_temp_new();
-    tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
-    tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
+    tcg_gen_addi_tl(addr, dc->cpu_R[instr->a],
+                    (int32_t)((int16_t)instr->imm16));
 
     tcg_gen_qemu_st32(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
@@ -644,14 +665,16 @@ static void bltu(DisasContext *dc, uint32_t code)
 
     int l1 = gen_new_label();
 
-    tcg_gen_movi_tl(dc->cpu_R[R_PC],
-                    dc->pc + 4 + (int16_t)(instr->imm16 & 0xFFFC));
     tcg_gen_brcond_tl(TCG_COND_LTU, dc->cpu_R[instr->a],
                       dc->cpu_R[instr->b], l1);
-    tcg_gen_movi_tl(dc->cpu_R[R_PC], dc->pc + 4);
+
+    gen_goto_tb(dc, 0, dc->pc + 4);
+
     gen_set_label(l1);
 
-    dc->is_jmp = DISAS_JUMP;
+    gen_goto_tb(dc, 1, dc->pc + 4 + (int16_t)(instr->imm16 & 0xFFFC));
+
+    dc->is_jmp = DISAS_TB_JUMP;
 }
 
 /* rB <- @(Mem32[rA + @(IMM16)]) (bypassing cache) */
@@ -660,8 +683,8 @@ static void ldwio(DisasContext *dc, uint32_t code)
     I_TYPE(instr, code);
 
     TCGv addr = tcg_temp_new();
-    tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
-    tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
+    tcg_gen_addi_tl(addr, dc->cpu_R[instr->a],
+                    (int32_t)((int16_t)instr->imm16));
 
     tcg_gen_qemu_ld32u(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
@@ -774,13 +797,7 @@ static void roli(DisasContext *dc, uint32_t code)
 {
     R_TYPE(instr, code);
 
-    TCGv t0 = tcg_temp_new();
-
-    tcg_gen_shri_tl(t0, dc->cpu_R[instr->a], 32 - instr->imm5);
-    tcg_gen_shli_tl(dc->cpu_R[instr->c], dc->cpu_R[instr->a], instr->imm5);
-    tcg_gen_or_tl(dc->cpu_R[instr->c], dc->cpu_R[instr->c], t0);
-
-    tcg_temp_free(t0);
+    tcg_gen_rotli_tl(dc->cpu_R[instr->c], dc->cpu_R[instr->a], instr->imm5);
 }
 
 /* rC <- rA rotated left rB(4..0) bit positions */
@@ -789,17 +806,11 @@ static void rol(DisasContext *dc, uint32_t code)
     R_TYPE(instr, code);
 
     TCGv t0 = tcg_temp_new();
-    TCGv t1 = tcg_temp_new();
 
     tcg_gen_andi_tl(t0, dc->cpu_R[instr->b], 31);
-    tcg_gen_movi_tl(t1, 32);
-    tcg_gen_sub_tl(t1, t1, t0);
-    tcg_gen_shri_tl(t1, dc->cpu_R[instr->a], t1);
-    tcg_gen_shli_tl(dc->cpu_R[instr->c], dc->cpu_R[instr->a], t0);
-    tcg_gen_or_tl(dc->cpu_R[instr->c], dc->cpu_R[instr->c], t1);
+    tcg_gen_rotl_tl(dc->cpu_R[instr->c], dc->cpu_R[instr->a], t0);
 
     tcg_temp_free(t0);
-    tcg_temp_free(t1);
 }
 
 /* */
@@ -881,17 +892,11 @@ static void ror(DisasContext *dc, uint32_t code)
     R_TYPE(instr, code);
 
     TCGv t0 = tcg_temp_new();
-    TCGv t1 = tcg_temp_new();
 
     tcg_gen_andi_tl(t0, dc->cpu_R[instr->b], 31);
-    tcg_gen_movi_tl(t1, 32);
-    tcg_gen_sub_tl(t1, t1, t0);
-    tcg_gen_shli_tl(t1, dc->cpu_R[instr->a], t1);
-    tcg_gen_shri_tl(dc->cpu_R[instr->c], dc->cpu_R[instr->a], t0);
-    tcg_gen_or_tl(dc->cpu_R[instr->c], dc->cpu_R[instr->c], t1);
+    tcg_gen_rotr_tl(dc->cpu_R[instr->c], dc->cpu_R[instr->a], t0);
 
     tcg_temp_free(t0);
-    tcg_temp_free(t1);
 }
 
 /* */
