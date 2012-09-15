@@ -86,69 +86,6 @@ static void gen_check_supervisor(DisasContext *dc, int label)
     tcg_gen_movi_tl(dc->cpu_R[R_PC], dc->pc+4);
 }
 
-static inline void gen_load_u(DisasContext *dc, TCGv dst, TCGv addr,
-                              unsigned int size)
-{
-    int mem_index = cpu_mmu_index(dc->env);
-
-    switch (size) {
-    case 1:
-        tcg_gen_qemu_ld8u(dst, addr, mem_index);
-        break;
-    case 2:
-        tcg_gen_qemu_ld16u(dst, addr, mem_index);
-        break;
-    case 4:
-        tcg_gen_qemu_ld32u(dst, addr, mem_index);
-        break;
-    default:
-        cpu_abort(dc->env, "Incorrect load size %d\n", size);
-        break;
-    }
-}
-
-static inline void gen_load_s(DisasContext *dc, TCGv dst, TCGv addr,
-                              unsigned int size)
-{
-    int mem_index = cpu_mmu_index(dc->env);
-
-    switch (size) {
-    case 1:
-        tcg_gen_qemu_ld8s(dst, addr, mem_index);
-        break;
-    case 2:
-        tcg_gen_qemu_ld16s(dst, addr, mem_index);
-        break;
-    case 4:
-        tcg_gen_qemu_ld32s(dst, addr, mem_index);
-        break;
-    default:
-        cpu_abort(dc->env, "Incorrect load size %d\n", size);
-        break;
-    }
-}
-
-static inline void gen_store(DisasContext *dc, TCGv val, TCGv addr,
-                             unsigned int size)
-{
-    int mem_index = cpu_mmu_index(dc->env);
-
-    switch (size) {
-    case 1:
-        tcg_gen_qemu_st8(val, addr, mem_index);
-        break;
-    case 2:
-        tcg_gen_qemu_st16(val, addr, mem_index);
-        break;
-    case 4:
-        tcg_gen_qemu_st32(val, addr, mem_index);
-        break;
-    default:
-        cpu_abort(dc->env, "Incorrect load size %d\n", size);
-        break;
-    }
-}
-
 /*
  * Used as a placeholder for all instructions which do not have an effect on the
  * simulator (e.g. flush, sync)
@@ -210,7 +147,7 @@ static void ldbu(DisasContext *dc, uint32_t code)
     tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
     tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
 
-    gen_load_u(dc, dc->cpu_R[instr->b], addr, 1);
+    tcg_gen_qemu_ld8u(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
     tcg_temp_free(addr);
 }
@@ -237,7 +174,7 @@ static void stb(DisasContext *dc, uint32_t code)
     tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
     tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
 
-    gen_store(dc, dc->cpu_R[instr->b], addr, 1);
+    tcg_gen_qemu_st8(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
     tcg_temp_free(addr);
 }
@@ -261,7 +198,7 @@ static void ldb(DisasContext *dc, uint32_t code)
     tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
     tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
 
-    gen_load_s(dc, dc->cpu_R[instr->b], addr, 1);
+    tcg_gen_qemu_ld8s(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
     tcg_temp_free(addr);
 }
@@ -289,7 +226,7 @@ static void ldhu(DisasContext *dc, uint32_t code)
     tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
     tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
 
-    gen_load_u(dc, dc->cpu_R[instr->b], addr, 2);
+    tcg_gen_qemu_ld16u(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
     tcg_temp_free(addr);
 }
@@ -311,7 +248,7 @@ static void sth(DisasContext *dc, uint32_t code)
     tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
     tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
 
-    gen_store(dc, dc->cpu_R[instr->b], addr, 2);
+    tcg_gen_qemu_st16(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
     tcg_temp_free(addr);
 }
@@ -347,7 +284,7 @@ static void ldh(DisasContext *dc, uint32_t code)
     tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
     tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
 
-    gen_load_s(dc, dc->cpu_R[instr->b], addr, 2);
+    tcg_gen_qemu_ld16s(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
     tcg_temp_free(addr);
 }
@@ -390,7 +327,7 @@ static void stw(DisasContext *dc, uint32_t code)
     tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
     tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
 
-    gen_store(dc, dc->cpu_R[instr->b], addr, 4);
+    tcg_gen_qemu_st32(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
     tcg_temp_free(addr);
 }
@@ -426,7 +363,7 @@ static void ldw(DisasContext *dc, uint32_t code)
     tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
     tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
 
-    gen_load_u(dc, dc->cpu_R[instr->b], addr, 4);
+    tcg_gen_qemu_ld32u(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
     tcg_temp_free(addr);
 }
@@ -498,7 +435,7 @@ static void ldbuio(DisasContext *dc, uint32_t code)
     tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
     tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
 
-    gen_load_u(dc, dc->cpu_R[instr->b], addr, 1);
+    tcg_gen_qemu_ld8u(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
     tcg_temp_free(addr);
 }
@@ -523,7 +460,7 @@ static void stbio(DisasContext *dc, uint32_t code)
     tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
     tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
 
-    gen_store(dc, dc->cpu_R[instr->b], addr, 1);
+    tcg_gen_qemu_st8(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
     tcg_temp_free(addr);
 }
@@ -559,7 +496,7 @@ static void ldbio(DisasContext *dc, uint32_t code)
     tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
     tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
 
-    gen_load_s(dc, dc->cpu_R[instr->b], addr, 1);
+    tcg_gen_qemu_ld8s(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
     tcg_temp_free(addr);
 }
@@ -587,7 +524,7 @@ static void ldhuio(DisasContext *dc, uint32_t code)
     tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
     tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
 
-    gen_load_u(dc, dc->cpu_R[instr->b], addr, 2);
+    tcg_gen_qemu_ld16u(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
     tcg_temp_free(addr);
 }
@@ -610,7 +547,7 @@ static void sthio(DisasContext *dc, uint32_t code)
     tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
     tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
 
-    gen_store(dc, dc->cpu_R[instr->b], addr, 2);
+    tcg_gen_qemu_st16(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
     tcg_temp_free(addr);
 }
@@ -646,7 +583,7 @@ static void ldhio(DisasContext *dc, uint32_t code)
     tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
     tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
 
-    gen_load_s(dc, dc->cpu_R[instr->b], addr, 2);
+    tcg_gen_qemu_ld16s(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
     tcg_temp_free(addr);
 }
@@ -690,7 +627,7 @@ static void stwio(DisasContext *dc, uint32_t code)
     tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
     tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
 
-    gen_store(dc, dc->cpu_R[instr->b], addr, 4);
+    tcg_gen_qemu_st32(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
     tcg_temp_free(addr);
 }
@@ -726,7 +663,7 @@ static void ldwio(DisasContext *dc, uint32_t code)
     tcg_gen_movi_tl(addr, (int32_t)((int16_t)instr->imm16));
     tcg_gen_add_tl(addr, dc->cpu_R[instr->a], addr);
 
-    gen_load_u(dc, dc->cpu_R[instr->b], addr, 4);
+    tcg_gen_qemu_ld32u(dc->cpu_R[instr->b], addr, dc->mem_idx);
 
     tcg_temp_free(addr);
 }
@@ -743,7 +680,7 @@ static void xorhi(DisasContext *dc, uint32_t code)
                     instr->imm16 << 16);
 }
 
-static Nios2Instruction i_type_instructions[I_TYPE_COUNT] = {
+static const Nios2Instruction i_type_instructions[I_TYPE_COUNT] = {
     [CALL]    = INSTRUCTION(call),
     [JMPI]    = INSTRUCTION(jmpi),
     [0x02]    = INSTRUCTION_ILLEGAL(),
@@ -1187,7 +1124,7 @@ static void rdctl(DisasContext *dc, uint32_t code)
     case CR_TLBMISC:
     {
         TCGv_i32 tmp = tcg_const_i32(instr->imm5 + 32);
-        gen_helper_mmu_read(dc->cpu_R[instr->c], tmp);
+        gen_helper_mmu_read(dc->cpu_R[instr->c], dc->cpu_env, tmp);
         tcg_temp_free_i32(tmp);
         break;
     }
@@ -1256,7 +1193,7 @@ static void wrctl(DisasContext *dc, uint32_t code)
     case CR_TLBMISC:
     {
         TCGv_i32 tmp = tcg_const_i32(instr->imm5 + 32);
-        gen_helper_mmu_write(tmp, dc->cpu_R[instr->a]);
+        gen_helper_mmu_write(dc->cpu_env, tmp, dc->cpu_R[instr->a]);
         tcg_temp_free_i32(tmp);
         break;
     }
@@ -1334,7 +1271,7 @@ static void sra(DisasContext *dc, uint32_t code)
     tcg_temp_free(t0);
 }
 
-static Nios2Instruction r_type_instructions[R_TYPE_COUNT] = {
+static const Nios2Instruction r_type_instructions[R_TYPE_COUNT] = {
     [0x00]   = INSTRUCTION_ILLEGAL(),
     [ERET]   = INSTRUCTION(eret),
     [ROLI]   = INSTRUCTION(roli),

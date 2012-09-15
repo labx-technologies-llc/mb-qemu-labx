@@ -73,11 +73,12 @@ static void gen_intermediate_code_internal(
     uint16_t *gen_opc_end = gen_opc_buf + OPC_MAX_SIZE;
 
     /* Initialize DC */
-    dc->env    = env;
-    dc->cpu_R  = cpu_R;
-    dc->is_jmp = DISAS_NEXT;
-    dc->pc     = tb->pc;
-    dc->tb     = tb;
+    dc->cpu_env = cpu_env;
+    dc->cpu_R   = cpu_R;
+    dc->is_jmp  = DISAS_NEXT;
+    dc->pc      = tb->pc;
+    dc->tb      = tb;
+    dc->mem_idx = cpu_mmu_index(env);
 
     /* Dump the CPU state to the log */
     if (qemu_loglevel_mask(CPU_LOG_TB_IN_ASM)) {

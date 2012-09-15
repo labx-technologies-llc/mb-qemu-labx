@@ -244,11 +244,12 @@ enum {
     })
 
 typedef struct DisasContext {
-    CPUNios2State    *env;
+    TCGv_ptr          cpu_env;
     TCGv             *cpu_R;
     int               is_jmp;
     target_ulong      pc;
     TranslationBlock *tb;
+    int               mem_idx;
 } DisasContext;
 
 typedef void (*instruction_handler)(DisasContext *dc, uint32_t opcode);

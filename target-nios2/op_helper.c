@@ -19,11 +19,12 @@
  */
 
 #include "cpu.h"
-#include "dyngen-exec.h"
 #include "helper.h"
 #include "host-utils.h"
 
 #if !defined(CONFIG_USER_ONLY)
+#include "dyngen-exec.h"
+#include "softmmu_exec.h"
 #define MMUSUFFIX _mmu
 #define SHIFT 0
 #include "softmmu_template.h"
@@ -66,12 +67,12 @@ void helper_raise_exception(uint32_t index)
     cpu_loop_exit(env);
 }
 
-uint32_t helper_mmu_read(uint32_t rn)
+uint32_t helper_mmu_read(CPUNios2State *env, uint32_t rn)
 {
     return mmu_read(env, rn);
 }
 
-void helper_mmu_write(uint32_t rn, uint32_t v)
+void helper_mmu_write(CPUNios2State *env, uint32_t rn, uint32_t v)
 {
     mmu_write(env, rn, v);
 }
