@@ -259,21 +259,9 @@ typedef struct Nios2Instruction {
     instruction_handler handler;
 } Nios2Instruction;
 
-/*
- * Stringification macro (taken from Linux Kernel source code)
- */
-
-/* Indirect stringification.  Doing two levels allows the parameter to be a
- * macro itself.  For example, compile with -DFOO=bar, __stringify(FOO)
- * converts to "bar".
- */
-
-#define __stringify_1(x...)     #x
-#define __stringify(x...)       __stringify_1(x)
-
-#define INSTRUCTION(name)    { __stringify(name), name }
-#define INSTRUCTION_NOP(name)    { __stringify(name), nop }
-#define INSTRUCTION_UNIMPLEMENTED(name)  { __stringify(name), unimplemented }
+#define INSTRUCTION(name)    { stringify(name), name }
+#define INSTRUCTION_NOP(name)    { stringify(name), nop }
+#define INSTRUCTION_UNIMPLEMENTED(name)  { stringify(name), unimplemented }
 #define INSTRUCTION_ILLEGAL()  { "", illegal_instruction }
 
 extern void handle_instruction(DisasContext *dc);
