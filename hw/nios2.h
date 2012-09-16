@@ -23,7 +23,7 @@
 
 #include "sysbus.h"
 
-qemu_irq *nios2_pic_init_cpu(CPUNios2State *env);
+qemu_irq *nios2_pic_init_cpu(Nios2CPU *cpu);
 
 static inline DeviceState *
 altera_vic_create(target_phys_addr_t base, qemu_irq irq, int kind_of_intr)

@@ -23,17 +23,17 @@
 
 static void nios2_pic_cpu_handler(void *opaque, int irq, int level)
 {
-    CPUNios2State *env = opaque;
+    Nios2CPU *cpu = opaque;
     int type = irq ? CPU_INTERRUPT_NMI : CPU_INTERRUPT_HARD;
 
     if (level) {
-        cpu_interrupt(env, type);
+        cpu_interrupt(&cpu->env, type);
     } else {
-        cpu_reset_interrupt(env, type);
+        cpu_reset_interrupt(&cpu->env, type);
     }
 }
 
-qemu_irq *nios2_pic_init_cpu(CPUNios2State *env)
+qemu_irq *nios2_pic_init_cpu(Nios2CPU *cpu)
 {
-    return qemu_allocate_irqs(nios2_pic_cpu_handler, env, 2);
+    return qemu_allocate_irqs(nios2_pic_cpu_handler, cpu, 2);
 }

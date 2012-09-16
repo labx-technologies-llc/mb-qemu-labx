@@ -196,7 +196,7 @@ static void cpu_probe(void *fdt, int node, uint32_t offset)
     dev = altera_vic_create(irq_addr, cpu_irq[0], 2);
 #else
     /* Internal interrupt controller (IIC) */
-    cpu_irq = nios2_pic_init_cpu(&cpu->env);
+    cpu_irq = nios2_pic_init_cpu(cpu);
     dev = altera_iic_create(cpu, cpu_irq[0], 2);
 #endif
 
