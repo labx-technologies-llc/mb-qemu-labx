@@ -19,20 +19,11 @@
  */
 
 #include "hw.h"
-#include "pc.h"
 #include "nios2.h"
-
-void pic_info(Monitor *mon)
-{
-}
-
-void irq_info(Monitor *mon)
-{
-}
 
 static void nios2_pic_cpu_handler(void *opaque, int irq, int level)
 {
-    CPUNios2State *env = (CPUNios2State *)opaque;
+    CPUNios2State *env = opaque;
     int type = irq ? CPU_INTERRUPT_NMI : CPU_INTERRUPT_HARD;
 
     if (level) {

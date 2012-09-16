@@ -225,7 +225,7 @@ static void labx_dma_class_init(ObjectClass *klass, void *data)
     dc->props = labx_dma_properties;
 }
 
-static TypeInfo labx_dma_info = {
+static const TypeInfo labx_dma_info = {
     .name          = "labx,dma",
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(LabXDMA),
@@ -238,4 +238,3 @@ static void labx_dma_register(void)
 }
 
 type_init(labx_dma_register)
-

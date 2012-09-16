@@ -599,7 +599,7 @@ static void labx_ethernet_class_init(ObjectClass *klass, void *data)
     dc->props = labx_ethernet_properties;
 }
 
-static TypeInfo labx_ethernet_info = {
+static const TypeInfo labx_ethernet_info = {
     .name          = "labx,ethernet",
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(LabXEthernet),
@@ -612,4 +612,3 @@ static void labx_ethernet_register(void)
 }
 
 type_init(labx_ethernet_register)
-

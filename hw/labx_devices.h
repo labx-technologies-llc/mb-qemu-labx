@@ -18,6 +18,9 @@
  * <http://www.gnu.org/licenses/lgpl-2.1.html>
  */
 
+#ifndef _LABX_DEVICES_INCLUDED_
+#define _LABX_DEVICES_INCLUDED_
+
 #include <net.h>
 
 /* Audio packetizer  */
@@ -101,3 +104,4 @@ labx_ptp_create(target_phys_addr_t base)
     return dev;
 }
 
+#endif /* _LABX_DEVICES_INCLUDED_ */

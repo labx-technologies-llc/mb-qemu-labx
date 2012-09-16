@@ -140,7 +140,7 @@ static void timer_write(void *opaque, target_phys_addr_t addr,
 static const MemoryRegionOps timer_ops = {
     .read = timer_read,
     .write = timer_write,
-    .endianness = DEVICE_NATIVE_ENDIAN,
+    .endianness = DEVICE_LITTLE_ENDIAN,
     .valid = {
         .min_access_size = 1,
         .max_access_size = 4
@@ -190,7 +190,7 @@ static void altera_timer_class_init(ObjectClass *klass, void *data)
     dc->props = altera_timer_properties;
 }
 
-static TypeInfo altera_timer_info = {
+static const TypeInfo altera_timer_info = {
     .name          = "altera,timer",
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(AlteraTimer),
@@ -203,4 +203,3 @@ static void altera_timer_register(void)
 }
 
 type_init(altera_timer_register)
-

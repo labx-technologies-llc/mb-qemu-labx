@@ -63,7 +63,7 @@ static void update_irq(AlteraVIC *pv)
         qemu_irq_lower(pv->parent_irq);
     } else {
         pv->regs[R_VEC_TBL_ADDR] = pv->regs[R_VEC_TBL_BASE] +
-                                   i*(4 << (pv->regs[R_VIC_CONFIG] & 7));
+                                   i * (4 << (pv->regs[R_VIC_CONFIG] & 7));
         pv->regs[R_VIC_STATUS] = 0x80000000 | i;
         qemu_irq_raise(pv->parent_irq);
     }
@@ -135,7 +135,7 @@ static void pic_write(void *opaque, target_phys_addr_t addr,
 static const MemoryRegionOps pic_ops = {
     .read = pic_read,
     .write = pic_write,
-    .endianness = DEVICE_NATIVE_ENDIAN,
+    .endianness = DEVICE_LITTLE_ENDIAN,
     .valid = {
         .min_access_size = 4,
         .max_access_size = 4
@@ -179,7 +179,7 @@ static void altera_vic_class_init(ObjectClass *klass, void *data)
     dc->props = altera_vic_properties;
 }
 
-static TypeInfo altera_vic_info = {
+static const TypeInfo altera_vic_info = {
     .name          = "altera,vic",
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(AlteraVIC),
@@ -192,4 +192,3 @@ static void altera_vic_register(void)
 }
 
 type_init(altera_vic_register)
-

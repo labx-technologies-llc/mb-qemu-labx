@@ -278,7 +278,8 @@ target_phys_addr_t cpu_get_phys_page_debug(CPUNios2State *env,
             vaddr = addr & TARGET_PAGE_MASK;
             paddr = lu.paddr + vaddr - lu.vaddr;
         } else {
-            cpu_abort(env, "cpu_get_phys_page debug MISS: %08X\n", addr);
+            paddr = -1;
+            qemu_log("cpu_get_phys_page debug MISS: %08X\n", addr);
         }
     } else {
         paddr = addr & TARGET_PAGE_MASK;

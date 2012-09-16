@@ -162,7 +162,7 @@ static void uart_event(void *opaque, int event)
 static const MemoryRegionOps uart_ops = {
     .read = uart_read,
     .write = uart_write,
-    .endianness = DEVICE_NATIVE_ENDIAN,
+    .endianness = DEVICE_LITTLE_ENDIAN,
     .valid = {
         .min_access_size = 1,
         .max_access_size = 4
@@ -202,7 +202,7 @@ static void altera_uart_class_init(ObjectClass *klass, void *data)
     dc->props = altera_uart_properties;
 }
 
-static TypeInfo altera_uart_info = {
+static const TypeInfo altera_uart_info = {
     .name          = "altera,uart",
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(AlteraUART),
@@ -215,4 +215,3 @@ static void altera_uart_register(void)
 }
 
 type_init(altera_uart_register)
-

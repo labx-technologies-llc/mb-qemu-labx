@@ -594,4 +594,3 @@ static void labx_microblaze_machine_init(void)
 }
 
 machine_init(labx_microblaze_machine_init);
-

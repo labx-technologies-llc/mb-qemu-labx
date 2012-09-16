@@ -658,4 +658,3 @@ static void labx_nios2_machine_init(void)
 }
 
 machine_init(labx_nios2_machine_init);
-

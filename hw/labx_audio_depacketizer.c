@@ -393,7 +393,7 @@ static void labx_audio_depacketizer_class_init(ObjectClass *klass, void *data)
     dc->props = labx_audio_depacketizer_properties;
 }
 
-static TypeInfo labx_audio_depacketizer_info = {
+static const TypeInfo labx_audio_depacketizer_info = {
     .name          = "labx,audio-depacketizer",
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(Depacketizer),
@@ -406,4 +406,3 @@ static void labx_audio_depacketizer_register(void)
 }
 
 type_init(labx_audio_depacketizer_register)
-

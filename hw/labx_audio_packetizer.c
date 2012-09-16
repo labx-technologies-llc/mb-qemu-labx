@@ -381,7 +381,7 @@ static void labx_audio_packetizer_class_init(ObjectClass *klass, void *data)
     dc->props = labx_audio_packetizer_properties;
 }
 
-static TypeInfo labx_audio_packetizer_info = {
+static const TypeInfo labx_audio_packetizer_info = {
     .name          = "labx,audio-packetizer",
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(Packetizer),
@@ -394,4 +394,3 @@ static void labx_audio_packetizer_register(void)
 }
 
 type_init(labx_audio_packetizer_register)
-

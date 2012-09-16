@@ -18,6 +18,9 @@
  * <http://www.gnu.org/licenses/lgpl-2.1.html>
  */
 
+#ifndef _NIOS2_H_INCLUDED_
+#define _NIOS2_H_INCLUDED_
+
 #include "sysbus.h"
 
 qemu_irq *nios2_pic_init_cpu(CPUNios2State *env);
@@ -45,3 +48,5 @@ altera_iic_create(Nios2CPU *cpu, qemu_irq irq, int kind_of_intr)
     sysbus_connect_irq(sysbus_from_qdev(dev), 0, irq);
     return dev;
 }
+
+#endif /* _NIOS2_H_INCLUDED_ */

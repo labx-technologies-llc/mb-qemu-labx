@@ -275,7 +275,7 @@ static void labx_ptp_class_init(ObjectClass *klass, void *data)
     dc->props = labx_ptp_properties;
 }
 
-static TypeInfo labx_ptp_info = {
+static const TypeInfo labx_ptp_info = {
     .name          = "labx,ptp",
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(LabXPTP),
@@ -288,4 +288,3 @@ static void labx_ptp_register(void)
 }
 
 type_init(labx_ptp_register)
-
