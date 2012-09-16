@@ -52,7 +52,7 @@ static uint64_t timer_read(void *opaque, target_phys_addr_t addr,
                            unsigned int size)
 {
     AlteraTimer *t = opaque;
-    uint32_t r = 0;
+    uint64_t r = 0;
 
     addr >>= 2;
     addr &= 0x7;
@@ -68,8 +68,6 @@ static uint64_t timer_read(void *opaque, target_phys_addr_t addr,
         break;
     }
 
-    qemu_set_irq(t->irq, t->regs[R_STATUS] & t->regs[R_CONTROL] & CONTROL_ITO);
-
     return r;
 }
 
@@ -80,12 +78,18 @@ static void timer_start(AlteraTimer *t)
     ptimer_run(t->ptimer, 1);
 }
 
+static inline int timer_irq_state(AlteraTimer *t)
+{
+    return (t->regs[R_STATUS] & t->regs[R_CONTROL] & CONTROL_ITO) ? 1 : 0;
+}
+
 static void timer_write(void *opaque, target_phys_addr_t addr,
                         uint64_t val64, unsigned int size)
 {
     AlteraTimer *t = opaque;
     uint32_t value = val64;
     uint32_t count = 0;
+    int irqState = timer_irq_state(t);
 
     addr >>= 2;
     addr &= 0x7;
@@ -128,7 +132,9 @@ static void timer_write(void *opaque, target_phys_addr_t addr,
         break;
     }
 
-    qemu_set_irq(t->irq, t->regs[R_STATUS] & t->regs[R_CONTROL] & CONTROL_ITO);
+    if (irqState != timer_irq_state(t)) {
+        qemu_set_irq(t->irq, timer_irq_state(t));
+    }
 }
 
 static const MemoryRegionOps timer_ops = {
@@ -144,12 +150,14 @@ static const MemoryRegionOps timer_ops = {
 static void timer_hit(void *opaque)
 {
     AlteraTimer *t = opaque;
+
     t->regs[R_STATUS] |= STATUS_TO;
 
     if (t->regs[R_CONTROL] & CONTROL_CONT) {
         timer_start(t);
     }
-    qemu_set_irq(t->irq, t->regs[R_STATUS] & t->regs[R_CONTROL] & CONTROL_ITO);
+
+    qemu_set_irq(t->irq, timer_irq_state(t));
 }
 
 static int altera_timer_init(SysBusDevice *dev)
