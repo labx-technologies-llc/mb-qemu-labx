@@ -323,3 +323,161 @@ int qemu_devtree_add_subnode(void *fdt, const char *name)
     g_free(dupname);
     return retval;
 }
+
+char *qemu_devtree_get_node_name(void *fdt, const char *node_path)
+{
+    const char *ret = fdt_get_name(fdt, fdt_path_offset(fdt, node_path), NULL);
+    return ret ? strdup(ret) : NULL;
+}
+
+int qemu_devtree_get_node_depth(void *fdt, const char *node_path)
+{
+    return fdt_node_depth(fdt, fdt_path_offset(fdt, node_path));
+}
+
+static void qemu_devtree_children_info(void *fdt, const char *node_path,
+        int depth, int *num, char **returned_paths) {
+    int offset = fdt_path_offset(fdt, node_path);
+    int root_depth = fdt_node_depth(fdt, offset);
+    int cur_depth = root_depth;
+
+    *num = 0;
+    for (;;) {
+        offset = fdt_next_node(fdt, offset, &cur_depth);
+        if (cur_depth <= root_depth) {
+            break;
+        }
+        if (cur_depth <= root_depth + depth || depth == 0) {
+            if (returned_paths) {
+                returned_paths[*num] = g_malloc0(DT_PATH_LENGTH);
+                fdt_get_path(fdt, offset, returned_paths[*num], DT_PATH_LENGTH);
+            }
+            (*num)++;
+        }
+    }
+}
+
+char **qemu_devtree_get_children(void *fdt, const char *node_path, int depth)
+{
+    int num_children = qemu_devtree_get_num_children(fdt, node_path, depth);
+    char **ret = g_malloc0(sizeof(*ret) * num_children);
+
+    qemu_devtree_children_info(fdt, node_path, depth, &num_children, ret);
+    return ret;
+}
+
+int qemu_devtree_get_num_children(void *fdt, const char *node_path, int depth)
+{
+    int ret;
+
+    qemu_devtree_children_info(fdt, node_path, depth, &ret, NULL);
+    return ret;
+}
+
+int qemu_devtree_node_by_compatible(void *fdt, char *node_path,
+                        const char *compats)
+{
+    int offset = fdt_node_offset_by_compatible(fdt, 0, compats);
+    return offset > 0 ?
+        fdt_get_path(fdt, offset, node_path, DT_PATH_LENGTH) : 1;
+}
+
+int qemu_devtree_get_node_by_name(void *fdt, char *node_path,
+        const char *cmpname) {
+    int offset = 0;
+    char *name = NULL;
+
+    do {
+        offset = fdt_next_node(fdt, offset, NULL);
+        name = (void *)fdt_get_name(fdt, offset, NULL);
+        if (!name) {
+            continue;
+        }
+        if (!strncmp(name, cmpname, strlen(cmpname))) {
+            break;
+        }
+    } while (offset > 0);
+    return offset > 0 ?
+        fdt_get_path(fdt, offset, node_path, DT_PATH_LENGTH) : 1;
+}
+
+int qemu_devtree_get_node_by_phandle(void *fdt, char *node_path, int phandle)
+{
+    return fdt_get_path(fdt, fdt_node_offset_by_phandle(fdt, phandle),
+                            node_path, DT_PATH_LENGTH);
+}
+
+int qemu_devtree_getparent(void *fdt, char *node_path, const char *current)
+{
+    int offset = fdt_path_offset(fdt, current);
+    int parent_offset = fdt_supernode_atdepth_offset(fdt, offset,
+        fdt_node_depth(fdt, offset) - 1, NULL);
+
+    return parent_offset > 0 ?
+        fdt_get_path(fdt, parent_offset, node_path, DT_PATH_LENGTH) : 1;
+}
+
+int qemu_devtree_get_root_node(void *fdt, char *node_path)
+{
+    return fdt_get_path(fdt, 0, node_path, DT_PATH_LENGTH);
+}
+
+static void devtree_scan(void *fdt, int *num_nodes, int info_dump)
+{
+    int depth = 0, offset = 0;
+
+    if (num_nodes) {
+        *num_nodes = 0;
+    }
+    for (;;) {
+        offset = fdt_next_node(fdt, offset, &depth);
+        if (num_nodes) {
+            (*num_nodes)++;
+        }
+        if (offset <= 0 || depth <= 0) {
+            break;
+        }
+
+        if (info_dump) {
+            char node_path[DT_PATH_LENGTH];
+            char *all_compats = NULL;
+            int compat_len;
+            Error *errp = NULL;
+
+            if (fdt_get_path(fdt, offset, node_path, DT_PATH_LENGTH)) {
+                sprintf(node_path, "(none)");
+            } else {
+                all_compats = qemu_devtree_getprop(fdt, node_path, "compatible",
+                                                    &compat_len, false, &errp);
+            }
+            if (!errp) {
+                char *i = all_compats;
+                for (;;) {
+                    char *j = rawmemchr(i, '\0');
+                    compat_len -= ((j+1)-i);
+                    if (!compat_len) {
+                        break;
+                    }
+                    *j = ' ';
+                    i = j+1;
+                }
+            }
+            printf("OFFSET: %d, DEPTH: %d, PATH: %s, COMPATS: %s\n",
+                    offset, depth, node_path,
+                    all_compats ? all_compats : "(none)");
+        }
+    }
+}
+
+void devtree_info_dump(void *fdt)
+{
+    devtree_scan(fdt, NULL, 1);
+}
+
+int devtree_get_num_nodes(void *fdt)
+{
+    int ret;
+
+    devtree_scan(fdt, &ret, 0);
+    return ret;
+}

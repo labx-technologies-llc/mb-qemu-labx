@@ -20,6 +20,8 @@
 void *create_device_tree(int *sizep);
 void *load_device_tree(const char *filename_path, int *sizep);
 
+/* property setters */
+
 int qemu_devtree_setprop(void *fdt, const char *node_path,
                          const char *property, const void *val_array, int size);
 int qemu_devtree_setprop_cell(void *fdt, const char *node_path,
@@ -53,5 +55,30 @@ int qemu_devtree_add_subnode(void *fdt, const char *name);
         qemu_devtree_setprop(fdt, node_path, property, qdt_tmp,               \
                              sizeof(qdt_tmp));                                \
     } while (0)
+
+/* node queries */
+
+char *qemu_devtree_get_node_name(void *fdt, const char *node_path);
+int qemu_devtree_get_node_depth(void *fdt, const char *node_path);
+int qemu_devtree_get_num_children(void *fdt, const char *node_path, int depth);
+char **qemu_devtree_get_children(void *fdt, const char *node_path, int depth);
+
+/* node getters */
+
+int qemu_devtree_node_by_compatible(void *fdt, char *node_path,
+                        const char *compats);
+int qemu_devtree_get_node_by_name(void *fdt, char *node_path,
+                        const char *cmpname);
+int qemu_devtree_get_node_by_phandle(void *fdt, char *node_path, int phandle);
+int qemu_devtree_getparent(void *fdt, char *node_path,
+                        const char *current);
+int qemu_devtree_get_root_node(void *fdt, char *node_path);
+
+/* misc */
+
+int devtree_get_num_nodes(void *fdt);
+void devtree_info_dump(void *fdt);
+
+#define DT_PATH_LENGTH 1024
 
 #endif /* __DEVICE_TREE_H__ */
