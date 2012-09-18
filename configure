@@ -118,7 +118,6 @@ audio_card_list="ac97 es1370 sb16 hda"
 audio_possible_cards="ac97 es1370 sb16 cs4231a adlib gus hda"
 block_drv_whitelist=""
 host_cc="gcc"
-helper_cflags=""
 libs_softmmu=""
 libs_tools=""
 audio_pt_int=""
@@ -127,7 +126,7 @@ cc_i386=i386-pc-linux-gnu-gcc
 libs_qga=""
 debug_info="yes"
 
-target_list="DEFAULT"
+target_list=""
 
 # Default value for a variable defining feature "foo".
 #  * foo="no"  feature will only be used if --enable-foo arg is given
@@ -902,7 +901,6 @@ case "$cpu" in
            QEMU_CFLAGS="-m32 -ffixed-g2 -ffixed-g3 $QEMU_CFLAGS"
            if test "$solaris" = "no" ; then
              QEMU_CFLAGS="-ffixed-g1 -ffixed-g6 $QEMU_CFLAGS"
-             helper_cflags="-ffixed-i0"
            fi
            ;;
     sparc64)
@@ -927,7 +925,6 @@ case "$cpu" in
            QEMU_CFLAGS="-m32 $QEMU_CFLAGS"
            LDFLAGS="-m32 $LDFLAGS"
            cc_i386='$(CC) -m32'
-           helper_cflags="-fomit-frame-pointer"
            host_guest_base="yes"
            ;;
     x86_64)
@@ -1324,10 +1321,15 @@ if ! "$python" -c 'import sys; sys.exit(sys.version_info < (2,4) or sys.version_
   exit 1
 fi
 
-if test "$target_list" = "DEFAULT" ; then
-    target_list=`echo "$default_target_list" | sed -e 's/,/ /g'`
+if test -z "$target_list" ; then
+    target_list="$default_target_list"
+else
+    target_list=`echo "$target_list" | sed -e 's/,/ /g'`
 fi
-
+if test -z "$target_list" ; then
+    echo "No targets enabled"
+    exit 1
+fi
 # see if system emulation was really requested
 case " $target_list " in
   *"-softmmu "*) softmmu=yes
@@ -1433,10 +1435,10 @@ if test "$seccomp" != "no" ; then
         LIBS=`$pkg_config --libs libseccomp`
 	seccomp="yes"
     else
-	seccomp="no"
 	if test "$seccomp" = "yes"; then
             feature_not_found "libseccomp"
 	fi
+	seccomp="no"
     fi
 fi
 ##########################################
@@ -2673,17 +2675,44 @@ fi
 
 
 ##########################################
+# Do we need libm
+cat > $TMPC << EOF
+#include <math.h>
+int main(void) { return isnan(sin(0.0)); }
+EOF
+if compile_prog "" "" ; then
+  :
+elif compile_prog "" "-lm" ; then
+  LIBS="-lm $LIBS"
+  libs_qga="-lm $libs_qga"
+else
+  echo
+  echo "Error: libm check failed"
+  echo
+  exit 1
+fi
+
+##########################################
 # Do we need librt
+# uClibc provides 2 versions of clock_gettime(), one with realtime
+# support and one without. This means that the clock_gettime() don't
+# need -lrt. We still need it for timer_create() so we check for this
+# function in addition.
 cat > $TMPC <<EOF
 #include <signal.h>
 #include <time.h>
-int main(void) { return clock_gettime(CLOCK_REALTIME, NULL); }
+int main(void) {
+  timer_create(CLOCK_REALTIME, NULL, NULL);
+  return clock_gettime(CLOCK_REALTIME, NULL);
+}
 EOF
 
 if compile_prog "" "" ; then
   :
-elif compile_prog "" "-lrt" ; then
+# we need pthread for static linking. use previous pthread test result
+elif compile_prog "" "-lrt $pthread_lib" ; then
   LIBS="-lrt $LIBS"
+  libs_qga="-lrt $libs_qga"
 fi
 
 if test "$darwin" != "yes" -a "$mingw32" != "yes" -a "$solaris" != yes -a \
@@ -2710,6 +2739,9 @@ EOF
     spice_server_version=$($pkg_config --modversion spice-server)
     if $pkg_config --atleast-version=0.12.0 spice-protocol >/dev/null 2>&1; then
         spice_qxl_io_monitors_config_async="yes"
+    fi
+    if $pkg_config --atleast-version=0.12.2 spice-protocol > /dev/null 2>&1; then
+        spice_qxl_client_monitors_config="yes"
     fi
   else
     if test "$spice" = "yes" ; then
@@ -3458,6 +3490,10 @@ if test "$spice_qxl_io_monitors_config_async" = "yes" ; then
   echo "CONFIG_QXL_IO_MONITORS_CONFIG_ASYNC=y" >> $config_host_mak
 fi
 
+if test "$spice_qxl_client_monitors_config" = "yes" ; then
+  echo "CONFIG_QXL_CLIENT_MONITORS_CONFIG=y" >> $config_host_mak
+fi
+
 if test "$smartcard" = "yes" ; then
   echo "CONFIG_SMARTCARD=y" >> $config_host_mak
 fi
@@ -3592,7 +3628,6 @@ if test "$sparse" = "yes" ; then
   echo "HOST_CC      := REAL_CC=\"\$(HOST_CC)\" cgcc"  >> $config_host_mak
   echo "QEMU_CFLAGS  += -Wbitwise -Wno-transparent-union -Wno-old-initializer -Wno-non-pointer-null" >> $config_host_mak
 fi
-echo "HELPER_CFLAGS=$helper_cflags" >> $config_host_mak
 echo "LDFLAGS=$LDFLAGS" >> $config_host_mak
 echo "ARLIBS_BEGIN=$arlibs_begin" >> $config_host_mak
 echo "ARLIBS_END=$arlibs_end" >> $config_host_mak
@@ -3851,13 +3886,6 @@ if [ "$TARGET_BASE_ARCH" = "" ]; then
 fi
 
 symlink "$source_path/Makefile.target" "$target_dir/Makefile"
-
-
-case "$target_arch2" in
-  alpha | i386 | or32 | s390x | sparc* | x86_64 | xtensa* | ppc* | nios2)
-    echo "CONFIG_TCG_PASS_AREG0=y" >> $config_target_mak
-  ;;
-esac
 
 upper() {
     echo "$@"| LC_ALL=C tr '[a-z]' '[A-Z]'
