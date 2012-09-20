@@ -35,6 +35,8 @@
 #include "exec-memory.h"
 #include "microblaze_pic_cpu.h"
 
+#include <libfdt.h>
+
 #define LMB_BRAM_SIZE  (128 * 1024)
 
 static struct
@@ -64,22 +66,6 @@ static void main_cpu_reset(void *opaque)
 #ifndef CONFIG_FDT
 #error "Device-tree support is required for this target to function"
 #endif
-
-static uint32_t fdt_get_int_from_array(void *fdt, int node,
-                                       const char *name, int index)
-{
-    int array_length;
-    const void *array = qemu_devtree_getprop_offset(fdt, node, name,
-                                                    &array_length);
-    if (index >= array_length) {
-        printf("fdt_get_int_from_array: requesting %s from node %d, "
-               "index %d out of range (%d max)\n",
-               name, node, index, array_length);
-        return 0;
-    } else {
-        return qemu_devtree_int_array_index(array, index);
-    }
-}
 
 #define BINARY_DEVICE_TREE_FILE "labx-microblaze.dtb"
 static void *get_device_tree(int *fdt_size)
@@ -135,27 +121,16 @@ static uint64_t translate_kernel_address(void *opaque, uint64_t addr)
 
 static ram_addr_t get_dram_base(void *fdt)
 {
-    int root = qemu_devtree_node_offset(fdt, "/");
-    int memory = qemu_devtree_subnode_offset_namelen(fdt, root, "memory", 6);
-    if (memory > 0) {
-        int reglen;
-        const void *reg =
-            qemu_devtree_getprop_offset(fdt, memory, "reg", &reglen);
-
-        if (reglen >= 4) {
-            printf("DRAM base %08X, size %08X\n",
-                   qemu_devtree_int_array_index(reg, 0),
-                   qemu_devtree_int_array_index(reg, 1));
-            return qemu_devtree_int_array_index(reg, 0);
-        }
-    }
-
-    printf("DRAM base not found. Defaulting to 0x88000000\n");
-
-    return 0x88000000; /* Default to something reasonable */
+    Error *errp = NULL;
+     
+    printf("DRAM base %08X, size %08X\n",
+        qemu_devtree_getprop_cell(fdt, "/memory", "reg", 0, 0, &errp),
+        qemu_devtree_getprop_cell(fdt, "/memory", "reg", 1, 0, &errp));
+     
+    return qemu_devtree_getprop_cell(fdt, "/memory", "reg", 0, 0, &errp);
 }
 
-typedef void (*device_init_func_t)(void *fdt, int node);
+typedef void (*device_init_func_t)(void *fdt, const char *node_path);
 
 typedef struct DevInfo {
     device_init_func_t probe;
@@ -171,18 +146,14 @@ MicroBlazeCPU *g_cpu;
 static qemu_irq irq[32] = {};
 static qemu_irq *cpu_irq;
 
-static void xilinx_interrupt_controller_probe(void *fdt, int node)
+static void xilinx_interrupt_controller_probe(void *fdt, const char *node_path)
 {
+    Error *errp = NULL;
+     
     int i;
     DeviceState *dev;
-    int reglen;
-    const void *reg = qemu_devtree_getprop_offset(fdt, node, "reg", &reglen);
-    uint32_t irq_addr = qemu_devtree_int_array_index(reg, 0);
-    int nrIrqLen;
-    const void *nrIrq =
-        qemu_devtree_getprop_offset(fdt, node, "xlnx,num-intr-inputs",
-                                    &nrIrqLen);
-    uint32_t nrIrqs = qemu_devtree_int_array_index(nrIrq, 0);
+    uint32_t irq_addr = qemu_devtree_getprop_cell(fdt, node_path, "reg", 0, 0, &errp);
+    uint32_t nrIrqs = qemu_devtree_getprop_cell(fdt, node_path, "xlnx,num-intr-inputs", 0, 0, &errp);
 
     printf("  IRQ BASE %08X NIRQS %d\n", irq_addr, nrIrqs);
 
@@ -202,21 +173,21 @@ DevInfo xilinx_interrupt_controller_device = {
 /*
  * Flash device
  */
-static void flash_probe(void *fdt, int node)
+static void flash_probe(void *fdt, const char *node_path)
 {
-    int reglen;
-    const void *reg = qemu_devtree_getprop_offset(fdt, node, "reg", &reglen);
-    uint32_t flash_addr = qemu_devtree_int_array_index(reg, 0);
-    uint32_t flash_size = qemu_devtree_int_array_index(reg, 1);
+    Error *errp = NULL;
+     
+    uint32_t flash_addr = qemu_devtree_getprop_cell(fdt, node_path, "reg", 0, 0, &errp);
+    uint32_t flash_size = qemu_devtree_getprop_cell(fdt, node_path, "reg", 1, 0, &errp);
 
     DriveInfo *dinfo = drive_get(IF_PFLASH, 0, 0);
     pflash_cfi01_register(flash_addr, NULL,
-                          qemu_devtree_get_name(fdt, node, NULL), flash_size,
+                          qemu_devtree_get_node_name(fdt, node_path), flash_size,
                           dinfo ? dinfo->bdrv : NULL, (64 * 1024),
                           flash_size >> 16,
                           1, 0x89, 0x18, 0x0000, 0x0, 1);
     printf("-- loaded %d bytes to %08X\n",
-           load_image_targphys(qemu_devtree_get_name(fdt, node, NULL),
+           load_image_targphys(qemu_devtree_get_node_name(fdt, node_path),
                                flash_addr, flash_size),
            flash_addr);
 }
@@ -230,10 +201,12 @@ DevInfo flash_device = {
 /*
  * Xilinx timer device
  */
-static void xilinx_timer_probe(void *fdt, int node)
+static void xilinx_timer_probe(void *fdt, const char *node_path)
 {
-    uint32_t timer_addr = fdt_get_int_from_array(fdt, node, "reg", 0);
-    uint32_t timer_irq = fdt_get_int_from_array(fdt, node, "interrupts", 0);
+    Error *errp = NULL;
+     
+    uint32_t timer_addr = qemu_devtree_getprop_cell(fdt, node_path, "reg", 0, 0, &errp);
+    uint32_t timer_irq = qemu_devtree_getprop_cell(fdt, node_path, "interrupts", 0, 0, &errp);
 
     printf("  TIMER BASE %08X IRQ %d\n", timer_addr, timer_irq);
 
@@ -250,10 +223,12 @@ DevInfo xilinx_timer_device = {
 /*
  * Xilinx uartlite device
  */
-static void xilinx_uartlite_probe(void *fdt, int node)
+static void xilinx_uartlite_probe(void *fdt, const char *node_path)
 {
-    uint32_t uart_addr = fdt_get_int_from_array(fdt, node, "reg", 0);
-    uint32_t uart_irq = fdt_get_int_from_array(fdt, node, "interrupts", 0);
+    Error *errp = NULL;
+     
+    uint32_t uart_addr = qemu_devtree_getprop_cell(fdt, node_path, "reg", 0, 0, &errp);
+    uint32_t uart_irq = qemu_devtree_getprop_cell(fdt, node_path, "interrupts", 0, 0, &errp);
 
     printf("  UART BASE %08X IRQ %d\n", uart_addr, uart_irq);
 
@@ -269,10 +244,12 @@ DevInfo xilinx_uartlite_device = {
 /*
  * Xilinx ethernetlite device
  */
-static void xilinx_ethlite_probe(void *fdt, int node)
+static void xilinx_ethlite_probe(void *fdt, const char *node_path)
 {
-    uint32_t eth_addr = fdt_get_int_from_array(fdt, node, "reg", 0);
-    uint32_t eth_irq = fdt_get_int_from_array(fdt, node, "interrupts", 0);
+    Error *errp = NULL;
+     
+    uint32_t eth_addr = qemu_devtree_getprop_cell(fdt, node_path, "reg", 0, 0, &errp);
+    uint32_t eth_irq = qemu_devtree_getprop_cell(fdt, node_path, "interrupts", 0, 0, &errp);
 
     xilinx_ethlite_create(&nd_table[++eth_dev_index], eth_addr,
                           irq[eth_irq], 0, 0);
@@ -287,15 +264,14 @@ DevInfo xilinx_ethlite_device = {
 /*
  * LabX audio packetizer device
  */
-static void labx_audio_packetizer_probe(void *fdt, int node)
+static void labx_audio_packetizer_probe(void *fdt, const char *node_path)
 {
-    uint32_t packetizer_addr = fdt_get_int_from_array(fdt, node, "reg", 0);
-    uint32_t packetizer_irq =
-        fdt_get_int_from_array(fdt, node, "interrupts", 0);
-    uint32_t clock_domains =
-        fdt_get_int_from_array(fdt, node, "xlnx,num-clock-domains", 0);
-    uint32_t cache_words =
-        fdt_get_int_from_array(fdt, node, "xlnx,cache-data-words", 0);
+    Error *errp = NULL;
+     
+    uint32_t packetizer_addr = qemu_devtree_getprop_cell(fdt, node_path, "reg", 0, 0, &errp);
+    uint32_t packetizer_irq = qemu_devtree_getprop_cell(fdt, node_path, "interrupts", 0, 0, &errp);
+    uint32_t clock_domains = qemu_devtree_getprop_cell(fdt, node_path, "xlnx,num-clock-domains", 0, 0, &errp);
+    uint32_t cache_words = qemu_devtree_getprop_cell(fdt, node_path, "xlnx,cache-data-words", 0, 0, &errp);
 
     labx_audio_packetizer_create(packetizer_addr, irq[packetizer_irq],
                                  clock_domains, cache_words);
@@ -310,19 +286,18 @@ DevInfo labx_audio_packetizer_device = {
 /*
  * LabX audio depacketizer device
  */
-static void labx_audio_depacketizer_probe(void *fdt, int node)
+static void labx_audio_depacketizer_probe(void *fdt, const char *node_path)
 {
-    uint32_t depacketizer_addr = fdt_get_int_from_array(fdt, node, "reg", 0);
-    uint32_t depacketizer_irq =
-        fdt_get_int_from_array(fdt, node, "interrupts", 0);
-    uint32_t clock_domains =
-        fdt_get_int_from_array(fdt, node, "xlnx,num-clock-domains", 0);
-    uint32_t cache_words =
-        fdt_get_int_from_array(fdt, node, "xlnx,cache-data-words", 0);
+    Error *errp = NULL;
+     
+    uint32_t depacketizer_addr = qemu_devtree_getprop_cell(fdt, node_path, "reg", 0, 0, &errp);
+    uint32_t depacketizer_irq = qemu_devtree_getprop_cell(fdt, node_path, "interrupts", 0, 0, &errp);
+    uint32_t clock_domains = qemu_devtree_getprop_cell(fdt, node_path, "xlnx,num-clock-domains", 0, 0, &errp);
+    uint32_t cache_words = qemu_devtree_getprop_cell(fdt, node_path, "xlnx,cache-data-words", 0, 0, &errp);
 
     int ifLen;
     const void *ifType =
-        qemu_devtree_getprop_offset(fdt, node, "xlnx,interface-type", &ifLen);
+        qemu_devtree_getprop(fdt, node_path, "xlnx,interface-type", &ifLen, 0, &errp);
     int hasDMA = (0 != strncmp("CACHE_RAM", (const char *)ifType, ifLen));
 
     labx_audio_depacketizer_create(depacketizer_addr, irq[depacketizer_irq],
@@ -342,9 +317,11 @@ DevInfo labx_audio_depacketizer_device = {
 /*
  * LabX dma device
  */
-static void labx_dma_probe(void *fdt, int node)
+static void labx_dma_probe(void *fdt, const char *node_path)
 {
-    uint32_t dma_addr = fdt_get_int_from_array(fdt, node, "reg", 0);
+    Error *errp = NULL;
+     
+    uint32_t dma_addr = qemu_devtree_getprop_cell(fdt, node_path, "reg", 0, 0, &errp);
 
     labx_dma_create(dma_addr, 1024);
 }
@@ -363,15 +340,14 @@ DevInfo labx_dma_device = {
 /*
  * LabX ethernet device
  */
-static void labx_ethernet_probe(void *fdt, int node)
+static void labx_ethernet_probe(void *fdt, const char *node_path)
 {
-    uint32_t ethernet_addr = fdt_get_int_from_array(fdt, node, "reg", 0);
-    uint32_t host_irq =
-        fdt_get_int_from_array(fdt, node, "interrupts", 0);
-    uint32_t fifo_irq =
-        fdt_get_int_from_array(fdt, node, "interrupts", 2);
-    uint32_t phy_irq =
-        fdt_get_int_from_array(fdt, node, "interrupts", 4);
+    Error *errp = NULL;
+     
+    uint32_t ethernet_addr = qemu_devtree_getprop_cell(fdt, node_path, "reg", 0, 0, &errp);
+    uint32_t host_irq = qemu_devtree_getprop_cell(fdt, node_path, "interrupts", 0, 0, &errp);
+    uint32_t fifo_irq = qemu_devtree_getprop_cell(fdt, node_path, "interrupts", 2, 0, &errp);
+    uint32_t phy_irq = qemu_devtree_getprop_cell(fdt, node_path, "interrupts", 4, 0, &errp);
 
     labx_ethernet_create(&nd_table[++eth_dev_index], ethernet_addr,
                          irq[host_irq], irq[fifo_irq], irq[phy_irq]);
@@ -386,9 +362,11 @@ DevInfo labx_ethernet_device = {
 /*
  * LabX ptp device
  */
-static void labx_ptp_probe(void *fdt, int node)
+static void labx_ptp_probe(void *fdt, const char *node_path)
 {
-    uint32_t ptp_addr = fdt_get_int_from_array(fdt, node, "reg", 0);
+    Error *errp = NULL;
+     
+    uint32_t ptp_addr = qemu_devtree_getprop_cell(fdt, node_path, "reg", 0, 0, &errp);
 
     labx_ptp_create(ptp_addr);
 }
@@ -416,19 +394,19 @@ DevInfo *devices[] = {
     NULL
 };
 
-static int plb_device_probe(void *fdt, int node, int pass)
+static int plb_device_probe(void *fdt, const char *node_path, int pass)
 {
     DevInfo **dev = &(devices[0]);
 
     while (*dev) {
         const char **compat = &((*dev)->compat[0]);
         while (*compat) {
-            if (0 == qemu_devtree_node_check_compatible(fdt, node, *compat)) {
+            if (0 == fdt_node_check_compatible(fdt, fdt_path_offset(fdt, node_path), *compat)) {
                 if (pass == (*dev)->pass) {
                     printf("Adding a device for node %s\n",
-                           qemu_devtree_get_name(fdt, node, NULL));
+                           fdt_get_name(fdt, fdt_path_offset(fdt, node_path), NULL));
 
-                    (*dev)->probe(fdt, node);
+                    (*dev)->probe(fdt, node_path);
                     return 0;
                 }
 
@@ -449,25 +427,20 @@ static int plb_device_probe(void *fdt, int node, int pass)
 
 static void plb_bus_probe(void *fdt)
 {
-    int root = qemu_devtree_node_offset(fdt, "/");
-    int plb = qemu_devtree_subnode_offset_namelen(fdt, root, "plb", 3);
-    if (plb > 0) {
+    int num_children = qemu_devtree_get_num_children(fdt, "/plb", 1);
+    char **children = qemu_devtree_get_children(fdt, "/plb", 1);
+
+    if (num_children > 0) {
         /* Do multiple passes through the devices. Some have dependencies
            on others being first */
         int pass = 0;
         int again = 0;
         do {
-            int child = plb;
+            int child = 0;
             again = 0;
             do {
-                child = qemu_devtree_next_child_offset(fdt, plb, child);
-                if (child < 0) {
-                    break;
-                }
-
-                again |= plb_device_probe(fdt, child, pass);
-
-            } while (1);
+                again |= plb_device_probe(fdt, children[child++], pass);
+            } while (child < num_children);
 
             pass++;
 

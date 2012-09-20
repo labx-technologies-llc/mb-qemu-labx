@@ -35,10 +35,11 @@
 
 static struct
 {
-    void (*machine_cpu_reset)(MicroBlazeCPU *);
+    void (*machine_cpu_reset)(MicroBlazeCPU *, void *);
     uint32_t bootstrap_pc;
     uint32_t cmdline;
     uint32_t fdt;
+    void *opaque;
 } boot_info;
 
 static void main_cpu_reset(void *opaque)
@@ -51,7 +52,7 @@ static void main_cpu_reset(void *opaque)
     env->regs[7] = boot_info.fdt;
     env->sregs[SR_PC] = boot_info.bootstrap_pc;
     if (boot_info.machine_cpu_reset) {
-        boot_info.machine_cpu_reset(cpu);
+        boot_info.machine_cpu_reset(cpu, boot_info.opaque);
     }
 }
 
@@ -102,7 +103,8 @@ static uint64_t translate_kernel_address(void *opaque, uint64_t addr)
 
 void microblaze_load_kernel(MicroBlazeCPU *cpu, target_phys_addr_t ddr_base,
                             uint32_t ramsize, const char *dtb_filename,
-                            void (*machine_cpu_reset)(MicroBlazeCPU *))
+                            void (*machine_cpu_reset)(MicroBlazeCPU *, void *),
+			    void *opaque)
 {
     QemuOpts *machine_opts;
     const char *kernel_filename = NULL;
@@ -122,6 +124,7 @@ void microblaze_load_kernel(MicroBlazeCPU *cpu, target_phys_addr_t ddr_base,
     }
 
     boot_info.machine_cpu_reset = machine_cpu_reset;
+    boot_info.opaque = opaque;
     qemu_register_reset(main_cpu_reset, cpu);
 
     if (kernel_filename) {
