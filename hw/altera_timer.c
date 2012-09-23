@@ -164,20 +164,22 @@ static int altera_timer_init(SysBusDevice *dev)
 {
     AlteraTimer *t = FROM_SYSBUS(typeof(*t), dev);
 
+    assert(t->freq_hz != 0);
+
     sysbus_init_irq(dev, &t->irq);
 
     t->bh = qemu_bh_new(timer_hit, t);
     t->ptimer = ptimer_init(t->bh);
     ptimer_set_freq(t->ptimer, t->freq_hz);
 
-    memory_region_init_io(&t->mmio, &timer_ops, t, "altera,timer",
+    memory_region_init_io(&t->mmio, &timer_ops, t, "ALTR.timer",
                           R_MAX * sizeof(uint32_t));
     sysbus_init_mmio(dev, &t->mmio);
     return 0;
 }
 
 static Property altera_timer_properties[] = {
-    DEFINE_PROP_UINT32("frequency", AlteraTimer, freq_hz, 0),
+    DEFINE_PROP_UINT32("clock-frequency", AlteraTimer, freq_hz, 0),
     DEFINE_PROP_END_OF_LIST(),
 };
 
@@ -191,7 +193,7 @@ static void altera_timer_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo altera_timer_info = {
-    .name          = "altera,timer",
+    .name          = "ALTR.timer",
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(AlteraTimer),
     .class_init    = altera_timer_class_init,

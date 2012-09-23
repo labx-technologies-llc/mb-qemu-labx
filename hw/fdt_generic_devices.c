@@ -3,6 +3,7 @@
 #include "flash.h"
 #include "pc.h"
 #include "exec-memory.h"
+#include "loader.h"
 
 #include "fdt_generic_util.h"
 #include "fdt_generic_devices.h"
@@ -28,6 +29,7 @@ int pflash_cfi01_fdt_init(char *node_path, FDTMachineInfo *fdti, void *opaque)
 
     flash_base = qemu_devtree_getprop_cell(fdti->fdt, node_path, "reg", 0,
                                                 false, &errp);
+    flash_base += fdt_get_parent_base(node_path, fdti);
     flash_size = qemu_devtree_getprop_cell(fdti->fdt, node_path, "reg", 1,
                                                 false, &errp);
     bank_width = qemu_devtree_getprop_cell(fdti->fdt, node_path, "bank-width",
@@ -42,6 +44,10 @@ int pflash_cfi01_fdt_init(char *node_path, FDTMachineInfo *fdti, void *opaque)
                             dinfo ? dinfo->bdrv : NULL, FLASH_SECTOR_SIZE,
                             flash_size/FLASH_SECTOR_SIZE,
                             bank_width, 0x89, 0x18, 0x0000, 0x0, be);
+
+    printf("-- loaded %d bytes to %08X\n",
+           load_image_targphys(qemu_devtree_get_node_name(fdti->fdt, node_path),
+                               flash_base, flash_size), flash_base);
     return 0;
 }
 

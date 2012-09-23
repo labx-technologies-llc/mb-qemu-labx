@@ -45,7 +45,7 @@ typedef struct Depacketizer {
     uint32_t microcodeWords;
     uint32_t maxStreamSlots;
     uint32_t maxStreams;
-    uint32_t hasDMA;
+    char    *interfaceType;
     uint32_t matchArch;
 
     /* IRQ */
@@ -59,7 +59,7 @@ typedef struct Depacketizer {
     /* Clock domain information */
     ClockDomainInfo *clockDomainInfo;
 
-    /* Attached DMA (if hasDMA > 0) */
+    /* Attached DMA (if interfaceType != CACHE_RAM) */
     DeviceState *dma;
 } Depacketizer;
 
@@ -343,13 +343,13 @@ static int labx_audio_depacketizer_init(SysBusDevice *dev)
 
     /* Set up memory regions */
     memory_region_init_io(&p->mmio_depacketizer, &depacketizer_regs_ops, p,
-                          "labx,audio-depacketizer-regs",
+                          "labx.audio-depacketizer-regs",
                           0x100 * 4);
     memory_region_init_io(&p->mmio_clock_domain, &clock_domain_regs_ops, p,
-                          "labx,audio-depacketizer-cd-regs",
+                          "labx.audio-depacketizer-cd-regs",
                           0x10 * 4 * p->clockDomains);
     memory_region_init_io(&p->mmio_microcode,    &microcode_ram_ops,     p,
-                          "labx,audio-depacketizer-microcode",
+                          "labx.audio-depacketizer-microcode",
                           4 * p->microcodeWords);
 
     sysbus_init_mmio(dev, &p->mmio_depacketizer);
@@ -362,7 +362,7 @@ static int labx_audio_depacketizer_init(SysBusDevice *dev)
     sysbus_mmio_map(dev, 2, p->baseAddress +
                             (2 << (min_bits(p->microcodeWords-1)+2)));
 
-    if (p->hasDMA) {
+    if (!p->interfaceType || strcmp(p->interfaceType, "CACHE_RAM")) {
         p->dma = labx_dma_create(p->baseAddress +
                                  (4 << (min_bits(p->microcodeWords-1)+2)),
                                  1024);
@@ -372,15 +372,15 @@ static int labx_audio_depacketizer_init(SysBusDevice *dev)
 }
 
 static Property labx_audio_depacketizer_properties[] = {
-    DEFINE_PROP_UINT32("baseAddress",    Depacketizer, baseAddress,    0),
-    DEFINE_PROP_UINT32("clockDomains",   Depacketizer, clockDomains,   1),
-    DEFINE_PROP_UINT32("cacheDataWords", Depacketizer, cacheDataWords, 1024),
-    DEFINE_PROP_UINT32("paramWords",     Depacketizer, paramWords,     1024),
-    DEFINE_PROP_UINT32("microcodeWords", Depacketizer, microcodeWords, 1024),
-    DEFINE_PROP_UINT32("maxStreamSlots", Depacketizer, maxStreamSlots, 32),
-    DEFINE_PROP_UINT32("maxStreams",     Depacketizer, maxStreams,     128),
-    DEFINE_PROP_UINT32("hasDMA",         Depacketizer, hasDMA,         1),
-    DEFINE_PROP_UINT32("matchArch",      Depacketizer, matchArch,      255),
+    DEFINE_PROP_UINT32("reg",               Depacketizer, baseAddress,    0),
+    DEFINE_PROP_UINT32("num-clock-domains", Depacketizer, clockDomains,   1),
+    DEFINE_PROP_UINT32("cache-data-words",  Depacketizer, cacheDataWords, 1024),
+    DEFINE_PROP_UINT32("param-words",       Depacketizer, paramWords,     1024),
+    DEFINE_PROP_UINT32("microcode-words",   Depacketizer, microcodeWords, 1024),
+    DEFINE_PROP_UINT32("max-stream-slots",  Depacketizer, maxStreamSlots, 32),
+    DEFINE_PROP_UINT32("max-streams",       Depacketizer, maxStreams,     128),
+    DEFINE_PROP_STRING("interface-type",    Depacketizer, interfaceType      ),
+    DEFINE_PROP_UINT32("match-arch",        Depacketizer, matchArch,      255),
     DEFINE_PROP_END_OF_LIST(),
 };
 
@@ -394,7 +394,14 @@ static void labx_audio_depacketizer_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo labx_audio_depacketizer_info = {
-    .name          = "labx,audio-depacketizer",
+    .name          = "labx.audio-depacketizer",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(Depacketizer),
+    .class_init    = labx_audio_depacketizer_class_init,
+};
+
+static const TypeInfo labx_audio_depacketizer_info2 = {
+    .name          = "xlnx.labx-audio-depacketizer",
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(Depacketizer),
     .class_init    = labx_audio_depacketizer_class_init,
@@ -403,6 +410,7 @@ static const TypeInfo labx_audio_depacketizer_info = {
 static void labx_audio_depacketizer_register(void)
 {
     type_register_static(&labx_audio_depacketizer_info);
+    type_register_static(&labx_audio_depacketizer_info2);
 }
 
 type_init(labx_audio_depacketizer_register)

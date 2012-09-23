@@ -161,7 +161,7 @@ static int altera_vic_init(SysBusDevice *dev)
 
     memset(pv->regs, 0, sizeof(uint32_t) * R_MAX);
     memory_region_init_io(&pv->mmio, &pic_ops, pv,
-                          "altera,vic", R_MAX * sizeof(uint32_t));
+                          "ALTR.vic", R_MAX * sizeof(uint32_t));
     sysbus_init_mmio(dev, &pv->mmio);
     return 0;
 }
@@ -180,7 +180,7 @@ static void altera_vic_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo altera_vic_info = {
-    .name          = "altera,vic",
+    .name          = "ALTR.vic",
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(AlteraVIC),
     .class_init    = altera_vic_class_init,

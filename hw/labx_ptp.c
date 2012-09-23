@@ -32,6 +32,7 @@
 
 typedef struct LabXPTP {
     SysBusDevice busdev;
+    qemu_irq irq;
 
     MemoryRegion  mmio_ptp;
     MemoryRegion  mmio_tx;
@@ -243,11 +244,11 @@ static int labx_ptp_init(SysBusDevice *dev)
     p->rxRam = g_malloc0(PTP_RAM_BYTES);
 
     /* Set up memory regions */
-    memory_region_init_io(&p->mmio_ptp, &ptp_regs_ops, p, "labx,ptp-regs",
+    memory_region_init_io(&p->mmio_ptp, &ptp_regs_ops, p, "labx.ptp-regs",
                           0x100 * 4);
-    memory_region_init_io(&p->mmio_tx,  &tx_ram_ops,   p, "labx,ptp-tx",
+    memory_region_init_io(&p->mmio_tx,  &tx_ram_ops,   p, "labx.ptp-tx",
                           PTP_RAM_BYTES);
-    memory_region_init_io(&p->mmio_rx,  &rx_ram_ops,   p, "labx,ptp-rx",
+    memory_region_init_io(&p->mmio_rx,  &rx_ram_ops,   p, "labx.ptp-rx",
                           PTP_RAM_BYTES);
 
     sysbus_init_mmio(dev, &p->mmio_ptp);
@@ -258,11 +259,13 @@ static int labx_ptp_init(SysBusDevice *dev)
     sysbus_mmio_map(dev, 1, p->baseAddress + (1 << min_bits(PTP_RAM_BYTES-1)));
     sysbus_mmio_map(dev, 2, p->baseAddress + (2 << min_bits(PTP_RAM_BYTES-1)));
 
+    sysbus_init_irq(dev, &p->irq);
+
     return 0;
 }
 
 static Property labx_ptp_properties[] = {
-    DEFINE_PROP_UINT32("baseAddress", LabXPTP, baseAddress, 0),
+    DEFINE_PROP_UINT32("reg", LabXPTP, baseAddress, 0),
     DEFINE_PROP_END_OF_LIST(),
 };
 
@@ -276,7 +279,14 @@ static void labx_ptp_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo labx_ptp_info = {
-    .name          = "labx,ptp",
+    .name          = "labx.labx_ptp",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(LabXPTP),
+    .class_init    = labx_ptp_class_init,
+};
+
+static const TypeInfo labx_ptp_info2 = {
+    .name          = "xlnx.labx-ptp",
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(LabXPTP),
     .class_init    = labx_ptp_class_init,
@@ -285,6 +295,7 @@ static const TypeInfo labx_ptp_info = {
 static void labx_ptp_register(void)
 {
     type_register_static(&labx_ptp_info);
+    type_register_static(&labx_ptp_info2);
 }
 
 type_init(labx_ptp_register)

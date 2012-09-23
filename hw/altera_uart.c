@@ -178,7 +178,7 @@ static int altera_uart_init(SysBusDevice *dev)
     sysbus_init_irq(dev, &s->irq);
 
     memory_region_init_io(&s->mmio, &uart_ops, s,
-                          "altera,uart", R_MAX * sizeof(uint32_t));
+                          "ALTR.uart", R_MAX * sizeof(uint32_t));
     sysbus_init_mmio(dev, &s->mmio);
 
     s->chr = qemu_char_get_next_serial();
@@ -203,7 +203,7 @@ static void altera_uart_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo altera_uart_info = {
-    .name          = "altera,uart",
+    .name          = "ALTR.uart",
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(AlteraUART),
     .class_init    = altera_uart_class_init,

@@ -324,16 +324,16 @@ static int labx_audio_packetizer_init(SysBusDevice *dev)
 
     /* Set up memory regions */
     memory_region_init_io(&p->mmio_packetizer,   &packetizer_regs_ops,   p,
-                          "labx,audio-packetizer-regs",
+                          "labx.audio-packetizer-regs",
                           0x100 * 4);
     memory_region_init_io(&p->mmio_clock_domain, &clock_domain_regs_ops, p,
-                          "labx,audio-packetizer-cd-regs",
+                          "labx.audio-packetizer-cd-regs",
                           2 * 4 * p->clockDomains);
     memory_region_init_io(&p->mmio_template,     &template_ram_ops,      p,
-                          "labx,audio-packetizer-template",
+                          "labx.audio-packetizer-template",
                           4 * p->templateWords);
     memory_region_init_io(&p->mmio_microcode,    &microcode_ram_ops,     p,
-                          "labx,audio-packetizer-microcode",
+                          "labx.audio-packetizer-microcode",
                           4 * p->microcodeWords);
 
     sysbus_init_mmio(dev, &p->mmio_packetizer);
@@ -353,21 +353,21 @@ static int labx_audio_packetizer_init(SysBusDevice *dev)
 }
 
 static Property labx_audio_packetizer_properties[] = {
-    DEFINE_PROP_UINT32("baseAddress",        Packetizer, baseAddress,
+    DEFINE_PROP_UINT32("reg",                  Packetizer, baseAddress,
                        0),
-    DEFINE_PROP_UINT32("clockDomains",       Packetizer, clockDomains,
+    DEFINE_PROP_UINT32("num-clock-domains",    Packetizer, clockDomains,
                        1),
-    DEFINE_PROP_UINT32("cacheDataWords",     Packetizer, cacheDataWords,
+    DEFINE_PROP_UINT32("cache-data-words",     Packetizer, cacheDataWords,
                        1024),
-    DEFINE_PROP_UINT32("templateWords",      Packetizer, templateWords,
+    DEFINE_PROP_UINT32("template-words",       Packetizer, templateWords,
                        1024),
-    DEFINE_PROP_UINT32("microcodeWords",     Packetizer, microcodeWords,
+    DEFINE_PROP_UINT32("microcode-words",      Packetizer, microcodeWords,
                        1024),
-    DEFINE_PROP_UINT32("shaperFractionBits", Packetizer, shaperFractionBits,
+    DEFINE_PROP_UINT32("shaper-fraction-bits", Packetizer, shaperFractionBits,
                        16),
-    DEFINE_PROP_UINT32("maxStreamSlots",     Packetizer, maxStreamSlots,
+    DEFINE_PROP_UINT32("max-stream-slots",     Packetizer, maxStreamSlots,
                        32),
-    DEFINE_PROP_UINT32("dualOutput",         Packetizer, dualOutput,
+    DEFINE_PROP_UINT32("dual-output",          Packetizer, dualOutput,
                        1),
     DEFINE_PROP_END_OF_LIST(),
 };
@@ -382,7 +382,14 @@ static void labx_audio_packetizer_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo labx_audio_packetizer_info = {
-    .name          = "labx,audio-packetizer",
+    .name          = "labx.audio-packetizer",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(Packetizer),
+    .class_init    = labx_audio_packetizer_class_init,
+};
+
+static const TypeInfo labx_audio_packetizer_info2 = {
+    .name          = "xlnx.labx-audio-packetizer",
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(Packetizer),
     .class_init    = labx_audio_packetizer_class_init,
@@ -391,6 +398,7 @@ static const TypeInfo labx_audio_packetizer_info = {
 static void labx_audio_packetizer_register(void)
 {
     type_register_static(&labx_audio_packetizer_info);
+    type_register_static(&labx_audio_packetizer_info2);
 }
 
 type_init(labx_audio_packetizer_register)

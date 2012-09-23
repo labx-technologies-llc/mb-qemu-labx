@@ -28,18 +28,22 @@
 #include "boards.h"
 #include "device_tree.h"
 #include "nios2.h"
-#include "altera.h"
-#include "labx_devices.h"
 #include "loader.h"
 #include "elf.h"
 #include "blockdev.h"
 #include "exec-memory.h"
 
+#include "fdt_generic.h"
+#include "fdt_generic_devices.h"
+#include "fdt_generic_util.h"
+
 #include <libfdt.h>
 
 #define LMB_BRAM_SIZE  (128 * 1024)
 
-static int sopc_device_probe(void *fdt, const char *node_path, int pass, uint32_t offset);
+static int endian; /* Always little endian */
+
+static int sopc_device_probe(FDTMachineInfo *fdti, const char *node_path, int pass, uint32_t offset);
 
 static struct {
     uint32_t bootstrap_pc;
@@ -47,9 +51,6 @@ static struct {
     uint32_t initrd;
     uint32_t fdt;
 } boot_info;
-
-/* Current ethernet device index for multiple network interfaces */
-static int eth_dev_index = -1;
 
 static void main_cpu_reset(void *opaque)
 {
@@ -131,7 +132,7 @@ static ram_addr_t get_dram_base(void *fdt)
     return qemu_devtree_getprop_cell(fdt, "/memory", "reg", 0, 0, &errp);
 }
 
-typedef void (*device_init_func_t)(void *fdt, const char *node_path, uint32_t offset);
+typedef void (*device_init_func_t)(FDTMachineInfo *fdti, const char *node_path, uint32_t offset);
 
 typedef struct DevInfo {
     device_init_func_t probe;
@@ -143,12 +144,10 @@ typedef struct DevInfo {
 /*
  * Interrupt controller device
  */
-static qemu_irq irq[32] = {};
-static qemu_irq *cpu_irq;
 
-static void cpu_probe(void *fdt, const char *node_path, uint32_t offset)
+static void cpu_probe(FDTMachineInfo *fdti, const char *node_path, uint32_t offset)
 {
-    int i;
+    //int i;
     DeviceState *dev;
     Error *errp = NULL;
 
@@ -168,12 +167,12 @@ static void cpu_probe(void *fdt, const char *node_path, uint32_t offset)
 
     printf("  IRQ BASE %08X NIRQS %d\n", irq_addr, nrIrqs);
 
-    cpu_irq = nios2_pic_init_cpu(env);
-    dev = altera_vic_create(irq_addr, cpu_irq[0], 2);
+    fdti->irq_base = nios2_pic_init_cpu(env);
+    dev = altera_vic_create(irq_addr, fdti->irq_base[0], 2);
 #else
     /* Internal interrupt controller (IIC) */
-    cpu_irq = nios2_pic_init_cpu(cpu);
-    dev = altera_iic_create(cpu, cpu_irq[0], 2);
+    fdti->irq_base = nios2_pic_init_cpu(cpu);
+    dev = altera_iic_create(cpu, fdti->irq_base[0], 2);
 #endif
 
     /* TODO: use the entrypoint of the passed in elf file or
@@ -186,16 +185,14 @@ static void cpu_probe(void *fdt, const char *node_path, uint32_t offset)
 #endif
 
     cpu->env.exception_addr =
-        qemu_devtree_getprop_cell(fdt, node_path, "ALTR,exception-addr", 0, 0, &errp);
+        qemu_devtree_getprop_cell(fdti->fdt, node_path, "ALTR,exception-addr", 0, 0, &errp);
     cpu->env.fast_tlb_miss_addr =
-        qemu_devtree_getprop_cell(fdt, node_path, "ALTR,fast-tlb-miss-addr", 0, 0, &errp);
+        qemu_devtree_getprop_cell(fdti->fdt, node_path, "ALTR,fast-tlb-miss-addr", 0, 0, &errp);
 
     /* reset again to use the new reset vector */
     cpu_reset(CPU(cpu));
 
-    for (i = 0; i < 32; i++) {
-        irq[i] = qdev_get_gpio_in(dev, i);
-    }
+    fdt_init_set_opaque(fdti, node_path, dev);
 }
 
 DevInfo cpu_device = {
@@ -210,266 +207,26 @@ DevInfo cpu_device = {
 };
 
 /*
- * Flash device
- */
-static void flash_probe(void *fdt, const char *node_path, uint32_t offset)
-{
-    Error *errp = NULL;
-
-    uint32_t flash_addr = qemu_devtree_getprop_cell(fdt, node_path, "reg", 0, 0, &errp) + offset;
-    uint32_t flash_size = qemu_devtree_getprop_cell(fdt, node_path, "reg", 1, 0, &errp);
-
-    DriveInfo *dinfo = drive_get(IF_PFLASH, 0, 0);
-    pflash_cfi01_register(flash_addr, NULL,
-                          qemu_devtree_get_node_name(fdt, node_path), flash_size,
-                          dinfo ? dinfo->bdrv : NULL, (64 * 1024),
-                          flash_size >> 16,
-                          1, 0x89, 0x18, 0x0000, 0x0, 0);
-    printf("-- loaded %d bytes to %08X\n",
-           load_image_targphys(qemu_devtree_get_node_name(fdt, node_path),
-                               flash_addr, flash_size), flash_addr);
-}
-
-DevInfo flash_device = {
-    .probe = &flash_probe,
-    .pass = 1,
-    .compat = (const char * []) { "cfi-flash", NULL }
-};
-
-/*
- * LabX audio packetizer device
- */
-static void labx_audio_packetizer_probe(void *fdt, const char *node_path, uint32_t offset)
-{
-    Error *errp = NULL;
-
-    uint32_t packetizer_addr = qemu_devtree_getprop_cell(fdt, node_path, "reg", 0, 0, &errp) +
-                               offset;
-    uint32_t packetizer_irq =
-        qemu_devtree_getprop_cell(fdt, node_path, "interrupts", 0, 0, &errp);
-    uint32_t clock_domains =
-        qemu_devtree_getprop_cell(fdt, node_path, "labx,num-clock-domains", 0, 0, &errp);
-    uint32_t cache_words =
-        qemu_devtree_getprop_cell(fdt, node_path, "labx,cache-data-words", 0, 0, &errp);
-
-    labx_audio_packetizer_create(packetizer_addr, irq[packetizer_irq],
-                                 clock_domains, cache_words);
-}
-
-DevInfo labx_audio_packetizer_device = {
-    .probe = &labx_audio_packetizer_probe,
-    .pass = 1,
-    .compat = (const char * []) { "labx,labx_audio_packetizer-1.0", NULL }
-};
-
-/*
- * LabX audio depacketizer device
- */
-static void labx_audio_depacketizer_probe(void *fdt, const char *node_path, uint32_t offset)
-{
-    Error *errp = NULL;
-
-    uint32_t depacketizer_addr = qemu_devtree_getprop_cell(fdt, node_path, "reg", 0, 0, &errp) +
-                                 offset;
-    uint32_t depacketizer_irq =
-        qemu_devtree_getprop_cell(fdt, node_path, "interrupts", 0, 0, &errp);
-    uint32_t clock_domains =
-        qemu_devtree_getprop_cell(fdt, node_path, "labx,num-clock-domains", 0, 0, &errp);
-    uint32_t cache_words =
-        qemu_devtree_getprop_cell(fdt, node_path, "labx,cache-data-words", 0, 0, &errp);
-
-    int ifLen;
-    const void *ifType =
-        qemu_devtree_getprop(fdt, node_path, "labx,interface-type", &ifLen, 0, &errp);
-    int hasDMA = (0 != strncmp("CACHE_RAM", (const char *)ifType, ifLen));
-
-    labx_audio_depacketizer_create(depacketizer_addr, irq[depacketizer_irq],
-                                   clock_domains, cache_words, hasDMA);
-}
-
-DevInfo labx_audio_depacketizer_device = {
-    .probe = &labx_audio_depacketizer_probe,
-    .pass = 1,
-    .compat = (const char * []) {
-        "labx,labx-audio-depacketizer-1.00.a",
-        "labx,labx-audio-depacketizer-1.01.a",
-        NULL
-    }
-};
-
-/*
- * LabX dma device
- */
-static void labx_dma_probe(void *fdt, const char *node_path, uint32_t offset)
-{
-    Error *errp = NULL;
-
-    uint32_t dma_addr = qemu_devtree_getprop_cell(fdt, node_path, "reg", 0, 0, &errp) + offset;
-
-    labx_dma_create(dma_addr, 1024);
-}
-
-DevInfo labx_dma_device = {
-    .probe = &labx_dma_probe,
-    .pass = 1,
-    .compat = (const char * []) { "labx,labx_dma-1.0", NULL }
-};
-
-/*
- * LabX ethernet device
- */
-static void labx_ethernet_probe(void *fdt, const char *node_path, uint32_t offset)
-{
-    Error *errp = NULL;
-
-    uint32_t ethernet_addr = qemu_devtree_getprop_cell(fdt, node_path, "reg", 0, 0, &errp) +
-                             offset;
-    uint32_t host_irq =
-        qemu_devtree_getprop_cell(fdt, node_path, "interrupts", 0, 0, &errp);
-    uint32_t fifo_irq = 0; /*
-        qemu_devtree_getprop_cell(fdt, node_path, "interrupts", 2, 0, &errp); */
-    uint32_t phy_irq = 0; /*
-        qemu_devtree_getprop_cell(fdt, node_path, "interrupts", 4, 0, &errp); */
-
-    labx_ethernet_create(&nd_table[++eth_dev_index], ethernet_addr,
-                         irq[host_irq], irq[fifo_irq], irq[phy_irq]);
-}
-
-DevInfo labx_ethernet_device = {
-    .probe = &labx_ethernet_probe,
-    .pass = 1,
-    .compat = (const char * []) { "labx,labx_ethernet-1.0", NULL }
-};
-
-/*
- * LabX ptp device
- */
-static void labx_ptp_probe(void *fdt, const char *node_path, uint32_t offset)
-{
-    Error *errp = NULL;
-
-    uint32_t ptp_addr = qemu_devtree_getprop_cell(fdt, node_path, "reg", 0, 0, &errp) + offset;
-
-    labx_ptp_create(ptp_addr);
-}
-
-DevInfo labx_ptp_device = {
-    .probe = &labx_ptp_probe,
-    .pass = 1,
-    .compat = (const char * []) { "labx,labx_ptp-1.0", NULL }
-};
-
-/*
- * Altera uart device
- */
-static void altera_uart_probe(void *fdt, const char *node_path, uint32_t offset)
-{
-    Error *errp = NULL;
-
-    uint32_t uart_addr = qemu_devtree_getprop_cell(fdt, node_path, "reg", 0, 0, &errp) + offset;
-    uint32_t uart_irq = qemu_devtree_getprop_cell(fdt, node_path, "interrupts", 0, 0, &errp);
-
-    printf("  UART BASE %08X IRQ %d\n", uart_addr, uart_irq);
-
-    sysbus_create_simple("altera,uart", uart_addr, irq[uart_irq]);
-}
-
-DevInfo altera_uart_device = {
-    .probe = &altera_uart_probe,
-    .pass = 1,
-    .compat = (const char * []) { "ALTR,uart-1.0", NULL }
-};
-
-/*
- * Altera timer device
- */
-static void altera_timer_probe(void *fdt, const char *node_path, uint32_t offset)
-{
-    Error *errp = NULL;
-
-    uint32_t timer_addr = qemu_devtree_getprop_cell(fdt, node_path, "reg", 0, 0, &errp) + offset;
-    uint32_t timer_irq = qemu_devtree_getprop_cell(fdt, node_path, "interrupts", 0, 0, &errp);
-    uint32_t timer_freq =
-        qemu_devtree_getprop_cell(fdt, node_path, "clock-frequency", 0, 0, &errp);
-
-    printf("  TIMER BASE %08X IRQ %d FREQUENCY %d\n",
-           timer_addr, timer_irq, timer_freq);
-
-    altera_timer_create(timer_addr, irq[timer_irq], timer_freq);
-}
-
-DevInfo altera_timer_device = {
-    .probe = &altera_timer_probe,
-    .pass = 1,
-    .compat = (const char * []) { "ALTR,timer-1.0", NULL }
-};
-
-/*
- * Altera clock domain crossing bridge
- */
-static void altera_bridge_probe(void *fdt, const char *node_path, uint32_t offset)
-{
-    Error *errp = NULL;
-
-    uint32_t bridge_addr = qemu_devtree_getprop_cell(fdt, node_path, "reg", 0, 0, &errp) + offset;
-
-    printf("  BRIDGE %08X\n", bridge_addr);
-
-    /* Do multiple passes through the devices. Some have dependencies
-       on others being first */
-    int num_children = qemu_devtree_get_num_children(fdt, node_path, 1);
-    char **children = qemu_devtree_get_children(fdt, node_path, 1);
-
-    int pass = 0;
-    int again = 0;
-    int i = 0;
-    do {
-        again = 0;
-        for (i = 0; i < num_children; i++) {
-            again |= sopc_device_probe(fdt, children[i], pass, bridge_addr);
-        }
-
-        pass++;
-
-    } while (again);
-}
-
-DevInfo altera_bridge_device = {
-    .probe = &altera_bridge_probe,
-    .pass = 1,
-    .compat = (const char * []) { "simple-bus", NULL }
-};
-
-/*
  * Table of available devices
  */
 DevInfo *devices[] = {
     &cpu_device,
-    &flash_device,
-    &labx_audio_packetizer_device,
-    &labx_audio_depacketizer_device,
-    &labx_dma_device,
-    &labx_ethernet_device,
-    &labx_ptp_device,
-    &altera_uart_device,
-    &altera_timer_device,
-    &altera_bridge_device,
     NULL
 };
 
-static int sopc_device_probe(void *fdt, const char *node_path, int pass, uint32_t offset)
+static int sopc_device_probe(FDTMachineInfo *fdti, const char *node_path, int pass, uint32_t offset)
 {
     DevInfo **dev = &(devices[0]);
 
     while (*dev) {
         const char **compat = &((*dev)->compat[0]);
         while (*compat) {
-            if (0 == fdt_node_check_compatible(fdt, fdt_path_offset(fdt, node_path), *compat)) {
+            if (0 == fdt_node_check_compatible(fdti->fdt, fdt_path_offset(fdti->fdt, node_path), *compat)) {
                 if (pass == (*dev)->pass) {
                     printf("Adding a device for node %s\n",
-                           fdt_get_name(fdt, fdt_path_offset(fdt, node_path), NULL));
+                           fdt_get_name(fdti->fdt, fdt_path_offset(fdti->fdt, node_path), NULL));
 
-                    (*dev)->probe(fdt, node_path, offset);
+                    (*dev)->probe(fdti, node_path, offset);
                     return 0;
                 }
 
@@ -488,38 +245,19 @@ static int sopc_device_probe(void *fdt, const char *node_path, int pass, uint32_
     return 0;
 }
 
-static void cpus_probe(void *fdt)
+static int cpus_probe(char *node_path, FDTMachineInfo *fdti, void *opaque)
 {
-    int num_children = qemu_devtree_get_num_children(fdt, "/cpus", 1);
-    char **children = qemu_devtree_get_children(fdt, "/cpus", 1);
+    int num_children = qemu_devtree_get_num_children(fdti->fdt, "/cpus", 1);
+    char **children = qemu_devtree_get_children(fdti->fdt, "/cpus", 1);
     int i;
 
     for (i = 0; i < num_children; i++) {
-        sopc_device_probe(fdt, children[i], 0, 0xE0000000);
+        sopc_device_probe(fdti, children[i], 0, 0xE0000000);
     }
-}
 
-static void sopc_bus_probe(void *fdt)
-{
-    int num_children = qemu_devtree_get_num_children(fdt, "/sopc", 1);
-    char **children = qemu_devtree_get_children(fdt, "/sopc", 1);
+    fdti->sysbus_base = 0xE0000000;
 
-    if (num_children > 0) {
-        /* Do multiple passes through the devices. Some have dependencies
-           on others being first */
-        int pass = 0;
-        int again = 0;
-        do {
-            int child = 0;
-            again = 0;
-            do {
-                again |= sopc_device_probe(fdt, children[child++], pass, 0xE0000000);
-            } while (child < num_children);
-
-            pass++;
-
-        } while (again);
-    }
+    return 0;
 }
 
 static void
@@ -555,10 +293,10 @@ labx_nios2_init(ram_addr_t ram_size,
                                 phys_ram_alias);
 
     /* Create cpus listed in the device-tree */
-    cpus_probe(fdt);
+    add_to_force_table(cpus_probe, "cpu-probe", NULL);
 
     /* Create other devices listed in the device-tree */
-    sopc_bus_probe(fdt);
+    fdt_init_destroy_fdti(fdt_generic_create_machine(fdt, NULL));
 
     if (kernel_filename) {
         uint64_t entry = 0, low = 0, high = 0;
@@ -636,3 +374,5 @@ static void labx_nios2_machine_init(void)
 }
 
 machine_init(labx_nios2_machine_init);
+
+fdt_register_compatibility_opaque(pflash_cfi01_fdt_init, "cfi-flash", 0, &endian);

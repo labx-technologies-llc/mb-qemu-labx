@@ -27,17 +27,21 @@
 #include "devices.h"
 #include "boards.h"
 #include "device_tree.h"
-#include "xilinx.h"
-#include "labx_devices.h"
 #include "loader.h"
 #include "elf.h"
 #include "blockdev.h"
 #include "exec-memory.h"
 #include "microblaze_pic_cpu.h"
 
+#include "fdt_generic.h"
+#include "fdt_generic_devices.h"
+#include "fdt_generic_util.h"
+
 #include <libfdt.h>
 
 #define LMB_BRAM_SIZE  (128 * 1024)
+
+static int endian;
 
 static struct
 {
@@ -46,9 +50,6 @@ static struct
     uint32_t initrd;
     uint32_t fdt;
 } boot_info;
-
-/* Current ethernet device index for multiple network interfaces */
-static int eth_dev_index = -1;
 
 static void main_cpu_reset(void *opaque)
 {
@@ -130,324 +131,9 @@ static ram_addr_t get_dram_base(void *fdt)
     return qemu_devtree_getprop_cell(fdt, "/memory", "reg", 0, 0, &errp);
 }
 
-typedef void (*device_init_func_t)(void *fdt, const char *node_path);
-
-typedef struct DevInfo {
-    device_init_func_t probe;
-    int pass;
-    const char **compat;
-
-} DevInfo;
-
 /*
  * Xilinx interrupt controller device
  */
-MicroBlazeCPU *g_cpu;
-static qemu_irq irq[32] = {};
-static qemu_irq *cpu_irq;
-
-static void xilinx_interrupt_controller_probe(void *fdt, const char *node_path)
-{
-    Error *errp = NULL;
-     
-    int i;
-    DeviceState *dev;
-    uint32_t irq_addr = qemu_devtree_getprop_cell(fdt, node_path, "reg", 0, 0, &errp);
-    uint32_t nrIrqs = qemu_devtree_getprop_cell(fdt, node_path, "xlnx,num-intr-inputs", 0, 0, &errp);
-
-    printf("  IRQ BASE %08X NIRQS %d\n", irq_addr, nrIrqs);
-
-    cpu_irq = microblaze_pic_init_cpu(&g_cpu->env);
-    dev = xilinx_intc_create(irq_addr, cpu_irq[0], 2);
-    for (i = 0; i < nrIrqs; i++) {
-        irq[i] = qdev_get_gpio_in(dev, i);
-    }
-}
-
-DevInfo xilinx_interrupt_controller_device = {
-    .probe = &xilinx_interrupt_controller_probe,
-    .pass = 0,
-    .compat = (const char * []) { "xlnx,xps-intc-1.00.a", NULL }
-};
-
-/*
- * Flash device
- */
-static void flash_probe(void *fdt, const char *node_path)
-{
-    Error *errp = NULL;
-     
-    uint32_t flash_addr = qemu_devtree_getprop_cell(fdt, node_path, "reg", 0, 0, &errp);
-    uint32_t flash_size = qemu_devtree_getprop_cell(fdt, node_path, "reg", 1, 0, &errp);
-
-    DriveInfo *dinfo = drive_get(IF_PFLASH, 0, 0);
-    pflash_cfi01_register(flash_addr, NULL,
-                          qemu_devtree_get_node_name(fdt, node_path), flash_size,
-                          dinfo ? dinfo->bdrv : NULL, (64 * 1024),
-                          flash_size >> 16,
-                          1, 0x89, 0x18, 0x0000, 0x0, 1);
-    printf("-- loaded %d bytes to %08X\n",
-           load_image_targphys(qemu_devtree_get_node_name(fdt, node_path),
-                               flash_addr, flash_size),
-           flash_addr);
-}
-
-DevInfo flash_device = {
-    .probe = &flash_probe,
-    .pass = 1,
-    .compat = (const char * []) { "cfi-flash", NULL }
-};
-
-/*
- * Xilinx timer device
- */
-static void xilinx_timer_probe(void *fdt, const char *node_path)
-{
-    Error *errp = NULL;
-     
-    uint32_t timer_addr = qemu_devtree_getprop_cell(fdt, node_path, "reg", 0, 0, &errp);
-    uint32_t timer_irq = qemu_devtree_getprop_cell(fdt, node_path, "interrupts", 0, 0, &errp);
-
-    printf("  TIMER BASE %08X IRQ %d\n", timer_addr, timer_irq);
-
-    /* 2 timers at irq 2 @ 62 Mhz.  */
-    xilinx_timer_create(timer_addr, irq[timer_irq], 0, 62 * 1000000);
-}
-
-DevInfo xilinx_timer_device = {
-    .probe = &xilinx_timer_probe,
-    .pass = 1,
-    .compat = (const char * []) { "xlnx,xps-timer-1.00.a", NULL }
-};
-
-/*
- * Xilinx uartlite device
- */
-static void xilinx_uartlite_probe(void *fdt, const char *node_path)
-{
-    Error *errp = NULL;
-     
-    uint32_t uart_addr = qemu_devtree_getprop_cell(fdt, node_path, "reg", 0, 0, &errp);
-    uint32_t uart_irq = qemu_devtree_getprop_cell(fdt, node_path, "interrupts", 0, 0, &errp);
-
-    printf("  UART BASE %08X IRQ %d\n", uart_addr, uart_irq);
-
-    sysbus_create_simple("xlnx.xps-uartlite", uart_addr, irq[uart_irq]);
-}
-
-DevInfo xilinx_uartlite_device = {
-    .probe = &xilinx_uartlite_probe,
-    .pass = 1,
-    .compat = (const char * []) { "xlnx,xps-uartlite-1.00.a", NULL }
-};
-
-/*
- * Xilinx ethernetlite device
- */
-static void xilinx_ethlite_probe(void *fdt, const char *node_path)
-{
-    Error *errp = NULL;
-     
-    uint32_t eth_addr = qemu_devtree_getprop_cell(fdt, node_path, "reg", 0, 0, &errp);
-    uint32_t eth_irq = qemu_devtree_getprop_cell(fdt, node_path, "interrupts", 0, 0, &errp);
-
-    xilinx_ethlite_create(&nd_table[++eth_dev_index], eth_addr,
-                          irq[eth_irq], 0, 0);
-}
-
-DevInfo xilinx_ethlite_device = {
-    .probe = &xilinx_ethlite_probe,
-    .pass = 1,
-    .compat = (const char * []) { "xlnx,xps-ethernetlite-2.00.b", NULL }
-};
-
-/*
- * LabX audio packetizer device
- */
-static void labx_audio_packetizer_probe(void *fdt, const char *node_path)
-{
-    Error *errp = NULL;
-     
-    uint32_t packetizer_addr = qemu_devtree_getprop_cell(fdt, node_path, "reg", 0, 0, &errp);
-    uint32_t packetizer_irq = qemu_devtree_getprop_cell(fdt, node_path, "interrupts", 0, 0, &errp);
-    uint32_t clock_domains = qemu_devtree_getprop_cell(fdt, node_path, "xlnx,num-clock-domains", 0, 0, &errp);
-    uint32_t cache_words = qemu_devtree_getprop_cell(fdt, node_path, "xlnx,cache-data-words", 0, 0, &errp);
-
-    labx_audio_packetizer_create(packetizer_addr, irq[packetizer_irq],
-                                 clock_domains, cache_words);
-}
-
-DevInfo labx_audio_packetizer_device = {
-    .probe = &labx_audio_packetizer_probe,
-    .pass = 1,
-    .compat = (const char * []) { "xlnx,labx-audio-packetizer-1.00.a", NULL }
-};
-
-/*
- * LabX audio depacketizer device
- */
-static void labx_audio_depacketizer_probe(void *fdt, const char *node_path)
-{
-    Error *errp = NULL;
-     
-    uint32_t depacketizer_addr = qemu_devtree_getprop_cell(fdt, node_path, "reg", 0, 0, &errp);
-    uint32_t depacketizer_irq = qemu_devtree_getprop_cell(fdt, node_path, "interrupts", 0, 0, &errp);
-    uint32_t clock_domains = qemu_devtree_getprop_cell(fdt, node_path, "xlnx,num-clock-domains", 0, 0, &errp);
-    uint32_t cache_words = qemu_devtree_getprop_cell(fdt, node_path, "xlnx,cache-data-words", 0, 0, &errp);
-
-    int ifLen;
-    const void *ifType =
-        qemu_devtree_getprop(fdt, node_path, "xlnx,interface-type", &ifLen, 0, &errp);
-    int hasDMA = (0 != strncmp("CACHE_RAM", (const char *)ifType, ifLen));
-
-    labx_audio_depacketizer_create(depacketizer_addr, irq[depacketizer_irq],
-                                   clock_domains, cache_words, hasDMA);
-}
-
-DevInfo labx_audio_depacketizer_device = {
-    .probe = &labx_audio_depacketizer_probe,
-    .pass = 1,
-    .compat = (const char * []) {
-        "xlnx,labx-audio-depacketizer-1.00.a",
-        "xlnx,labx-audio-depacketizer-1.01.a",
-        NULL
-    }
-};
-
-/*
- * LabX dma device
- */
-static void labx_dma_probe(void *fdt, const char *node_path)
-{
-    Error *errp = NULL;
-     
-    uint32_t dma_addr = qemu_devtree_getprop_cell(fdt, node_path, "reg", 0, 0, &errp);
-
-    labx_dma_create(dma_addr, 1024);
-}
-
-DevInfo labx_dma_device = {
-    .probe = &labx_dma_probe,
-    .pass = 1,
-    .compat = (const char * []) {
-        "xlnx,labx-dma-1.00.a",
-        "xlnx,labx-dma-1.01.a",
-        "xlnx,labx-local-audio-1.00.a",
-        NULL
-    }
-};
-
-/*
- * LabX ethernet device
- */
-static void labx_ethernet_probe(void *fdt, const char *node_path)
-{
-    Error *errp = NULL;
-     
-    uint32_t ethernet_addr = qemu_devtree_getprop_cell(fdt, node_path, "reg", 0, 0, &errp);
-    uint32_t host_irq = qemu_devtree_getprop_cell(fdt, node_path, "interrupts", 0, 0, &errp);
-    uint32_t fifo_irq = qemu_devtree_getprop_cell(fdt, node_path, "interrupts", 2, 0, &errp);
-    uint32_t phy_irq = qemu_devtree_getprop_cell(fdt, node_path, "interrupts", 4, 0, &errp);
-
-    labx_ethernet_create(&nd_table[++eth_dev_index], ethernet_addr,
-                         irq[host_irq], irq[fifo_irq], irq[phy_irq]);
-}
-
-DevInfo labx_ethernet_device = {
-    .probe = &labx_ethernet_probe,
-    .pass = 1,
-    .compat = (const char * []) { "xlnx,labx-ethernet-1.00.a", NULL }
-};
-
-/*
- * LabX ptp device
- */
-static void labx_ptp_probe(void *fdt, const char *node_path)
-{
-    Error *errp = NULL;
-     
-    uint32_t ptp_addr = qemu_devtree_getprop_cell(fdt, node_path, "reg", 0, 0, &errp);
-
-    labx_ptp_create(ptp_addr);
-}
-
-DevInfo labx_ptp_device = {
-    .probe = &labx_ptp_probe,
-    .pass = 1,
-    .compat = (const char * []) { "xlnx,labx-ptp-1.00.a", NULL }
-};
-
-/*
- * Table of available devices
- */
-DevInfo *devices[] = {
-    &xilinx_interrupt_controller_device,
-    &flash_device,
-    &xilinx_timer_device,
-    &xilinx_uartlite_device,
-    &xilinx_ethlite_device,
-    &labx_audio_packetizer_device,
-    &labx_audio_depacketizer_device,
-    &labx_dma_device,
-    &labx_ethernet_device,
-    &labx_ptp_device,
-    NULL
-};
-
-static int plb_device_probe(void *fdt, const char *node_path, int pass)
-{
-    DevInfo **dev = &(devices[0]);
-
-    while (*dev) {
-        const char **compat = &((*dev)->compat[0]);
-        while (*compat) {
-            if (0 == fdt_node_check_compatible(fdt, fdt_path_offset(fdt, node_path), *compat)) {
-                if (pass == (*dev)->pass) {
-                    printf("Adding a device for node %s\n",
-                           fdt_get_name(fdt, fdt_path_offset(fdt, node_path), NULL));
-
-                    (*dev)->probe(fdt, node_path);
-                    return 0;
-                }
-
-                if (pass < (*dev)->pass) {
-                    /* Probe again on the next pass */
-                    return 1;
-                }
-            }
-
-            compat++;
-        }
-
-        dev++;
-    }
-
-    return 0;
-}
-
-static void plb_bus_probe(void *fdt)
-{
-    int num_children = qemu_devtree_get_num_children(fdt, "/plb", 1);
-    char **children = qemu_devtree_get_children(fdt, "/plb", 1);
-
-    if (num_children > 0) {
-        /* Do multiple passes through the devices. Some have dependencies
-           on others being first */
-        int pass = 0;
-        int again = 0;
-        do {
-            int child = 0;
-            again = 0;
-            do {
-                again |= plb_device_probe(fdt, children[child++], pass);
-            } while (child < num_children);
-
-            pass++;
-
-        } while (again);
-    }
-}
-
 static void
 labx_microblaze_init(ram_addr_t ram_size,
                      const char *boot_device,
@@ -464,17 +150,21 @@ labx_microblaze_init(ram_addr_t ram_size,
     target_phys_addr_t ddr_base = get_dram_base(fdt);
     MemoryRegion *phys_lmb_bram = g_new(MemoryRegion, 1);
     MemoryRegion *phys_ram = g_new(MemoryRegion, 1);
+    MicroBlazeCPU *cpu;
     CPUMBState *env;
+    qemu_irq *cpu_irq;
+
 
     /* init CPUs */
     if (cpu_model == NULL) {
         cpu_model = "microblaze";
     }
-    g_cpu = cpu_mb_init(cpu_model);
-    env = &g_cpu->env;
+    cpu = cpu_mb_init(cpu_model);
+    env = &cpu->env;
+    cpu_irq = microblaze_pic_init_cpu(env);
 
     env->pvr.regs[10] = 0x0c000000; /* spartan 3a dsp family.  */
-    qemu_register_reset(main_cpu_reset, g_cpu);
+    qemu_register_reset(main_cpu_reset, cpu);
 
     /* Attach emulated BRAM through the LMB. LMB size is not specified in the
        device-tree but there must be one to hold the vector table. */
@@ -487,9 +177,8 @@ labx_microblaze_init(ram_addr_t ram_size,
     vmstate_register_ram_global(phys_ram);
     memory_region_add_subregion(address_space_mem, ddr_base, phys_ram);
 
-
     /* Create other devices listed in the device-tree */
-    plb_bus_probe(fdt);
+    fdt_init_destroy_fdti(fdt_generic_create_machine(fdt, cpu_irq));
 
     if (kernel_filename) {
         uint64_t entry, low, high;
@@ -567,3 +256,5 @@ static void labx_microblaze_machine_init(void)
 }
 
 machine_init(labx_microblaze_machine_init);
+
+fdt_register_compatibility_opaque(pflash_cfi01_fdt_init, "cfi-flash", 0, &endian);

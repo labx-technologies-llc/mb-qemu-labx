@@ -557,11 +557,11 @@ static int labx_ethernet_init(SysBusDevice *dev)
 
     /* Set up memory regions */
     memory_region_init_io(&p->mmio_ethernet, &ethernet_regs_ops, p,
-                          "labx,ethernet-regs",      0x10 * 4);
+                          "labx.ethernet-regs",      0x10 * 4);
     memory_region_init_io(&p->mmio_mac,      &mac_regs_ops,      p,
-                          "labx,ethernet-mac-regs",  0x10 * 4);
+                          "labx.ethernet-mac-regs",  0x10 * 4);
     memory_region_init_io(&p->mmio_fifo,     &fifo_regs_ops,     p,
-                          "labx,ethernet-fifo-regs", 0x10 * 4);
+                          "labx.ethernet-fifo-regs", 0x10 * 4);
 
     sysbus_init_mmio(dev, &p->mmio_ethernet);
     sysbus_init_mmio(dev, &p->mmio_mac);
@@ -585,7 +585,7 @@ static int labx_ethernet_init(SysBusDevice *dev)
 }
 
 static Property labx_ethernet_properties[] = {
-    DEFINE_PROP_UINT32("baseAddress", LabXEthernet, baseAddress, 0),
+    DEFINE_PROP_UINT32("reg", LabXEthernet, baseAddress, 0),
     DEFINE_NIC_PROPERTIES(LabXEthernet, conf),
     DEFINE_PROP_END_OF_LIST(),
 };
@@ -600,7 +600,14 @@ static void labx_ethernet_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo labx_ethernet_info = {
-    .name          = "labx,ethernet",
+    .name          = "labx.labx_ethernet",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(LabXEthernet),
+    .class_init    = labx_ethernet_class_init,
+};
+
+static const TypeInfo labx_ethernet_info2 = {
+    .name          = "xlnx.labx-ethernet",
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(LabXEthernet),
     .class_init    = labx_ethernet_class_init,
@@ -609,6 +616,7 @@ static const TypeInfo labx_ethernet_info = {
 static void labx_ethernet_register(void)
 {
     type_register_static(&labx_ethernet_info);
+    type_register_static(&labx_ethernet_info2);
 }
 
 type_init(labx_ethernet_register)

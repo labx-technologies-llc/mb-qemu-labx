@@ -33,4 +33,7 @@ qemu_irq fdt_get_irq(FDTMachineInfo *fdti, char *node_path, int irq_idx);
 qemu_irq fdt_get_irq_info(FDTMachineInfo *fdti, char *node_path, int irq_idx,
     int *err, char * info);
 
+target_phys_addr_t fdt_get_parent_base(const char *node_path,
+                                       FDTMachineInfo *fdti);
+
 #endif /* FDT_GENERIC_UTIL_H */

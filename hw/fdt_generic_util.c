@@ -25,7 +25,7 @@
  * THE SOFTWARE.
  */
 
-#define FDT_GENERIC_UTIL_ERR_DEBUG
+/* #define FDT_GENERIC_UTIL_ERR_DEBUG */
 
 #ifdef FDT_GENERIC_UTIL_ERR_DEBUG
 #define DB_PRINT(...) do { \
@@ -63,7 +63,7 @@ FDTMachineInfo *fdt_generic_create_machine(void *fdt, qemu_irq *cpu_irq)
             , node_path);
     }
 
-    printf("FDT: Device tree scan complete\n");
+    DB_PRINT("FDT: Device tree scan complete\n");
     FDTMachineInfo *ret = g_malloc0(sizeof(*ret));
     return fdti;
 }
@@ -86,14 +86,16 @@ static void fdt_init_node(void *args)
     char *all_compats = NULL, *compat, *node_name, *next_compat;
     int compat_len;
 
+#ifdef FDT_GENERIC_UTIL_ERR_DEBUG
     static int entry_index;
     int this_entry = entry_index++;
+#endif
     DB_PRINT("enter %d %s\n", this_entry, node_path);
 
     /* try instance binding first */
     node_name = qemu_devtree_get_node_name(fdti->fdt, node_path);
     if (!node_name) {
-        printf("FDT: ERROR: nameless node: %s\n", node_path);
+        fprintf(stderr, "FDT: ERROR: nameless node: %s\n", node_path);
     }
     if (!fdt_init_inst_bind(node_path, fdti, node_name)) {
         goto exit;
@@ -103,7 +105,7 @@ static void fdt_init_node(void *args)
     all_compats = qemu_devtree_getprop(fdti->fdt, node_path,
         "compatible", &compat_len, false, NULL);
     if (!all_compats) {
-        printf("FDT: ERROR: no compatibility found for node %s%s\n", node_path,
+        fprintf(stderr, "FDT: ERROR: no compatibility found for node %s/%s\n", node_path,
             node_name);
         DB_PRINT("exit %d\n", this_entry);
         return;
@@ -128,7 +130,7 @@ try_next_compat:
     compat = next_compat+1;
     goto try_next_compat;
 invalidate:
-    printf("FDT: Unsupported peripheral invalidated %s compatibilities %s\n",
+    fprintf(stderr, "FDT: Unsupported peripheral invalidated %s compatibilities %s\n",
         node_name, all_compats);
     qemu_devtree_setprop_string(fdti->fdt, node_path, "compatible",
         "invalidated");
@@ -207,6 +209,7 @@ qemu_irq fdt_get_irq_info(FDTMachineInfo *fdti, char *node_path, int irq_idx,
         sprintf(info, "%d (%s)", idx, node_name);
         g_free((void *)node_name);
     }
+    *err = 0;
     return qdev_get_gpio_in(intc, idx);
 fail:
     *err = 1;
@@ -226,13 +229,35 @@ qemu_irq fdt_get_irq(FDTMachineInfo *fdti, char *node_path, int irq_idx)
 #define DIGIT(a) ((a) >= '0' && (a) <= '9')
 #define LOWER_CASE(a) ((a) >= 'a' && (a) <= 'z')
 
-static void trim_xilinx_version(char *x)
+static void trim_version(char *x)
 {
     for (;;) {
         x = strchr(x, '-');
-        if (!x || strlen(x) < 7) {
+        if (!x) {
+            return;
+	}
+	/* Version is -x.y */
+	if (strlen(x) == 4) {
+            if (DIGIT(x[1]) && x[2] == '.' && DIGIT(x[3])) {
+                *x = '\0';
+                return;
+	    }
+	}
+	/* Version is -x.yy or -xx.y */
+	if (strlen(x) == 5) {
+            if (DIGIT(x[1]) && x[2] == '.' && DIGIT(x[3]) && DIGIT(x[4])) {
+                *x = '\0';
+                return;
+	    }
+            if (DIGIT(x[1]) && DIGIT(x[2]) && x[3] == '.' && DIGIT(x[4])) {
+                *x = '\0';
+                return;
+	    }
+	}
+        if (strlen(x) < 7) {
             return;
         }
+	/* Version is -x.yy.c */
         if (DIGIT(x[1]) &&
                 x[2] == '.' &&
                 DIGIT(x[3]) &&
@@ -272,8 +297,8 @@ static DeviceState *fdt_create_qdev_from_compat(char *compat, char **dev_type)
         ret = qdev_try_create(NULL, c);
     }
     if (!ret) {
-        /* try again with the xilinx version string trimmed */
-        trim_xilinx_version(c);
+        /* try again with the version string trimmed */
+        trim_version(c);
         ret = qdev_try_create(NULL, c);
     }
 
@@ -311,6 +336,26 @@ static inline uint64_t get_int_be(const void *p, int len)
     }
 }
 
+target_phys_addr_t fdt_get_parent_base(const char *node_path,
+                                       FDTMachineInfo *fdti)
+{
+    target_phys_addr_t base = fdti->sysbus_base;
+    char parent[DT_PATH_LENGTH];
+    if (!qemu_devtree_getparent(fdti->fdt, parent, node_path)) {
+        do {
+            Error *errp = NULL;
+            int64_t parent_base = 0;
+            parent_base = qemu_devtree_getprop_cell(fdti->fdt, parent, "reg",
+                                                    0, false, &errp);
+            if (errp == NULL) {
+                base += (target_phys_addr_t)parent_base;
+            }
+        } while (!qemu_devtree_getparent(fdti->fdt, parent, parent));
+    }
+
+    return base;
+}
+
 static int fdt_init_qdev(char *node_path, FDTMachineInfo *fdti, char *compat)
 {
     int err;
@@ -337,10 +382,12 @@ static int fdt_init_qdev(char *node_path, FDTMachineInfo *fdti, char *compat)
 
     /* connect nic if appropriate */
     static int nics;
-    qdev_set_nic_properties(dev, &nd_table[nics]);
-    if (nd_table[nics].instantiated) {
-        DB_PRINT("NIC instantiated: %s\n", dev_type);
-        nics++;
+    if (object_property_find(OBJECT(dev), "mac", NULL)) {
+        qdev_set_nic_properties(dev, &nd_table[nics]);
+        if (nd_table[nics].instantiated) {
+            DB_PRINT("NIC instantiated: %s\n", dev_type);
+            nics++;
+        }
     }
 
     offset = fdt_path_offset(fdti->fdt, node_path);
@@ -365,8 +412,10 @@ static int fdt_init_qdev(char *node_path, FDTMachineInfo *fdti, char *compat)
         /* FIXME: handle generically using accessors and stuff */
         if (!strcmp(p->type, "uint8") || !strcmp(p->type, "uint16") ||
                 !strcmp(p->type, "uint32") || !strcmp(p->type, "uint64")) {
-            object_property_set_int(OBJECT(dev), get_int_be(val, len), propname,
-                                                                &errp);
+            uint64_t offset = (!strcmp(propname, "reg")) ?
+                              fdt_get_parent_base(node_path, fdti) : 0;
+            object_property_set_int(OBJECT(dev), get_int_be(val, len) + offset,
+                                    propname, &errp);
             assert_no_error(errp);
             DB_PRINT("set property %s to %#llx\n", propname,
                                             (long long unsigned int)get_int_be(val, len));
@@ -391,7 +440,9 @@ static int fdt_init_qdev(char *node_path, FDTMachineInfo *fdti, char *compat)
             object_property_set_link(OBJECT(dev), OBJECT(linked_dev), propname,
                                         &errp);
             assert_no_error(errp);
-        }
+        } else if (!strcmp(p->type, "string")) {
+            object_property_set_str(OBJECT(dev), strndup(val, len), propname, &errp);
+	}
     }
 
     qdev_init_nofail(dev);
@@ -399,6 +450,8 @@ static int fdt_init_qdev(char *node_path, FDTMachineInfo *fdti, char *compat)
     base = qemu_devtree_getprop_cell(fdti->fdt, node_path, "reg", 0, false,
                                                                     &errp);
     assert_no_error(errp);
+
+    base += fdt_get_parent_base(node_path, fdti);
     sysbus_mmio_map(sysbus_from_qdev(dev), 0, base);
 
     {
