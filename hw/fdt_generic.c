@@ -159,7 +159,7 @@ void fdt_init_yield(FDTMachineInfo *fdti)
     DB_PRINT("unyield #%d\n", this_yield);
 }
 
-void fdt_init_set_opaque(FDTMachineInfo *fdti, char *node_path, void *opaque)
+void fdt_init_set_opaque(FDTMachineInfo *fdti, const char *node_path, void *opaque)
 {
     FDTDevOpaque *dp;
     for (dp = fdti->dev_opaques;
@@ -171,7 +171,7 @@ void fdt_init_set_opaque(FDTMachineInfo *fdti, char *node_path, void *opaque)
     dp->opaque = opaque;
 }
 
-int fdt_init_has_opaque(FDTMachineInfo *fdti, char *node_path)
+int fdt_init_has_opaque(FDTMachineInfo *fdti, const char *node_path)
 {
     FDTDevOpaque *dp;
     for (dp = fdti->dev_opaques; dp->node_path; dp++) {
@@ -182,7 +182,7 @@ int fdt_init_has_opaque(FDTMachineInfo *fdti, char *node_path)
     return 0;
 }
 
-void *fdt_init_get_opaque(FDTMachineInfo *fdti, char *node_path)
+void *fdt_init_get_opaque(FDTMachineInfo *fdti, const char *node_path)
 {
     FDTDevOpaque *dp;
     for (dp = fdti->dev_opaques; dp->node_path; dp++) {

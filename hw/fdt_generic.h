@@ -23,6 +23,10 @@ typedef struct FDTMachineInfo {
     qemu_irq *irq_base;
     /* per-device specific opaques */
     FDTDevOpaque *dev_opaques;
+
+    /* Base address of the root bus */
+    target_phys_addr_t sysbus_base;
+
     /* recheck coroutine queue */
     CoQueue *cq;
 } FDTMachineInfo;
@@ -71,9 +75,9 @@ void fdt_init_yield(FDTMachineInfo *);
 
 /* set, check and get per device opaques. Keyed by fdt node_paths */
 
-void fdt_init_set_opaque(FDTMachineInfo *fdti, char *node_path, void *opaque);
-int fdt_init_has_opaque(FDTMachineInfo *fdti, char *node_path);
-void *fdt_init_get_opaque(FDTMachineInfo *fdti, char *node_path);
+void fdt_init_set_opaque(FDTMachineInfo *fdti, const char *node_path, void *opaque);
+int fdt_init_has_opaque(FDTMachineInfo *fdti, const char *node_path);
+void *fdt_init_get_opaque(FDTMachineInfo *fdti, const char *node_path);
 
 /* statically register a FDTInitFn as being associate with a compatibility */
 
