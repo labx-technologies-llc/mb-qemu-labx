@@ -48,7 +48,7 @@ typedef struct AlteraTimer {
     uint32_t      regs[R_MAX];
 } AlteraTimer;
 
-static uint64_t timer_read(void *opaque, target_phys_addr_t addr,
+static uint64_t timer_read(void *opaque, hwaddr addr,
                            unsigned int size)
 {
     AlteraTimer *t = opaque;
@@ -83,7 +83,7 @@ static inline int timer_irq_state(AlteraTimer *t)
     return (t->regs[R_STATUS] & t->regs[R_CONTROL] & CONTROL_ITO) ? 1 : 0;
 }
 
-static void timer_write(void *opaque, target_phys_addr_t addr,
+static void timer_write(void *opaque, hwaddr addr,
                         uint64_t val64, unsigned int size)
 {
     AlteraTimer *t = opaque;

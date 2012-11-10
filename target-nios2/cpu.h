@@ -237,12 +237,14 @@ static inline void cpu_get_tb_cpu_state(CPUNios2State *env, target_ulong *pc,
 }
 
 #if !defined(CONFIG_USER_ONLY)
-void cpu_unassigned_access(CPUNios2State *env1, target_phys_addr_t addr,
+void cpu_unassigned_access(CPUNios2State *env1, hwaddr addr,
                            int is_write, int is_exec, int is_asi, int size);
 #endif
 
-static inline bool cpu_has_work(CPUNios2State *env)
+static inline bool cpu_has_work(CPUState *cpu)
 {
+    CPUNios2State *env = &NIOS2_CPU(cpu)->env;
+
     return env->interrupt_request & (CPU_INTERRUPT_HARD | CPU_INTERRUPT_NMI);
 }
 

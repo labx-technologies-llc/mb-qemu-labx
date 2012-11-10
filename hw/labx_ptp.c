@@ -53,7 +53,7 @@ typedef struct LabXPTP {
 /*
  * PTP registers
  */
-static uint64_t ptp_regs_read(void *opaque, target_phys_addr_t addr,
+static uint64_t ptp_regs_read(void *opaque, hwaddr addr,
                               unsigned int size)
 {
     /*LabXPTP *p = opaque; */
@@ -102,14 +102,14 @@ static uint64_t ptp_regs_read(void *opaque, target_phys_addr_t addr,
         break;
 
     default:
-        printf("labx-ptp: Read of unknown register %08X\n", addr);
+        printf("labx-ptp: Read of unknown register %"HWADDR_PRIX"\n", addr);
         break;
     }
 
     return retval;
 }
 
-static void ptp_regs_write(void *opaque, target_phys_addr_t addr,
+static void ptp_regs_write(void *opaque, hwaddr addr,
                            uint64_t val64, unsigned int size)
 {
     /*LabXPTP *p = opaque; */
@@ -156,7 +156,7 @@ static void ptp_regs_write(void *opaque, target_phys_addr_t addr,
         break;
 
     default:
-        printf("labx-ptp: Write of unknown register %08X = %08X\n",
+        printf("labx-ptp: Write of unknown register %"HWADDR_PRIX" = %08X\n",
                addr, value);
         break;
     }
@@ -176,7 +176,7 @@ static const MemoryRegionOps ptp_regs_ops = {
 /*
  * Tx Ram
  */
-static uint64_t tx_ram_read(void *opaque, target_phys_addr_t addr,
+static uint64_t tx_ram_read(void *opaque, hwaddr addr,
                             unsigned int size)
 {
     LabXPTP *p = opaque;
@@ -184,7 +184,7 @@ static uint64_t tx_ram_read(void *opaque, target_phys_addr_t addr,
     return p->txRam[RAM_INDEX(addr, PTP_HOST_RAM_WORDS)];
 }
 
-static void tx_ram_write(void *opaque, target_phys_addr_t addr,
+static void tx_ram_write(void *opaque, hwaddr addr,
                          uint64_t val64, unsigned int size)
 {
     LabXPTP *p = opaque;
@@ -207,7 +207,7 @@ static const MemoryRegionOps tx_ram_ops = {
 /*
  * Rx Ram
  */
-static uint64_t rx_ram_read(void *opaque, target_phys_addr_t addr,
+static uint64_t rx_ram_read(void *opaque, hwaddr addr,
                             unsigned int size)
 {
     LabXPTP *p = opaque;
@@ -215,7 +215,7 @@ static uint64_t rx_ram_read(void *opaque, target_phys_addr_t addr,
     return p->rxRam[RAM_INDEX(addr, PTP_HOST_RAM_WORDS)];
 }
 
-static void rx_ram_write(void *opaque, target_phys_addr_t addr,
+static void rx_ram_write(void *opaque, hwaddr addr,
                          uint64_t val64, unsigned int size)
 {
     LabXPTP *p = opaque;

@@ -265,8 +265,7 @@ int cpu_nios2_handle_mmu_fault(CPUNios2State *env, target_ulong address,
     return 0;
 }
 
-target_phys_addr_t cpu_get_phys_page_debug(CPUNios2State *env,
-                                           target_ulong addr)
+hwaddr cpu_get_phys_page_debug(CPUNios2State *env, target_ulong addr)
 {
     target_ulong vaddr, paddr = 0;
     Nios2MMULookup lu;

@@ -25,7 +25,7 @@ typedef struct FDTMachineInfo {
     FDTDevOpaque *dev_opaques;
 
     /* Base address of the root bus */
-    target_phys_addr_t sysbus_base;
+    hwaddr sysbus_base;
 
     /* recheck coroutine queue */
     CoQueue *cq;

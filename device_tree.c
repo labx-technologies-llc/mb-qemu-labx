@@ -474,6 +474,21 @@ void devtree_info_dump(void *fdt)
     devtree_scan(fdt, NULL, 1);
 }
 
+void qemu_devtree_dumpdtb(void *fdt, int size)
+{
+    QemuOpts *machine_opts;
+
+    machine_opts = qemu_opts_find(qemu_find_opts("machine"), 0);
+    if (machine_opts) {
+        const char *dumpdtb = qemu_opt_get(machine_opts, "dumpdtb");
+        if (dumpdtb) {
+            /* Dump the dtb to a file and quit */
+            exit(g_file_set_contents(dumpdtb, fdt, size, NULL) ? 0 : 1);
+        }
+    }
+
+}
+
 int devtree_get_num_nodes(void *fdt)
 {
     int ret;

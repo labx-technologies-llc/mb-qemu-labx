@@ -4,6 +4,7 @@
 #include "pc.h"
 #include "exec-memory.h"
 #include "loader.h"
+#include "serial.h"
 
 #include "fdt_generic_util.h"
 #include "fdt_generic_devices.h"
@@ -18,7 +19,7 @@
 int pflash_cfi01_fdt_init(char *node_path, FDTMachineInfo *fdti, void *opaque)
 {
 
-    int flash_base = 0;
+    hwaddr flash_base = 0;
     int flash_size = 0;
     Error *errp = NULL;
 
@@ -36,7 +37,7 @@ int pflash_cfi01_fdt_init(char *node_path, FDTMachineInfo *fdti, void *opaque)
                                                 0, false, &errp);
     assert_no_error(errp);
 
-    printf("FDT: FLASH: baseaddr: 0x%x, size: 0x%x\n",
+    printf("FDT: FLASH: baseaddr: 0x%"HWADDR_PRIX", size: 0x%x\n",
            flash_base, flash_size);
 
     dinfo = drive_get_next(IF_PFLASH);
@@ -45,7 +46,7 @@ int pflash_cfi01_fdt_init(char *node_path, FDTMachineInfo *fdti, void *opaque)
                             flash_size/FLASH_SECTOR_SIZE,
                             bank_width, 0x89, 0x18, 0x0000, 0x0, be);
 
-    printf("-- loaded %d bytes to %08X\n",
+    printf("-- loaded %d bytes to %"HWADDR_PRIX"\n",
            load_image_targphys(qemu_devtree_get_node_name(fdti->fdt, node_path),
                                flash_base, flash_size), flash_base);
     return 0;
@@ -56,7 +57,7 @@ static int uart16550_fdt_init(char *node_path, FDTMachineInfo *fdti,
 {
     /* FIXME: Pass in dynamically */
     MemoryRegion *address_space_mem = get_system_memory();
-    target_phys_addr_t base;
+    hwaddr base;
     int baudrate;
     qemu_irq irqline;
     char irq_info[1024];

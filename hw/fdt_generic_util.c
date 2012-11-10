@@ -336,10 +336,10 @@ static inline uint64_t get_int_be(const void *p, int len)
     }
 }
 
-target_phys_addr_t fdt_get_parent_base(const char *node_path,
+hwaddr fdt_get_parent_base(const char *node_path,
                                        FDTMachineInfo *fdti)
 {
-    target_phys_addr_t base = fdti->sysbus_base;
+    hwaddr base = fdti->sysbus_base;
     char parent[DT_PATH_LENGTH];
     if (!qemu_devtree_getparent(fdti->fdt, parent, node_path)) {
         do {
@@ -348,7 +348,7 @@ target_phys_addr_t fdt_get_parent_base(const char *node_path,
             parent_base = qemu_devtree_getprop_cell(fdti->fdt, parent, "reg",
                                                     0, false, &errp);
             if (errp == NULL) {
-                base += (target_phys_addr_t)parent_base;
+                base += (hwaddr)parent_base;
             }
         } while (!qemu_devtree_getparent(fdti->fdt, parent, parent));
     }
@@ -360,7 +360,7 @@ static int fdt_init_qdev(char *node_path, FDTMachineInfo *fdti, char *compat)
 {
     int err;
     qemu_irq irq;
-    target_phys_addr_t base;
+    hwaddr base;
     int offset;
     DeviceState *dev;
     char *dev_type = NULL;

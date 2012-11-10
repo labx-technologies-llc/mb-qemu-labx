@@ -89,7 +89,7 @@ static void mdio_xfer(LabXEthernet *p, int readWrite,
     update_host_irq(p);
 }
 
-static uint64_t ethernet_regs_read(void *opaque, target_phys_addr_t addr,
+static uint64_t ethernet_regs_read(void *opaque, hwaddr addr,
                                    unsigned int size)
 {
     LabXEthernet *p = opaque;
@@ -123,14 +123,14 @@ static uint64_t ethernet_regs_read(void *opaque, target_phys_addr_t addr,
         break;
 
     default:
-        printf("labx-ethernet: Read of unknown register %08X\n", addr);
+        printf("labx-ethernet: Read of unknown register %"HWADDR_PRIX"\n", addr);
         break;
     }
 
     return retval;
 }
 
-static void ethernet_regs_write(void *opaque, target_phys_addr_t addr,
+static void ethernet_regs_write(void *opaque, hwaddr addr,
                                 uint64_t val64, unsigned int size)
 {
     LabXEthernet *p = opaque;
@@ -175,7 +175,7 @@ static void ethernet_regs_write(void *opaque, target_phys_addr_t addr,
         break;
 
     default:
-        printf("labx-ethernet: Write of unknown register %08X = %08X\n",
+        printf("labx-ethernet: Write of unknown register %"HWADDR_PRIX" = %08X\n",
                addr, value);
         break;
     }
@@ -195,7 +195,7 @@ static const MemoryRegionOps ethernet_regs_ops = {
 /*
  * MAC registers
  */
-static uint64_t mac_regs_read(void *opaque, target_phys_addr_t addr,
+static uint64_t mac_regs_read(void *opaque, hwaddr addr,
                               unsigned int size)
 {
     /*LabXEthernet *p = opaque; */
@@ -216,14 +216,14 @@ static uint64_t mac_regs_read(void *opaque, target_phys_addr_t addr,
         break;
 
     default:
-        printf("labx-ethernet: Read of unknown mac register %08X\n", addr);
+        printf("labx-ethernet: Read of unknown mac register %"HWADDR_PRIX"\n", addr);
         break;
     }
 
     return retval;
 }
 
-static void mac_regs_write(void *opaque, target_phys_addr_t addr,
+static void mac_regs_write(void *opaque, hwaddr addr,
                            uint64_t val64, unsigned int size)
 {
     /*LabXEthernet *p = opaque; */
@@ -243,7 +243,7 @@ static void mac_regs_write(void *opaque, target_phys_addr_t addr,
         break;
 
     default:
-        printf("labx-ethernet: Write of unknown mac register %08X = %08X\n",
+        printf("labx-ethernet: Write of unknown mac register %"HWADDR_PRIX" = %08X\n",
                addr, value);
         break;
     }
@@ -314,7 +314,7 @@ static void send_packet(LabXEthernet *p)
     update_fifo_irq(p);
 }
 
-static uint64_t fifo_regs_read(void *opaque, target_phys_addr_t addr,
+static uint64_t fifo_regs_read(void *opaque, hwaddr addr,
                                unsigned int size)
 {
     LabXEthernet *p = opaque;
@@ -375,7 +375,7 @@ static uint64_t fifo_regs_read(void *opaque, target_phys_addr_t addr,
         break;
 
     default:
-        printf("labx-ethernet: Read of unknown fifo register %08X\n", addr);
+        printf("labx-ethernet: Read of unknown fifo register %"HWADDR_PRIX"\n", addr);
         break;
     }
 
@@ -385,7 +385,7 @@ static uint64_t fifo_regs_read(void *opaque, target_phys_addr_t addr,
     return retval;
 }
 
-static void fifo_regs_write(void *opaque, target_phys_addr_t addr,
+static void fifo_regs_write(void *opaque, hwaddr addr,
                             uint64_t val64, unsigned int size)
 {
     LabXEthernet *p = opaque;
@@ -465,7 +465,7 @@ static void fifo_regs_write(void *opaque, target_phys_addr_t addr,
         break;
 
     default:
-        printf("labx-ethernet: Write of unknown fifo register %08X = %08X\n",
+        printf("labx-ethernet: Write of unknown fifo register %"HWADDR_PRIX" = %08X\n",
                addr, value);
         break;
     }

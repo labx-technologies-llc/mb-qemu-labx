@@ -87,10 +87,10 @@ static void *get_device_tree(int *fdt_size)
     return fdt;
 }
 
-static int labx_microblaze_load_device_tree(target_phys_addr_t addr,
+static int labx_microblaze_load_device_tree(hwaddr addr,
                                       uint32_t ramsize,
-                                      target_phys_addr_t initrd_base,
-                                      target_phys_addr_t initrd_size,
+                                      hwaddr initrd_base,
+                                      hwaddr initrd_size,
                                       const char *kernel_cmdline)
 {
     int fdt_size;
@@ -134,20 +134,14 @@ static ram_addr_t get_dram_base(void *fdt)
 /*
  * Xilinx interrupt controller device
  */
-static void
-labx_microblaze_init(ram_addr_t ram_size,
-                     const char *boot_device,
-                     const char *kernel_filename,
-                     const char *kernel_cmdline,
-                     const char *initrd_filename,
-                     const char *cpu_model)
+static void labx_microblaze_init(QEMUMachineInitArgs *args)
 {
     MemoryRegion *address_space_mem = get_system_memory();
 
     int kernel_size;
     int fdt_size;
     void *fdt = get_device_tree(&fdt_size);
-    target_phys_addr_t ddr_base = get_dram_base(fdt);
+    hwaddr ddr_base = get_dram_base(fdt);
     MemoryRegion *phys_lmb_bram = g_new(MemoryRegion, 1);
     MemoryRegion *phys_ram = g_new(MemoryRegion, 1);
     MicroBlazeCPU *cpu;
@@ -156,10 +150,10 @@ labx_microblaze_init(ram_addr_t ram_size,
 
 
     /* init CPUs */
-    if (cpu_model == NULL) {
-        cpu_model = "microblaze";
+    if (args->cpu_model == NULL) {
+        args->cpu_model = "microblaze";
     }
-    cpu = cpu_mb_init(cpu_model);
+    cpu = cpu_mb_init(args->cpu_model);
     env = &cpu->env;
     cpu_irq = microblaze_pic_init_cpu(env);
 
@@ -180,17 +174,17 @@ labx_microblaze_init(ram_addr_t ram_size,
     /* Create other devices listed in the device-tree */
     fdt_init_destroy_fdti(fdt_generic_create_machine(fdt, cpu_irq));
 
-    if (kernel_filename) {
+    if (args->kernel_filename) {
         uint64_t entry, low, high;
         uint32_t base32;
 
         /* Boots a kernel elf binary.  */
-        kernel_size = load_elf(kernel_filename, NULL, NULL,
+        kernel_size = load_elf(args->kernel_filename, NULL, NULL,
                                &entry, &low, &high,
                                1, ELF_MACHINE, 0);
         base32 = entry;
         if (base32 == 0xc0000000) {
-            kernel_size = load_elf(kernel_filename, translate_kernel_address,
+            kernel_size = load_elf(args->kernel_filename, translate_kernel_address,
                                    NULL, &entry, NULL, NULL,
                                    1, ELF_MACHINE, 0);
         }
@@ -199,29 +193,29 @@ labx_microblaze_init(ram_addr_t ram_size,
 
         /* If it wasn't an ELF image, try an u-boot image.  */
         if (kernel_size < 0) {
-            target_phys_addr_t uentry, loadaddr;
+            hwaddr uentry, loadaddr;
 
-            kernel_size = load_uimage(kernel_filename, &uentry, &loadaddr, 0);
+            kernel_size = load_uimage(args->kernel_filename, &uentry, &loadaddr, 0);
             boot_info.bootstrap_pc = uentry;
             high = (loadaddr + kernel_size + 3) & ~3;
         }
 
         /* Not an ELF image nor an u-boot image, try a RAW image.  */
         if (kernel_size < 0) {
-            kernel_size = load_image_targphys(kernel_filename, ddr_base,
+            kernel_size = load_image_targphys(args->kernel_filename, ddr_base,
                                               ram_size);
             boot_info.bootstrap_pc = ddr_base;
             high = (ddr_base + kernel_size + 3) & ~3;
         }
 
-        if (initrd_filename) {
+        if (args->initrd_filename) {
             uint32_t initrd_base = 0x88c00000;
             uint32_t initrd_size =
-                    load_image_targphys(initrd_filename, initrd_base,
+                    load_image_targphys(args->initrd_filename, initrd_base,
                                         ram_size - initrd_base);
             if (initrd_size <= 0) {
                 fprintf(stderr, "qemu: could not load initial ram disk '%s'\n",
-                initrd_filename);
+                        args->initrd_filename);
                 exit(1);
             }
 
@@ -231,14 +225,14 @@ labx_microblaze_init(ram_addr_t ram_size,
         }
 
         boot_info.cmdline = high + 4096;
-        if (kernel_cmdline && strlen(kernel_cmdline)) {
-            pstrcpy_targphys("cmdline", boot_info.cmdline, 256, kernel_cmdline);
+        if (args->kernel_cmdline && strlen(args->kernel_cmdline)) {
+            pstrcpy_targphys("cmdline", boot_info.cmdline, 256, args->kernel_cmdline);
         }
         /* Provide a device-tree.  */
         boot_info.fdt = boot_info.cmdline + 4096;
         labx_microblaze_load_device_tree(boot_info.fdt, ram_size,
                                    0, 0,
-                                   kernel_cmdline);
+                                   args->kernel_cmdline);
     }
 }
 

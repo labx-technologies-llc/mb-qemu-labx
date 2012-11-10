@@ -26,7 +26,7 @@
 qemu_irq *nios2_pic_init_cpu(Nios2CPU *cpu);
 
 static inline DeviceState *
-altera_vic_create(target_phys_addr_t base, qemu_irq irq, int kind_of_intr)
+altera_vic_create(hwaddr base, qemu_irq irq, int kind_of_intr)
 {
     DeviceState *dev;
 

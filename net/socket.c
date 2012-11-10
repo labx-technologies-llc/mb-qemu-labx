@@ -21,11 +21,10 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-#include "net/socket.h"
-
 #include "config-host.h"
 
 #include "net.h"
+#include "clients.h"
 #include "monitor.h"
 #include "qemu-char.h"
 #include "qemu-common.h"
@@ -131,9 +130,9 @@ static ssize_t net_socket_receive_dgram(NetClientState *nc, const uint8_t *buf, 
     ssize_t ret;
 
     do {
-        ret = sendto(s->fd, buf, size, 0,
-                     (struct sockaddr *)&s->dgram_dst,
-                     sizeof(s->dgram_dst));
+        ret = qemu_sendto(s->fd, buf, size, 0,
+                          (struct sockaddr *)&s->dgram_dst,
+                          sizeof(s->dgram_dst));
     } while (ret == -1 && errno == EINTR);
 
     if (ret == -1 && errno == EAGAIN) {
@@ -748,7 +747,7 @@ int net_init_socket(const NetClientOptions *opts, const char *name,
         error_report("localaddr= is mandatory with udp=");
         return -1;
     }
-    if (net_socket_udp_init(peer, "udp", name, sock->udp, sock->localaddr) ==
+    if (net_socket_udp_init(peer, "socket", name, sock->udp, sock->localaddr) ==
         -1) {
         return -1;
     }

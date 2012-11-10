@@ -69,7 +69,7 @@ typedef struct Packetizer {
 /*
  * Packetizer registers
  */
-static uint64_t packetizer_regs_read(void *opaque, target_phys_addr_t addr,
+static uint64_t packetizer_regs_read(void *opaque, hwaddr addr,
                                      unsigned int size)
 {
     Packetizer *p = opaque;
@@ -117,14 +117,14 @@ static uint64_t packetizer_regs_read(void *opaque, target_phys_addr_t addr,
         break;
 
     default:
-        printf("labx-audio-packetizer: Read of unknown register %08X\n", addr);
+        printf("labx-audio-packetizer: Read of unknown register %"HWADDR_PRIX"\n", addr);
         break;
     }
 
     return retval;
 }
 
-static void packetizer_regs_write(void *opaque, target_phys_addr_t addr,
+static void packetizer_regs_write(void *opaque, hwaddr addr,
                                   uint64_t val64, unsigned int size)
 {
     Packetizer *p = opaque;
@@ -169,7 +169,7 @@ static void packetizer_regs_write(void *opaque, target_phys_addr_t addr,
 
     default:
         printf("labx-audio-packetizer: Write of unknown register "
-               "%08X = %08X\n", addr, value);
+               "%"HWADDR_PRIX" = %08X\n", addr, value);
         break;
     }
 }
@@ -188,7 +188,7 @@ static const MemoryRegionOps packetizer_regs_ops = {
 /*
  * Clock domain registers
  */
-static uint64_t clock_domain_regs_read(void *opaque, target_phys_addr_t addr,
+static uint64_t clock_domain_regs_read(void *opaque, hwaddr addr,
                                        unsigned int size)
 {
     Packetizer *p = opaque;
@@ -212,7 +212,7 @@ static uint64_t clock_domain_regs_read(void *opaque, target_phys_addr_t addr,
     return retval;
 }
 
-static void clock_domain_regs_write(void *opaque, target_phys_addr_t addr,
+static void clock_domain_regs_write(void *opaque, hwaddr addr,
                                     uint64_t val64, unsigned int size)
 {
     Packetizer *p = opaque;
@@ -248,7 +248,7 @@ static const MemoryRegionOps clock_domain_regs_ops = {
 /*
  * Template RAM
  */
-static uint64_t template_ram_read(void *opaque, target_phys_addr_t addr,
+static uint64_t template_ram_read(void *opaque, hwaddr addr,
                                   unsigned int size)
 {
     Packetizer *p = opaque;
@@ -256,7 +256,7 @@ static uint64_t template_ram_read(void *opaque, target_phys_addr_t addr,
     return p->templateRam[RAM_INDEX(addr, p->templateWords)];
 }
 
-static void template_ram_write(void *opaque, target_phys_addr_t addr,
+static void template_ram_write(void *opaque, hwaddr addr,
                                uint64_t val64, unsigned int size)
 {
     Packetizer *p = opaque;
@@ -279,7 +279,7 @@ static const MemoryRegionOps template_ram_ops = {
 /*
  * Microcode RAM
  */
-static uint64_t microcode_ram_read(void *opaque, target_phys_addr_t addr,
+static uint64_t microcode_ram_read(void *opaque, hwaddr addr,
                                    unsigned int size)
 {
     Packetizer *p = opaque;
@@ -287,7 +287,7 @@ static uint64_t microcode_ram_read(void *opaque, target_phys_addr_t addr,
     return p->microcodeRam[RAM_INDEX(addr, p->microcodeWords)];
 }
 
-static void microcode_ram_write(void *opaque, target_phys_addr_t addr,
+static void microcode_ram_write(void *opaque, hwaddr addr,
                                 uint64_t val64, unsigned int size)
 {
     Packetizer *p = opaque;

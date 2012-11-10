@@ -23,7 +23,7 @@
 
 /* DMA */
 static inline DeviceState *
-labx_dma_create(target_phys_addr_t base, int microcodeWords)
+labx_dma_create(hwaddr base, int microcodeWords)
 {
     DeviceState *dev;
 

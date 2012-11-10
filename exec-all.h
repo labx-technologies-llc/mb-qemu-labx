@@ -103,9 +103,9 @@ void tb_invalidate_phys_range(tb_page_addr_t start, tb_page_addr_t end,
 void tlb_flush_page(CPUArchState *env, target_ulong addr);
 void tlb_flush(CPUArchState *env, int flush_global);
 void tlb_set_page(CPUArchState *env, target_ulong vaddr,
-                  target_phys_addr_t paddr, int prot,
+                  hwaddr paddr, int prot,
                   int mmu_idx, target_ulong size);
-void tb_invalidate_phys_addr(target_phys_addr_t addr);
+void tb_invalidate_phys_addr(hwaddr addr);
 #else
 static inline void tlb_flush_page(CPUArchState *env, target_ulong addr)
 {
@@ -121,8 +121,6 @@ static inline void tlb_flush(CPUArchState *env, int flush_global)
 #define CODE_GEN_PHYS_HASH_BITS     15
 #define CODE_GEN_PHYS_HASH_SIZE     (1 << CODE_GEN_PHYS_HASH_BITS)
 
-#define MIN_CODE_GEN_BUFFER_SIZE     (1024 * 1024)
-
 /* estimated block size for TB allocation */
 /* XXX: use a per code average code fragment size and modulate it
    according to the host CPU */
@@ -132,9 +130,10 @@ static inline void tlb_flush(CPUArchState *env, int flush_global)
 #define CODE_GEN_AVG_BLOCK_SIZE 64
 #endif
 
-#if defined(_ARCH_PPC) || defined(__x86_64__) || defined(__arm__) || defined(__i386__)
-#define USE_DIRECT_JUMP
-#elif defined(CONFIG_TCG_INTERPRETER)
+#if defined(__arm__) || defined(_ARCH_PPC) \
+    || defined(__x86_64__) || defined(__i386__) \
+    || defined(__sparc__) \
+    || defined(CONFIG_TCG_INTERPRETER)
 #define USE_DIRECT_JUMP
 #endif
 
@@ -195,8 +194,6 @@ static inline unsigned int tb_phys_hash_func(tb_page_addr_t pc)
 
 void tb_free(TranslationBlock *tb);
 void tb_flush(CPUArchState *env);
-void tb_link_page(TranslationBlock *tb,
-                  tb_page_addr_t phys_pc, tb_page_addr_t phys_page2);
 void tb_phys_invalidate(TranslationBlock *tb, tb_page_addr_t page_addr);
 
 extern TranslationBlock *tb_phys_hash[CODE_GEN_PHYS_HASH_SIZE];
@@ -244,6 +241,8 @@ static inline void tb_set_jmp_target1(uintptr_t jmp_addr, uintptr_t addr)
     __asm __volatile__ ("swi 0x9f0002" : : "r" (_beg), "r" (_end), "r" (_flg));
 #endif
 }
+#elif defined(__sparc__)
+void tb_set_jmp_target1(uintptr_t jmp_addr, uintptr_t addr);
 #else
 #error tb_set_jmp_target1 is missing
 #endif
@@ -293,7 +292,8 @@ extern int tb_invalidated_flag;
 #if defined(CONFIG_TCG_INTERPRETER)
 /* Alpha and SH4 user mode emulations and Softmmu call GETPC().
    For all others, GETPC remains undefined (which makes TCI a little faster. */
-# if defined(CONFIG_SOFTMMU) || defined(TARGET_ALPHA) || defined(TARGET_SH4)
+# if defined(CONFIG_SOFTMMU) || defined(TARGET_ALPHA) || defined(TARGET_SH4) \
+     || defined(TARGET_SPARC)
 extern uintptr_t tci_tb_ptr;
 #  define GETPC() tci_tb_ptr
 # endif
@@ -308,12 +308,51 @@ extern uintptr_t tci_tb_ptr;
 # define GETPC() ((uintptr_t)__builtin_return_address(0) - 1)
 #endif
 
+#if defined(CONFIG_QEMU_LDST_OPTIMIZATION) && defined(CONFIG_SOFTMMU)
+/* qemu_ld/st optimization split code generation to fast and slow path, thus,
+   it needs special handling for an MMU helper which is called from the slow
+   path, to get the fast path's pc without any additional argument.
+   It uses a tricky solution which embeds the fast path pc into the slow path.
+
+   Code flow in slow path:
+   (1) pre-process
+   (2) call MMU helper
+   (3) jump to (5)
+   (4) fast path information (implementation specific)
+   (5) post-process (e.g. stack adjust)
+   (6) jump to corresponding code of the next of fast path
+ */
+# if defined(__i386__) || defined(__x86_64__)
+/* To avoid broken disassembling, long jmp is used for embedding fast path pc,
+   so that the destination is the next code of fast path, though this jmp is
+   never executed.
+
+   call MMU helper
+   jmp POST_PROC (2byte)    <- GETRA()
+   jmp NEXT_CODE (5byte)
+   POST_PROCESS ...         <- GETRA() + 7
+ */
+#  define GETRA() ((uintptr_t)__builtin_return_address(0))
+#  define GETPC_LDST() ((uintptr_t)(GETRA() + 7 + \
+                                    *(int32_t *)((void *)GETRA() + 3) - 1))
+# elif defined (_ARCH_PPC) && !defined (_ARCH_PPC64)
+#  define GETRA() ((uintptr_t)__builtin_return_address(0))
+#  define GETPC_LDST() ((uintptr_t) ((*(int32_t *)(GETRA() - 4)) - 1))
+# else
+#  error "CONFIG_QEMU_LDST_OPTIMIZATION needs GETPC_LDST() implementation!"
+# endif
+bool is_tcg_gen_code(uintptr_t pc_ptr);
+# define GETPC_EXT() (is_tcg_gen_code(GETRA()) ? GETPC_LDST() : GETPC())
+#else
+# define GETPC_EXT() GETPC()
+#endif
+
 #if !defined(CONFIG_USER_ONLY)
 
-struct MemoryRegion *iotlb_to_region(target_phys_addr_t index);
-uint64_t io_mem_read(struct MemoryRegion *mr, target_phys_addr_t addr,
+struct MemoryRegion *iotlb_to_region(hwaddr index);
+uint64_t io_mem_read(struct MemoryRegion *mr, hwaddr addr,
                      unsigned size);
-void io_mem_write(struct MemoryRegion *mr, target_phys_addr_t addr,
+void io_mem_write(struct MemoryRegion *mr, hwaddr addr,
                   uint64_t value, unsigned size);
 
 void tlb_fill(CPUArchState *env1, target_ulong addr, int is_write, int mmu_idx,

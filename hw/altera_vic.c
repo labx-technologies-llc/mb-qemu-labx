@@ -69,7 +69,7 @@ static void update_irq(AlteraVIC *pv)
     }
 }
 
-static uint64_t pic_read(void *opaque, target_phys_addr_t addr,
+static uint64_t pic_read(void *opaque, hwaddr addr,
                          unsigned int size)
 {
     AlteraVIC *pv = opaque;
@@ -83,7 +83,7 @@ static uint64_t pic_read(void *opaque, target_phys_addr_t addr,
     return r;
 }
 
-static void pic_write(void *opaque, target_phys_addr_t addr,
+static void pic_write(void *opaque, hwaddr addr,
                       uint64_t val64, unsigned int size)
 {
     AlteraVIC *pv = opaque;

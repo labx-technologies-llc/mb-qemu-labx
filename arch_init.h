@@ -35,6 +35,6 @@ int tcg_available(void);
 int kvm_available(void);
 int xen_available(void);
 
-CpuDefinitionInfoList GCC_WEAK_DECL *arch_query_cpu_definitions(Error **errp);
+CpuDefinitionInfoList *arch_query_cpu_definitions(Error **errp);
 
 #endif

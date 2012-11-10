@@ -76,7 +76,7 @@ static void uart_update_irq(AlteraUART *s)
     qemu_set_irq(s->irq, irq);
 }
 
-static uint64_t uart_read(void *opaque, target_phys_addr_t addr,
+static uint64_t uart_read(void *opaque, hwaddr addr,
                           unsigned int size)
 {
     AlteraUART *s = opaque;
@@ -108,7 +108,7 @@ static uint64_t uart_read(void *opaque, target_phys_addr_t addr,
     return r;
 }
 
-static void uart_write(void *opaque, target_phys_addr_t addr,
+static void uart_write(void *opaque, hwaddr addr,
                        uint64_t val64, unsigned int size)
 {
     AlteraUART *s = opaque;

@@ -32,6 +32,13 @@
 #include "trace.h"
 #include "qemu_socket.h"
 
+static void default_qemu_fd_register(int fd)
+{
+}
+QEMU_WEAK_ALIAS(qemu_fd_register, default_qemu_fd_register);
+#define qemu_fd_register \
+    QEMU_WEAK_REF(qemu_fd_register, default_qemu_fd_register)
+
 void *qemu_oom_check(void *ptr)
 {
     if (ptr == NULL) {
@@ -72,6 +79,30 @@ void qemu_vfree(void *ptr)
 {
     trace_qemu_vfree(ptr);
     VirtualFree(ptr, 0, MEM_RELEASE);
+}
+
+/* FIXME: add proper locking */
+struct tm *gmtime_r(const time_t *timep, struct tm *result)
+{
+    struct tm *p = gmtime(timep);
+    memset(result, 0, sizeof(*result));
+    if (p) {
+        *result = *p;
+        p = result;
+    }
+    return p;
+}
+
+/* FIXME: add proper locking */
+struct tm *localtime_r(const time_t *timep, struct tm *result)
+{
+    struct tm *p = localtime(timep);
+    memset(result, 0, sizeof(*result));
+    if (p) {
+        *result = *p;
+        p = result;
+    }
+    return p;
 }
 
 void socket_set_block(int fd)

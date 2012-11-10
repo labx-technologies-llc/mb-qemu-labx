@@ -78,6 +78,7 @@ int qemu_devtree_get_root_node(void *fdt, char *node_path);
 
 int devtree_get_num_nodes(void *fdt);
 void devtree_info_dump(void *fdt);
+void qemu_devtree_dumpdtb(void *fdt, int size);
 
 #define DT_PATH_LENGTH 1024
 
