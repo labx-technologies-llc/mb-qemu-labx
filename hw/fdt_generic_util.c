@@ -38,6 +38,7 @@
 
 #include "fdt_generic_util.h"
 #include "net.h"
+#include "block.h"
 
 /* FIXME: wrap direct calls into libfdt */
 
@@ -108,6 +109,7 @@ static void fdt_init_node(void *args)
         fprintf(stderr, "FDT: ERROR: no compatibility found for node %s/%s\n", node_path,
             node_name);
         DB_PRINT("exit %d\n", this_entry);
+        fdti->routinesPending--;
         return;
     }
     compat = all_compats;
@@ -143,6 +145,7 @@ exit:
     }
     g_free(node_path);
     g_free(all_compats);
+    fdti->routinesPending--;
     return;
 }
 
@@ -152,6 +155,7 @@ int simple_bus_fdt_init(char *bus_node_path, FDTMachineInfo *fdti, void *unused)
     int num_children = qemu_devtree_get_num_children(fdti->fdt, bus_node_path,
                                                         1);
     char **children = qemu_devtree_get_children(fdti->fdt, bus_node_path, 1);
+    int initialRoutinesPending = fdti->routinesPending;
 
     DB_PRINT("num child devices: %d\n", num_children);
 
@@ -159,7 +163,12 @@ int simple_bus_fdt_init(char *bus_node_path, FDTMachineInfo *fdti, void *unused)
         struct FDTInitNodeArgs *init_args = g_malloc0(sizeof(*init_args));
         init_args->node_path = children[i];
         init_args->fdti = fdti;
+        fdti->routinesPending++;
         qemu_coroutine_enter(qemu_coroutine_create(fdt_init_node), init_args);
+    }
+
+    if (fdti->routinesPending != initialRoutinesPending) {
+        bdrv_drain_all();
     }
 
     g_free(children);

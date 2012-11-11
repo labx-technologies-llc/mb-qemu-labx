@@ -578,6 +578,7 @@ static int pflash_cfi01_init(SysBusDevice *dev)
         if (ret < 0) {
             vmstate_unregister_ram(&pfl->mem, DEVICE(pfl));
             memory_region_destroy(&pfl->mem);
+            printf("PFLASH: Read failure %08X bytes\n", (uint32_t)total_len);
             return 1;
         }
     }

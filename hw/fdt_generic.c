@@ -197,6 +197,7 @@ FDTMachineInfo *fdt_init_new_fdti(void *fdt)
 {
     FDTMachineInfo *fdti = g_malloc0(sizeof(*fdti));
     fdti->fdt = fdt;
+    fdti->routinesPending = 0;
     fdti->cq = g_malloc0(sizeof(*(fdti->cq)));
     qemu_co_queue_init(fdti->cq);
     fdti->dev_opaques = g_malloc0(sizeof(*(fdti->dev_opaques)) *
@@ -207,6 +208,10 @@ FDTMachineInfo *fdt_init_new_fdti(void *fdt)
 void fdt_init_destroy_fdti(FDTMachineInfo *fdti)
 {
     FDTDevOpaque *dp;
+    if (!qemu_co_queue_empty(fdti->cq) || fdti->routinesPending != 0) {
+        printf("FDT: Coroutines left running!\n");
+        return;
+    }
     for (dp = fdti->dev_opaques; dp->node_path; dp++) {
         g_free(dp->node_path);
     }

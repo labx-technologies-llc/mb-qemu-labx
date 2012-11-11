@@ -28,6 +28,7 @@ typedef struct FDTMachineInfo {
     hwaddr sysbus_base;
 
     /* recheck coroutine queue */
+    int      routinesPending;
     CoQueue *cq;
 } FDTMachineInfo;
 
