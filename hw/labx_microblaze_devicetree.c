@@ -73,9 +73,20 @@ static void *get_device_tree(int *fdt_size)
 {
     char *path;
     void *fdt;
+    const char *dtb_arg;
+    QemuOpts *machine_opts;
 
-    /* Try the local "mb.dtb" override.  */
-    fdt = load_device_tree("mb.dtb", fdt_size);
+    machine_opts = qemu_opts_find(qemu_find_opts("machine"), 0);
+    if (!machine_opts) {
+        dtb_arg = BINARY_DEVICE_TREE_FILE;
+    } else {
+      dtb_arg = qemu_opt_get(machine_opts, "dtb");
+      if (!dtb_arg) {
+          dtb_arg = BINARY_DEVICE_TREE_FILE;
+      }
+    }
+
+    fdt = load_device_tree(dtb_arg, fdt_size);
     if (!fdt) {
         path = qemu_find_file(QEMU_FILE_TYPE_BIOS, BINARY_DEVICE_TREE_FILE);
         if (path) {
