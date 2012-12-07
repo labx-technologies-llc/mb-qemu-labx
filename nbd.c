@@ -397,6 +397,7 @@ static int nbd_send_negotiate(NBDClient *client)
     rc = -EINVAL;
 
     TRACE("Beginning negotiation.");
+    memset(buf, 0, sizeof(buf));
     memcpy(buf, "NBDMAGIC", 8);
     if (client->exp) {
         assert ((client->exp->nbdflags & ~65535) == 0);
@@ -406,7 +407,6 @@ static int nbd_send_negotiate(NBDClient *client)
     } else {
         cpu_to_be64w((uint64_t*)(buf + 8), NBD_OPTS_MAGIC);
     }
-    memset(buf + 28, 0, 124);
 
     if (client->exp) {
         if (write_sync(csock, buf, sizeof(buf)) != sizeof(buf)) {
@@ -596,22 +596,21 @@ int nbd_init(int fd, int csock, uint32_t flags, off_t size, size_t blocksize)
         return -serrno;
     }
 
-    if (flags & NBD_FLAG_READ_ONLY) {
-        int read_only = 1;
-        TRACE("Setting readonly attribute");
+    if (ioctl(fd, NBD_SET_FLAGS, flags) < 0) {
+        if (errno == ENOTTY) {
+            int read_only = (flags & NBD_FLAG_READ_ONLY) != 0;
+            TRACE("Setting readonly attribute");
 
-        if (ioctl(fd, BLKROSET, (unsigned long) &read_only) < 0) {
+            if (ioctl(fd, BLKROSET, (unsigned long) &read_only) < 0) {
+                int serrno = errno;
+                LOG("Failed setting read-only attribute");
+                return -serrno;
+            }
+        } else {
             int serrno = errno;
-            LOG("Failed setting read-only attribute");
+            LOG("Failed setting flags");
             return -serrno;
         }
-    }
-
-    if (ioctl(fd, NBD_SET_FLAGS, flags) < 0
-        && errno != ENOTTY) {
-        int serrno = errno;
-        LOG("Failed setting flags");
-        return -serrno;
     }
 
     TRACE("Negotiation ended");

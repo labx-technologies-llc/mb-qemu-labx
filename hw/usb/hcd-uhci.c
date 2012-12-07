@@ -152,6 +152,7 @@ struct UHCIState {
     QEMUBH *bh;
     uint32_t frame_bytes;
     uint32_t frame_bandwidth;
+    bool completions_only;
     UHCIPort ports[NB_PORTS];
 
     /* Interrupts that should be raised at the end of the current frame.  */
@@ -555,6 +556,10 @@ static void uhci_ioport_writew(void *opaque, uint32_t addr, uint32_t val)
                 }
             }
             port->ctrl &= UHCI_PORT_READ_ONLY;
+            /* enabled may only be set if a device is connected */
+            if (!(port->ctrl & UHCI_PORT_CCS)) {
+                val &= ~UHCI_PORT_EN;
+            }
             port->ctrl |= (val & ~UHCI_PORT_READ_ONLY);
             /* some bits are reset when a '1' is written to them */
             port->ctrl &= ~(val & UHCI_PORT_WRITE_CLEAR);
@@ -780,22 +785,21 @@ static int uhci_handle_td_error(UHCIState *s, UHCI_TD *td, uint32_t td_addr,
 
 static int uhci_complete_td(UHCIState *s, UHCI_TD *td, UHCIAsync *async, uint32_t *int_mask)
 {
-    int len = 0, max_len, ret;
+    int len = 0, max_len;
     uint8_t pid;
 
     max_len = ((td->token >> 21) + 1) & 0x7ff;
     pid = td->token & 0xff;
 
-    ret = async->packet.result;
-
     if (td->ctrl & TD_CTRL_IOS)
         td->ctrl &= ~TD_CTRL_ACTIVE;
 
-    if (ret < 0) {
-        return uhci_handle_td_error(s, td, async->td_addr, ret, int_mask);
+    if (async->packet.status != USB_RET_SUCCESS) {
+        return uhci_handle_td_error(s, td, async->td_addr,
+                                    async->packet.status, int_mask);
     }
 
-    len = async->packet.result;
+    len = async->packet.actual_length;
     td->ctrl = (td->ctrl & ~0x7ff) | ((len - 1) & 0x7ff);
 
     /* The NAK bit may have been set by a previous frame, so clear it
@@ -824,7 +828,7 @@ static int uhci_complete_td(UHCIState *s, UHCI_TD *td, UHCIAsync *async, uint32_
 static int uhci_handle_td(UHCIState *s, UHCIQueue *q, uint32_t qh_addr,
                           UHCI_TD *td, uint32_t td_addr, uint32_t *int_mask)
 {
-    int len = 0, max_len;
+    int ret, max_len;
     bool spd;
     bool queuing = (q != NULL);
     uint8_t pid = td->token & 0xff;
@@ -892,6 +896,10 @@ static int uhci_handle_td(UHCIState *s, UHCIQueue *q, uint32_t qh_addr,
         goto done;
     }
 
+    if (s->completions_only) {
+        return TD_RESULT_ASYNC_CONT;
+    }
+
     /* Allocate new packet */
     if (q == NULL) {
         USBDevice *dev = uhci_find_device(s, (td->token >> 8) & 0x7f);
@@ -915,13 +923,14 @@ static int uhci_handle_td(UHCIState *s, UHCIQueue *q, uint32_t qh_addr,
     switch(pid) {
     case USB_TOKEN_OUT:
     case USB_TOKEN_SETUP:
-        len = usb_handle_packet(q->ep->dev, &async->packet);
-        if (len >= 0)
-            len = max_len;
+        usb_handle_packet(q->ep->dev, &async->packet);
+        if (async->packet.status == USB_RET_SUCCESS) {
+            async->packet.actual_length = max_len;
+        }
         break;
 
     case USB_TOKEN_IN:
-        len = usb_handle_packet(q->ep->dev, &async->packet);
+        usb_handle_packet(q->ep->dev, &async->packet);
         break;
 
     default:
@@ -932,8 +941,8 @@ static int uhci_handle_td(UHCIState *s, UHCIQueue *q, uint32_t qh_addr,
         uhci_update_irq(s);
         return TD_RESULT_STOP_FRAME;
     }
- 
-    if (len == USB_RET_ASYNC) {
+
+    if (async->packet.status == USB_RET_ASYNC) {
         uhci_async_link(async);
         if (!queuing) {
             uhci_queue_fill(q, td);
@@ -941,13 +950,11 @@ static int uhci_handle_td(UHCIState *s, UHCIQueue *q, uint32_t qh_addr,
         return TD_RESULT_ASYNC_START;
     }
 
-    async->packet.result = len;
-
 done:
-    len = uhci_complete_td(s, td, async, int_mask);
+    ret = uhci_complete_td(s, td, async, int_mask);
     usb_packet_unmap(&async->packet, &async->sgl);
     uhci_async_free(async);
-    return len;
+    return ret;
 }
 
 static void uhci_async_complete(USBPort *port, USBPacket *packet)
@@ -955,16 +962,15 @@ static void uhci_async_complete(USBPort *port, USBPacket *packet)
     UHCIAsync *async = container_of(packet, UHCIAsync, packet);
     UHCIState *s = async->queue->uhci;
 
-    if (packet->result == USB_RET_REMOVE_FROM_QUEUE) {
-        uhci_async_unlink(async);
+    if (packet->status == USB_RET_REMOVE_FROM_QUEUE) {
         uhci_async_cancel(async);
         return;
     }
 
     async->done = 1;
-    if (s->frame_bytes < s->frame_bandwidth) {
-        qemu_bh_schedule(s->bh);
-    }
+    /* Force processing of this packet *now*, needed for migration */
+    s->completions_only = true;
+    qemu_bh_schedule(s->bh);
 }
 
 static int is_valid(uint32_t link)
@@ -1056,7 +1062,7 @@ static void uhci_process_frame(UHCIState *s)
     qhdb_reset(&qhdb);
 
     for (cnt = FRAME_MAX_LOOPS; is_valid(link) && cnt; cnt--) {
-        if (s->frame_bytes >= s->frame_bandwidth) {
+        if (!s->completions_only && s->frame_bytes >= s->frame_bandwidth) {
             /* We've reached the usb 1.1 bandwidth, which is
                1280 bytes/frame, stop processing */
             trace_usb_uhci_frame_stop_bandwidth();
@@ -1172,6 +1178,7 @@ static void uhci_frame_timer(void *opaque)
     /* prepare the timer for the next frame */
     s->expire_time += (get_ticks_per_sec() / FRAME_TIMER_FREQ);
     s->frame_bytes = 0;
+    s->completions_only = false;
     qemu_bh_cancel(s->bh);
 
     if (!(s->cmd & UHCI_CMD_RS)) {
@@ -1320,6 +1327,7 @@ static void uhci_class_init(ObjectClass *klass, void *data)
     k->device_id = info->device_id;
     k->revision  = info->revision;
     k->class_id  = PCI_CLASS_SERIAL_USB;
+    k->no_hotplug = 1;
     dc->vmsd = &vmstate_uhci;
     dc->props = uhci_properties;
     u->info = *info;

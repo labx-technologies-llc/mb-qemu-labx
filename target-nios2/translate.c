@@ -70,7 +70,7 @@ static void gen_intermediate_code_internal(
     int max_insns;
     uint32_t next_page_start;
     int j, lj = -1;
-    uint16_t *gen_opc_end = gen_opc_buf + OPC_MAX_SIZE;
+    uint16_t *gen_opc_end = tcg_ctx.gen_opc_buf + OPC_MAX_SIZE;
 
     /* Initialize DC */
     dc->cpu_env = cpu_env;
@@ -98,7 +98,7 @@ static void gen_intermediate_code_internal(
     do {
         /* Mark instruction start with associated PC */
         if (search_pc) {
-            j = gen_opc_ptr - gen_opc_buf;
+            j = tcg_ctx.gen_opc_ptr - tcg_ctx.gen_opc_buf;
             if (lj < j) {
                 lj++;
                 while (lj < j) {
@@ -126,7 +126,7 @@ static void gen_intermediate_code_internal(
          * Otherwise the subsequent code could get translated several times.
          * Also stop translation when a page boundary is reached.  This
          * ensures prefetch aborts occur at the right place.  */
-    } while (!dc->is_jmp && gen_opc_ptr < gen_opc_end &&
+    } while (!dc->is_jmp && tcg_ctx.gen_opc_ptr < gen_opc_end &&
              !env->singlestep_enabled &&
              !singlestep &&
              dc->pc < next_page_start &&
@@ -158,11 +158,11 @@ static void gen_intermediate_code_internal(
 
     /* End off the block */
     gen_icount_end(tb, num_insns);
-    *gen_opc_ptr = INDEX_op_end;
+    *tcg_ctx.gen_opc_ptr = INDEX_op_end;
 
     /* Mark instruction starts for the final generated instruction */
     if (search_pc) {
-        j = gen_opc_ptr - gen_opc_buf;
+        j = tcg_ctx.gen_opc_ptr - tcg_ctx.gen_opc_buf;
         lj++;
         while (lj <= j) {
             gen_opc_instr_start[lj++] = 0;
@@ -176,9 +176,9 @@ static void gen_intermediate_code_internal(
     if (qemu_loglevel_mask(CPU_LOG_TB_IN_ASM)) {
         qemu_log("----------------\n");
         qemu_log("IN: %s\n", lookup_symbol(tb->pc));
-        log_target_disas(tb->pc, dc->pc - tb->pc, 0);
+        log_target_disas(env, tb->pc, dc->pc - tb->pc, 0);
         qemu_log("\nisize=%d osize=%td\n",
-                 dc->pc - tb->pc, gen_opc_ptr - gen_opc_buf);
+                 dc->pc - tb->pc, tcg_ctx.gen_opc_ptr - tcg_ctx.gen_opc_buf);
     }
 #endif
 }

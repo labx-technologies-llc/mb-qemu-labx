@@ -1185,6 +1185,21 @@ for flag in $gcc_flags; do
     fi
 done
 
+# Workaround for http://gcc.gnu.org/PR55489.  Happens with -fPIE/-fPIC and
+# large functions that use global variables.  The bug is in all releases of
+# GCC, but it became particularly acute in 4.6.x and 4.7.x.  It is fixed in
+# 4.7.3 and 4.8.0.  We should be able to delete this at the end of 2013.
+cat > $TMPC << EOF
+#if __GNUC__ == 4 && (__GNUC_MINOR__ == 6 || (__GNUC_MINOR__ == 7 && __GNUC_PATCHLEVEL__ <= 2))
+int main(void) { return 0; }
+#else
+#error No bug in this compiler.
+#endif
+EOF
+if compile_prog "-Werror -fno-gcse" "" ; then
+  TRANSLATE_OPT_CFLAGS=-fno-gcse
+fi
+
 if test "$static" = "yes" ; then
   if test "$pie" = "yes" ; then
     echo "static and pie are mutually incompatible"
@@ -1385,7 +1400,7 @@ fi
 # libseccomp check
 
 if test "$seccomp" != "no" ; then
-    if $pkg_config libseccomp --modversion >/dev/null 2>&1; then
+    if $pkg_config --atleast-version=1.0.0 libseccomp --modversion >/dev/null 2>&1; then
         LIBS=`$pkg_config --libs libseccomp`
 	seccomp="yes"
     else
@@ -2123,11 +2138,10 @@ else
     echo "      git submodule update --init pixman"
     exit 1
   fi
-  pixman_cflags="-I${source_path}/pixman/pixman"
-  pixman_libs="-Lpixman/pixman/.libs -lpixman-1"
+  mkdir -p pixman/pixman
+  pixman_cflags="-I\$(SRC_PATH)/pixman/pixman -I\$(BUILD_DIR)/pixman/pixman"
+  pixman_libs="-L\$(BUILD_DIR)/pixman/pixman/.libs -lpixman-1"
 fi
-QEMU_CFLAGS="$QEMU_CFLAGS $pixman_cflags"
-libs_softmmu="$libs_softmmu $pixman_libs"
 
 ##########################################
 # libcap probe
@@ -3139,6 +3153,10 @@ if test "$cpu" = "ppc64" -a "$targetos" != "Darwin" ; then
   roms="$roms spapr-rtas"
 fi
 
+# add pixman flags after all config tests are done
+QEMU_CFLAGS="$QEMU_CFLAGS $pixman_cflags"
+libs_softmmu="$libs_softmmu $pixman_libs"
+
 echo "Install prefix    $prefix"
 echo "BIOS directory    `eval echo $qemu_datadir`"
 echo "binary directory  `eval echo $bindir`"
@@ -3648,6 +3666,11 @@ if test "$sparse" = "yes" ; then
   echo "HOST_CC      := REAL_CC=\"\$(HOST_CC)\" cgcc"  >> $config_host_mak
   echo "QEMU_CFLAGS  += -Wbitwise -Wno-transparent-union -Wno-old-initializer -Wno-non-pointer-null" >> $config_host_mak
 fi
+if test "$cross_prefix" != ""; then
+  echo "AUTOCONF_HOST := --host=${cross_prefix%-}"     >> $config_host_mak
+else
+  echo "AUTOCONF_HOST := "                             >> $config_host_mak
+fi
 echo "LDFLAGS=$LDFLAGS" >> $config_host_mak
 echo "ARLIBS_BEGIN=$arlibs_begin" >> $config_host_mak
 echo "ARLIBS_END=$arlibs_end" >> $config_host_mak
@@ -3656,6 +3679,7 @@ echo "LIBS_TOOLS+=$libs_tools" >> $config_host_mak
 echo "EXESUF=$EXESUF" >> $config_host_mak
 echo "LIBS_QGA+=$libs_qga" >> $config_host_mak
 echo "POD2MAN=$POD2MAN" >> $config_host_mak
+echo "TRANSLATE_OPT_CFLAGS=$TRANSLATE_OPT_CFLAGS" >> $config_host_mak
 
 # generate list of library paths for linker script
 
@@ -3890,7 +3914,10 @@ upper() {
 
 case "$cpu" in
   i386|x86_64|ppc)
-    echo "CONFIG_QEMU_LDST_OPTIMIZATION=y" >> $config_target_mak
+    # The TCG interpreter currently does not support ld/st optimization.
+    if test "$tcg_interpreter" = "no" ; then
+        echo "CONFIG_QEMU_LDST_OPTIMIZATION=y" >> $config_target_mak
+    fi
   ;;
 esac
 
@@ -3954,9 +3981,6 @@ if test "$target_softmmu" = "yes" ; then
   echo "LIBS+=$libs_softmmu $target_libs_softmmu" >> $config_target_mak
   if test "$smartcard_nss" = "yes" ; then
     echo "subdir-$target: subdir-libcacard" >> $config_host_mak
-  fi
-  if test "$pixman" = "internal" ; then
-    echo "subdir-$target: subdir-pixman" >> $config_host_mak
   fi
   case "$target_arch2" in
     i386|x86_64)
@@ -4159,13 +4183,16 @@ echo "QEMU_INCLUDES+=$includes" >> $config_target_mak
 
 done # for target in $targets
 
+if [ "$pixman" = "internal" ]; then
+  echo "config-host.h: subdir-pixman" >> $config_host_mak
+fi
+
 # build tree in object directory in case the source is not in the current directory
 DIRS="tests tests/tcg tests/tcg/cris tests/tcg/lm32"
 DIRS="$DIRS pc-bios/optionrom pc-bios/spapr-rtas"
 DIRS="$DIRS roms/seabios roms/vgabios"
 DIRS="$DIRS qapi-generated"
 DIRS="$DIRS libcacard libcacard/libcacard libcacard/trace"
-DIRS="$DIRS pixman"
 FILES="Makefile tests/tcg/Makefile qdict-test-data.txt"
 FILES="$FILES tests/tcg/cris/Makefile tests/tcg/cris/.gdbinit"
 FILES="$FILES tests/tcg/lm32/Makefile libcacard/Makefile"

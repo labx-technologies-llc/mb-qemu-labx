@@ -140,24 +140,21 @@ void usb_device_handle_reset(USBDevice *dev)
     }
 }
 
-int usb_device_handle_control(USBDevice *dev, USBPacket *p, int request,
-                              int value, int index, int length, uint8_t *data)
+void usb_device_handle_control(USBDevice *dev, USBPacket *p, int request,
+                               int value, int index, int length, uint8_t *data)
 {
     USBDeviceClass *klass = USB_DEVICE_GET_CLASS(dev);
     if (klass->handle_control) {
-        return klass->handle_control(dev, p, request, value, index, length,
-                                         data);
+        klass->handle_control(dev, p, request, value, index, length, data);
     }
-    return -ENOSYS;
 }
 
-int usb_device_handle_data(USBDevice *dev, USBPacket *p)
+void usb_device_handle_data(USBDevice *dev, USBPacket *p)
 {
     USBDeviceClass *klass = USB_DEVICE_GET_CLASS(dev);
     if (klass->handle_data) {
-        return klass->handle_data(dev, p);
+        klass->handle_data(dev, p);
     }
-    return -ENOSYS;
 }
 
 const char *usb_device_get_product_desc(USBDevice *dev)
@@ -590,6 +587,13 @@ USBDevice *usbdevice_create(const char *cmdline)
         /* no error because some drivers are not converted (yet) */
         error_report("usbdevice %s not found", driver);
 #endif
+        return NULL;
+    }
+
+    if (!bus) {
+        error_report("Error: no usb bus to attach usbdevice %s, "
+                     "please try -machine usb=on and check that "
+                     "the machine model supports USB", driver);
         return NULL;
     }
 
