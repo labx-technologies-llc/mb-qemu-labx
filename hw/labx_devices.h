@@ -27,7 +27,7 @@ labx_dma_create(hwaddr base, int microcodeWords)
 {
     DeviceState *dev;
 
-    dev = qdev_create(NULL, "labx,dma");
+    dev = qdev_create(NULL, "labx.dma");
     qdev_prop_set_uint32(dev, "reg",             base);
     qdev_prop_set_uint32(dev, "microcode-words", microcodeWords);
     qdev_init_nofail(dev);

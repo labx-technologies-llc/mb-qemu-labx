@@ -113,7 +113,7 @@ static uint64_t packetizer_regs_read(void *opaque, hwaddr addr,
         break;
 
     case 0xFF: /* revision */
-        retval = 0x00000013;
+        retval = 0x00000015;
         break;
 
     default:
@@ -395,10 +395,24 @@ static const TypeInfo labx_audio_packetizer_info2 = {
     .class_init    = labx_audio_packetizer_class_init,
 };
 
+static void labrinth_avb_packetizer_class_init(ObjectClass *klass, void *data)
+{
+    // TODO: Tack on the TDM mux registers. For now just init the packetizer
+    labx_audio_packetizer_class_init(klass, data);
+}
+
+static const TypeInfo labrinth_avb_packetizer_info = {
+    .name          = "xlnx.labrinth-avb-packetizer",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(Packetizer),
+    .class_init    = labrinth_avb_packetizer_class_init,
+};
+
 static void labx_audio_packetizer_register(void)
 {
     type_register_static(&labx_audio_packetizer_info);
     type_register_static(&labx_audio_packetizer_info2);
+    type_register_static(&labrinth_avb_packetizer_info);
 }
 
 type_init(labx_audio_packetizer_register)

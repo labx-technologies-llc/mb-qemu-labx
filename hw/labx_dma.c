@@ -32,6 +32,9 @@ typedef struct LabXDMA {
     MemoryRegion  mmio_dma;
     MemoryRegion  mmio_microcode;
 
+    /* IRQ */
+    qemu_irq irq;
+
     /* Device Configuration */
     uint32_t baseAddress;
     uint32_t paramWords;
@@ -39,6 +42,7 @@ typedef struct LabXDMA {
     uint32_t numIndexRegs;
     uint32_t numChannels;
     uint32_t numAlus;
+    uint32_t hasStatusFifo;
 
     /* Values set by drivers */
 
@@ -79,7 +83,8 @@ static uint64_t dma_regs_read(void *opaque, hwaddr addr,
             break;
 
         case 0x7E: /* capabilities */
-            retval = ((p->numIndexRegs               & 0x0F) << 12) |
+            retval = ((p->hasStatusFifo              & 0x01) << 16) |
+                     ((p->numIndexRegs               & 0x0F) << 12) |
                      ((p->numChannels                & 0x03) << 10) |
                      ((p->numAlus                    & 0x03) << 8) |
                      ((min_bits(p->paramWords-1)     & 0x0F) << 4) |
@@ -190,6 +195,9 @@ static int labx_dma_init(SysBusDevice *dev)
     /* Initialize defaults */
     p->microcodeRam = g_malloc0(p->microcodeWords*4);
 
+    /* Set up the IRQ */
+    sysbus_init_irq(dev, &p->irq);
+
     /* Set up memory regions */
     memory_region_init_io(&p->mmio_dma,       &dma_regs_ops,      p,
                           "labx,dma-regs",      0x100 * 4);
@@ -213,6 +221,7 @@ static Property labx_dma_properties[] = {
     DEFINE_PROP_UINT32("num-index-regs",  LabXDMA, numIndexRegs,   4),
     DEFINE_PROP_UINT32("num-channels",    LabXDMA, numChannels,    1),
     DEFINE_PROP_UINT32("num-alus",        LabXDMA, numAlus,        1),
+    DEFINE_PROP_UINT32("status-fifo",     LabXDMA, hasStatusFifo,  1),
     DEFINE_PROP_END_OF_LIST(),
 };
 
@@ -226,15 +235,37 @@ static void labx_dma_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo labx_dma_info = {
-    .name          = "labx,dma",
+    .name          = "labx.dma",
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(LabXDMA),
     .class_init    = labx_dma_class_init,
 };
 
+static const TypeInfo labx_dma_info2 = {
+    .name          = "xlnx.labx-dma",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(LabXDMA),
+    .class_init    = labx_dma_class_init,
+};
+
+static void labrinth_tdm_output_class_init(ObjectClass *klass, void *data)
+{
+    // TODO: add on the TDM/LA registers. For now call the dma init
+    labx_dma_class_init(klass, data);
+}
+
+static const TypeInfo labrinth_tdm_output_info = {
+    .name          = "xlnx.labrinth-tdm-output",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(LabXDMA),
+    .class_init    = labrinth_tdm_output_class_init,
+};
+
 static void labx_dma_register(void)
 {
     type_register_static(&labx_dma_info);
+    type_register_static(&labx_dma_info2);
+    type_register_static(&labrinth_tdm_output_info);
 }
 
 type_init(labx_dma_register)
