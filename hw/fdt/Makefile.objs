@@ -1,0 +1,4 @@
+
+obj-$(CONFIG_FDT_GENERIC) += fdt_generic.o
+obj-$(CONFIG_FDT_GENERIC) += fdt_generic_util.o
+obj-$(CONFIG_FDT_GENERIC) += fdt_generic_devices.o

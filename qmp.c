@@ -14,15 +14,17 @@
  */
 
 #include "qemu-common.h"
-#include "sysemu.h"
+#include "sysemu/sysemu.h"
 #include "qmp-commands.h"
+#include "sysemu/char.h"
 #include "ui/qemu-spice.h"
 #include "ui/vnc.h"
-#include "kvm.h"
-#include "arch_init.h"
+#include "sysemu/kvm.h"
+#include "sysemu/arch_init.h"
 #include "hw/qdev.h"
-#include "blockdev.h"
-#include "qemu/qom-qobject.h"
+#include "sysemu/blockdev.h"
+#include "qom/qom-qobject.h"
+#include "hw/boards.h"
 
 NameInfo *qmp_query_name(Error **errp)
 {
@@ -107,6 +109,15 @@ void qmp_cpu(int64_t index, Error **errp)
     /* Just do nothing */
 }
 
+void qmp_cpu_add(int64_t id, Error **errp)
+{
+    if (current_machine->hot_add_cpu) {
+        current_machine->hot_add_cpu(id, errp);
+    } else {
+        error_setg(errp, "Not supported");
+    }
+}
+
 #ifndef CONFIG_VNC
 /* If VNC support is enabled, the "true" query-vnc command is
    defined in the VNC subsystem */
@@ -148,8 +159,7 @@ void qmp_cont(Error **errp)
 {
     Error *local_err = NULL;
 
-    if (runstate_check(RUN_STATE_INTERNAL_ERROR) ||
-               runstate_check(RUN_STATE_SHUTDOWN)) {
+    if (runstate_needs_reset()) {
         error_set(errp, QERR_RESET_REQUIRED);
         return;
     } else if (runstate_check(RUN_STATE_SUSPENDED)) {

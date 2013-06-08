@@ -27,9 +27,9 @@
 
 #include "config.h"
 #include "qemu-common.h"
-#include "cpu-defs.h"
+#include "exec/cpu-defs.h"
 
-#include "softfloat.h"
+#include "fpu/softfloat.h"
 
 #define TARGET_HAS_ICE 1
 
@@ -234,8 +234,9 @@ typedef struct CPUARMState {
 
 ARMCPU *cpu_arm_init(const char *cpu_model);
 void arm_translate_init(void);
+void arm_cpu_register_gdb_regs_for_features(ARMCPU *cpu);
 int cpu_arm_exec(CPUARMState *s);
-void do_interrupt(CPUARMState *);
+int bank_number(int mode);
 void switch_mode(CPUARMState *, int);
 uint32_t do_arm_semihosting(CPUARMState *env);
 
@@ -639,8 +640,6 @@ static inline CPUARMState *cpu_init(const char *cpu_model)
 #define cpu_signal_handler cpu_arm_signal_handler
 #define cpu_list arm_cpu_list
 
-#define CPU_SAVE_VERSION 9
-
 /* MMU modes definitions */
 #define MMU_MODE0_SUFFIX _kernel
 #define MMU_MODE1_SUFFIX _user
@@ -659,7 +658,7 @@ static inline void cpu_clone_regs(CPUARMState *env, target_ulong newsp)
 }
 #endif
 
-#include "cpu-all.h"
+#include "exec/cpu-all.h"
 
 /* Bit usage in the TB flags field: */
 #define ARM_TBFLAG_THUMB_SHIFT      0
@@ -720,13 +719,11 @@ static inline void cpu_get_tb_cpu_state(CPUARMState *env, target_ulong *pc,
 
 static inline bool cpu_has_work(CPUState *cpu)
 {
-    CPUARMState *env = &ARM_CPU(cpu)->env;
-
-    return env->interrupt_request &
+    return cpu->interrupt_request &
         (CPU_INTERRUPT_FIQ | CPU_INTERRUPT_HARD | CPU_INTERRUPT_EXITTB);
 }
 
-#include "exec-all.h"
+#include "exec/exec-all.h"
 
 static inline void cpu_pc_from_tb(CPUARMState *env, TranslationBlock *tb)
 {

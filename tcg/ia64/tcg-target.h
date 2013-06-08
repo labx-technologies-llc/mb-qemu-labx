@@ -22,6 +22,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
+#ifndef TCG_TARGET_IA64 
 #define TCG_TARGET_IA64 1
 
 /* We only map the first 64 registers */
@@ -135,6 +136,14 @@ typedef enum {
 #define TCG_TARGET_HAS_movcond_i64      1
 #define TCG_TARGET_HAS_deposit_i32      1
 #define TCG_TARGET_HAS_deposit_i64      1
+#define TCG_TARGET_HAS_add2_i32         0
+#define TCG_TARGET_HAS_add2_i64         0
+#define TCG_TARGET_HAS_sub2_i32         0
+#define TCG_TARGET_HAS_sub2_i64         0
+#define TCG_TARGET_HAS_mulu2_i32        0
+#define TCG_TARGET_HAS_mulu2_i64        0
+#define TCG_TARGET_HAS_muls2_i32        0
+#define TCG_TARGET_HAS_muls2_i64        0
 
 #define TCG_TARGET_deposit_i32_valid(ofs, len) ((len) <= 16)
 #define TCG_TARGET_deposit_i64_valid(ofs, len) ((len) <= 16)
@@ -158,3 +167,5 @@ static inline void flush_icache_range(tcg_target_ulong start,
     }
     asm volatile (";;sync.i;;srlz.i;;");
 }
+
+#endif

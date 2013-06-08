@@ -44,8 +44,8 @@
 #include <jpeglib.h>
 #endif
 
-#include "bswap.h"
-#include "qint.h"
+#include "qemu/bswap.h"
+#include "qapi/qmp/qint.h"
 #include "vnc.h"
 #include "vnc-enc-tight.h"
 #include "vnc-palette.h"
@@ -123,7 +123,7 @@ static bool tight_can_send_png_rect(VncState *vs, int w, int h)
         return false;
     }
 
-    if (ds_get_bytes_per_pixel(vs->ds) == 1 ||
+    if (surface_bytes_per_pixel(vs->vd->ds) == 1 ||
         vs->client_pf.bytes_per_pixel == 1) {
         return false;
     }
@@ -301,7 +301,7 @@ tight_detect_smooth_image(VncState *vs, int w, int h)
         return 0;
     }
 
-    if (ds_get_bytes_per_pixel(vs->ds) == 1 ||
+    if (surface_bytes_per_pixel(vs->vd->ds) == 1 ||
         vs->client_pf.bytes_per_pixel == 1 ||
         w < VNC_TIGHT_DETECT_MIN_WIDTH || h < VNC_TIGHT_DETECT_MIN_HEIGHT) {
         return 0;
@@ -1184,8 +1184,9 @@ static int send_jpeg_rect(VncState *vs, int x, int y, int w, int h, int quality)
     uint8_t *buf;
     int dy;
 
-    if (ds_get_bytes_per_pixel(vs->ds) == 1)
+    if (surface_bytes_per_pixel(vs->vd->ds) == 1) {
         return send_full_color_rect(vs, x, y, w, h);
+    }
 
     buffer_reserve(&vs->tight.jpeg, 2048);
 
@@ -1212,7 +1213,7 @@ static int send_jpeg_rect(VncState *vs, int x, int y, int w, int h, int quality)
     buf = (uint8_t *)pixman_image_get_data(linebuf);
     row[0] = buf;
     for (dy = 0; dy < h; dy++) {
-        qemu_pixman_linebuf_fill(linebuf, vs->vd->server, w, dy);
+        qemu_pixman_linebuf_fill(linebuf, vs->vd->server, w, x, y + dy);
         jpeg_write_scanlines(&cinfo, row, 1);
     }
     qemu_pixman_image_unref(linebuf);
@@ -1356,7 +1357,7 @@ static int send_png_rect(VncState *vs, int x, int y, int w, int h,
         if (color_type == PNG_COLOR_TYPE_PALETTE) {
             memcpy(buf, vs->tight.tight.buffer + (dy * w), w);
         } else {
-            qemu_pixman_linebuf_fill(linebuf, vs->vd->server, w, dy);
+            qemu_pixman_linebuf_fill(linebuf, vs->vd->server, w, x, y + dy);
         }
         png_write_row(png_ptr, buf);
     }

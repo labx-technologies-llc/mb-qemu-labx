@@ -33,7 +33,6 @@
 #include "hw/usb.h"
 #include "hw/usb/desc.h"
 #include "hw/hw.h"
-#include "hw/audiodev.h"
 #include "audio/audio.h"
 
 #define USBAUDIO_VENDOR_NUM     0x46f4 /* CRC16() of "QEMU" */
@@ -684,7 +683,7 @@ static void usb_audio_class_init(ObjectClass *klass, void *data)
     k->set_interface  = usb_audio_set_interface;
 }
 
-static TypeInfo usb_audio_info = {
+static const TypeInfo usb_audio_info = {
     .name          = "usb-audio",
     .parent        = TYPE_USB_DEVICE,
     .instance_size = sizeof(USBAudioState),

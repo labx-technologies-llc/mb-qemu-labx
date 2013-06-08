@@ -29,17 +29,18 @@
 
 #include "qemu.h"
 #else
-#include "monitor.h"
-#include "qemu-char.h"
-#include "sysemu.h"
-#include "gdbstub.h"
+#include "monitor/monitor.h"
+#include "sysemu/char.h"
+#include "sysemu/sysemu.h"
+#include "exec/gdbstub.h"
 #endif
 
 #define MAX_PACKET_LENGTH 4096
 
 #include "cpu.h"
-#include "qemu_socket.h"
-#include "kvm.h"
+#include "qemu/sockets.h"
+#include "sysemu/kvm.h"
+#include "qemu/bitops.h"
 
 #ifndef TARGET_CPU_MEMORY_RW_DEBUG
 static inline int target_memory_rw_debug(CPUArchState *env, target_ulong addr,
@@ -370,7 +371,9 @@ static inline void gdb_continue(GDBState *s)
 #ifdef CONFIG_USER_ONLY
     s->running_state = 1;
 #else
-    vm_start();
+    if (runstate_check(RUN_STATE_DEBUG)) {
+        vm_start();
+    }
 #endif
 }
 
@@ -780,7 +783,8 @@ static int cpu_gdb_write_register(CPUPPCState *env, uint8_t *mem_buf, int n)
             /* fpscr */
             if (gdb_has_xml)
                 return 0;
-            return 4;
+            store_fpscr(env, ldtul_p(mem_buf), 0xffffffff);
+            return sizeof(target_ulong);
         }
     }
     return 0;
@@ -1562,27 +1566,34 @@ static int cpu_gdb_write_register(CPUAlphaState *env, uint8_t *mem_buf, int n)
 }
 #elif defined (TARGET_S390X)
 
-#define NUM_CORE_REGS S390_NUM_TOTAL_REGS
+#define NUM_CORE_REGS  S390_NUM_REGS
 
 static int cpu_gdb_read_register(CPUS390XState *env, uint8_t *mem_buf, int n)
 {
+    uint64_t val;
+    int cc_op;
+
     switch (n) {
-        case S390_PSWM_REGNUM: GET_REGL(env->psw.mask); break;
-        case S390_PSWA_REGNUM: GET_REGL(env->psw.addr); break;
-        case S390_R0_REGNUM ... S390_R15_REGNUM:
-            GET_REGL(env->regs[n-S390_R0_REGNUM]); break;
-        case S390_A0_REGNUM ... S390_A15_REGNUM:
-            GET_REG32(env->aregs[n-S390_A0_REGNUM]); break;
-        case S390_FPC_REGNUM: GET_REG32(env->fpc); break;
-        case S390_F0_REGNUM ... S390_F15_REGNUM:
-            /* XXX */
-            break;
-        case S390_PC_REGNUM: GET_REGL(env->psw.addr); break;
-        case S390_CC_REGNUM:
-            env->cc_op = calc_cc(env, env->cc_op, env->cc_src, env->cc_dst,
-                                 env->cc_vr);
-            GET_REG32(env->cc_op);
-            break;
+    case S390_PSWM_REGNUM:
+        cc_op = calc_cc(env, env->cc_op, env->cc_src, env->cc_dst, env->cc_vr);
+        val = deposit64(env->psw.mask, 44, 2, cc_op);
+        GET_REGL(val);
+        break;
+    case S390_PSWA_REGNUM:
+        GET_REGL(env->psw.addr);
+        break;
+    case S390_R0_REGNUM ... S390_R15_REGNUM:
+        GET_REGL(env->regs[n-S390_R0_REGNUM]);
+        break;
+    case S390_A0_REGNUM ... S390_A15_REGNUM:
+        GET_REG32(env->aregs[n-S390_A0_REGNUM]);
+        break;
+    case S390_FPC_REGNUM:
+        GET_REG32(env->fpc);
+        break;
+    case S390_F0_REGNUM ... S390_F15_REGNUM:
+        GET_REG64(env->fregs[n-S390_F0_REGNUM].ll);
+        break;
     }
 
     return 0;
@@ -1597,25 +1608,35 @@ static int cpu_gdb_write_register(CPUS390XState *env, uint8_t *mem_buf, int n)
     tmp32 = ldl_p(mem_buf);
 
     switch (n) {
-        case S390_PSWM_REGNUM: env->psw.mask = tmpl; break;
-        case S390_PSWA_REGNUM: env->psw.addr = tmpl; break;
-        case S390_R0_REGNUM ... S390_R15_REGNUM:
-            env->regs[n-S390_R0_REGNUM] = tmpl; break;
-        case S390_A0_REGNUM ... S390_A15_REGNUM:
-            env->aregs[n-S390_A0_REGNUM] = tmp32; r=4; break;
-        case S390_FPC_REGNUM: env->fpc = tmp32; r=4; break;
-        case S390_F0_REGNUM ... S390_F15_REGNUM:
-            /* XXX */
-            break;
-        case S390_PC_REGNUM: env->psw.addr = tmpl; break;
-        case S390_CC_REGNUM: env->cc_op = tmp32; r=4; break;
+    case S390_PSWM_REGNUM:
+        env->psw.mask = tmpl;
+        env->cc_op = extract64(tmpl, 44, 2);
+        break;
+    case S390_PSWA_REGNUM:
+        env->psw.addr = tmpl;
+        break;
+    case S390_R0_REGNUM ... S390_R15_REGNUM:
+        env->regs[n-S390_R0_REGNUM] = tmpl;
+        break;
+    case S390_A0_REGNUM ... S390_A15_REGNUM:
+        env->aregs[n-S390_A0_REGNUM] = tmp32;
+        r = 4;
+        break;
+    case S390_FPC_REGNUM:
+        env->fpc = tmp32;
+        r = 4;
+        break;
+    case S390_F0_REGNUM ... S390_F15_REGNUM:
+        env->fregs[n-S390_F0_REGNUM].ll = tmpl;
+        break;
+    default:
+        return 0;
     }
-
     return r;
 }
 #elif defined (TARGET_LM32)
 
-#include "hw/lm32_pic.h"
+#include "hw/lm32/lm32_pic.h"
 #define NUM_CORE_REGS (32 + 7)
 
 static int cpu_gdb_read_register(CPULM32State *env, uint8_t *mem_buf, int n)
@@ -2077,9 +2098,11 @@ static void gdb_set_cpu_pc(GDBState *s, target_ulong pc)
 static CPUArchState *find_cpu(uint32_t thread_id)
 {
     CPUArchState *env;
+    CPUState *cpu;
 
     for (env = first_cpu; env != NULL; env = env->next_cpu) {
-        if (cpu_index(env) == thread_id) {
+        cpu = ENV_GET_CPU(env);
+        if (cpu_index(cpu) == thread_id) {
             return env;
         }
     }
@@ -2107,7 +2130,7 @@ static int gdb_handle_packet(GDBState *s, const char *line_buf)
     case '?':
         /* TODO: Make this return the correct value for user-mode.  */
         snprintf(buf, sizeof(buf), "T%02xthread:%02x;", GDB_SIGNAL_TRAP,
-                 cpu_index(s->c_cpu));
+                 cpu_index(ENV_GET_CPU(s->c_cpu)));
         put_packet(s, buf);
         /* Remove all the breakpoints when this query is issued,
          * because gdb is doing and initial connect and the state
@@ -2402,7 +2425,8 @@ static int gdb_handle_packet(GDBState *s, const char *line_buf)
         } else if (strcmp(p,"sThreadInfo") == 0) {
         report_cpuinfo:
             if (s->query_cpu) {
-                snprintf(buf, sizeof(buf), "m%x", cpu_index(s->query_cpu));
+                snprintf(buf, sizeof(buf), "m%x",
+                         cpu_index(ENV_GET_CPU(s->query_cpu)));
                 put_packet(s, buf);
                 s->query_cpu = s->query_cpu->next_cpu;
             } else
@@ -2412,10 +2436,11 @@ static int gdb_handle_packet(GDBState *s, const char *line_buf)
             thread = strtoull(p+16, (char **)&p, 16);
             env = find_cpu(thread);
             if (env != NULL) {
+                CPUState *cpu = ENV_GET_CPU(env);
                 cpu_synchronize_state(env);
                 len = snprintf((char *)mem_buf, sizeof(mem_buf),
-                               "CPU#%d [%s]", env->cpu_index,
-                               env->halted ? "halted " : "running");
+                               "CPU#%d [%s]", cpu->cpu_index,
+                               cpu->halted ? "halted " : "running");
                 memtohex(buf, mem_buf, len);
                 put_packet(s, buf);
             }
@@ -2522,6 +2547,7 @@ static void gdb_vm_state_change(void *opaque, int running, RunState state)
 {
     GDBState *s = gdbserver_state;
     CPUArchState *env = s->c_cpu;
+    CPUState *cpu = ENV_GET_CPU(env);
     char buf[256];
     const char *type;
     int ret;
@@ -2550,7 +2576,7 @@ static void gdb_vm_state_change(void *opaque, int running, RunState state)
             }
             snprintf(buf, sizeof(buf),
                      "T%02xthread:%02x;%swatch:" TARGET_FMT_lx ";",
-                     GDB_SIGNAL_TRAP, cpu_index(env), type,
+                     GDB_SIGNAL_TRAP, cpu_index(cpu), type,
                      env->watchpoint_hit->vaddr);
             env->watchpoint_hit = NULL;
             goto send_packet;
@@ -2583,7 +2609,7 @@ static void gdb_vm_state_change(void *opaque, int running, RunState state)
         ret = GDB_SIGNAL_UNKNOWN;
         break;
     }
-    snprintf(buf, sizeof(buf), "T%02xthread:%02x;", ret, cpu_index(env));
+    snprintf(buf, sizeof(buf), "T%02xthread:%02x;", ret, cpu_index(cpu));
 
 send_packet:
     put_packet(s, buf);
@@ -2847,7 +2873,7 @@ static void gdb_accept(void)
     GDBState *s;
     struct sockaddr_in sockaddr;
     socklen_t len;
-    int val, fd;
+    int fd;
 
     for(;;) {
         len = sizeof(sockaddr);
@@ -2864,8 +2890,7 @@ static void gdb_accept(void)
     }
 
     /* set short latency */
-    val = 1;
-    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (char *)&val, sizeof(val));
+    socket_set_nodelay(fd);
 
     s = g_malloc0(sizeof(GDBState));
     s->c_cpu = first_cpu;
@@ -2894,7 +2919,7 @@ static int gdbserver_open(int port)
 
     /* allow fast reuse */
     val = 1;
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (char *)&val, sizeof(val));
+    qemu_setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val));
 
     sockaddr.sin_family = AF_INET;
     sockaddr.sin_port = htons(port);
@@ -3031,6 +3056,7 @@ int gdbserver_start(const char *device)
         if (!chr)
             return -1;
 
+        qemu_chr_fe_claim_no_fail(chr);
         qemu_chr_add_handlers(chr, gdb_chr_can_receive, gdb_chr_receive,
                               gdb_chr_event, NULL);
     }

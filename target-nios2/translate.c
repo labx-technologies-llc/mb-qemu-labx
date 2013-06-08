@@ -26,8 +26,8 @@
 #include <assert.h>
 
 #include "cpu.h"
-#include "exec-all.h"
-#include "disas.h"
+#include "exec/exec-all.h"
+#include "disas/disas.h"
 #include "helper.h"
 #include "qemu-common.h"
 
@@ -59,7 +59,7 @@ static const char *regnames[] = {
 static TCGv_ptr cpu_env;
 static TCGv cpu_R[NUM_CORE_REGS];
 
-#include "gen-icount.h"
+#include "exec/gen-icount.h"
 
 /* generate intermediate code for basic block 'tb'.  */
 static void gen_intermediate_code_internal(
@@ -94,7 +94,7 @@ static void gen_intermediate_code_internal(
     }
     next_page_start = (tb->pc & TARGET_PAGE_MASK) + TARGET_PAGE_SIZE;
 
-    gen_icount_start();
+    gen_tb_start();
     do {
         /* Mark instruction start with associated PC */
         if (search_pc) {
@@ -102,12 +102,12 @@ static void gen_intermediate_code_internal(
             if (lj < j) {
                 lj++;
                 while (lj < j) {
-                    gen_opc_instr_start[lj++] = 0;
+                    tcg_ctx.gen_opc_instr_start[lj++] = 0;
                 }
             }
-            gen_opc_pc[lj] = dc->pc;
-            gen_opc_instr_start[lj] = 1;
-            gen_opc_icount[lj] = num_insns;
+            tcg_ctx.gen_opc_pc[lj] = dc->pc;
+            tcg_ctx.gen_opc_instr_start[lj] = 1;
+            tcg_ctx.gen_opc_icount[lj] = num_insns;
         }
 
         LOG_DIS("%8.8x:\t", dc->pc);
@@ -157,7 +157,7 @@ static void gen_intermediate_code_internal(
     }
 
     /* End off the block */
-    gen_icount_end(tb, num_insns);
+    gen_tb_end(tb, num_insns);
     *tcg_ctx.gen_opc_ptr = INDEX_op_end;
 
     /* Mark instruction starts for the final generated instruction */
@@ -165,7 +165,7 @@ static void gen_intermediate_code_internal(
         j = tcg_ctx.gen_opc_ptr - tcg_ctx.gen_opc_buf;
         lj++;
         while (lj <= j) {
-            gen_opc_instr_start[lj++] = 0;
+            tcg_ctx.gen_opc_instr_start[lj++] = 0;
         }
     } else {
         tb->size = dc->pc - tb->pc;
@@ -248,6 +248,6 @@ Nios2CPU *cpu_nios2_init(const char *cpu_model)
 
 void restore_state_to_opc(CPUNios2State *env, TranslationBlock *tb, int pc_pos)
 {
-    env->regs[R_PC] = gen_opc_pc[pc_pos];
+    env->regs[R_PC] = tcg_ctx.gen_opc_pc[pc_pos];
 }
 

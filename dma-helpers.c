@@ -7,10 +7,10 @@
  * (GNU GPL), version 2 or later.
  */
 
-#include "dma.h"
+#include "sysemu/dma.h"
 #include "trace.h"
-#include "range.h"
-#include "qemu-thread.h"
+#include "qemu/range.h"
+#include "qemu/thread.h"
 
 /* #define DEBUG_IOMMU */
 
@@ -296,6 +296,11 @@ bool iommu_dma_memory_valid(DMAContext *dma, dma_addr_t addr, dma_addr_t len,
         /* The translation might be valid for larger regions. */
         if (plen > len) {
             plen = len;
+        }
+
+        if (!address_space_access_valid(dma->as, paddr, len,
+                                        dir == DMA_DIRECTION_FROM_DEVICE)) {
+            return false;
         }
 
         len -= plen;

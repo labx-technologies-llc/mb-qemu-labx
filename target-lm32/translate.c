@@ -18,11 +18,11 @@
  */
 
 #include "cpu.h"
-#include "disas.h"
+#include "disas/disas.h"
 #include "helper.h"
 #include "tcg-op.h"
 
-#include "hw/lm32_pic.h"
+#include "hw/lm32/lm32_pic.h"
 
 #define GEN_HELPER 1
 #include "helper.h"
@@ -53,7 +53,7 @@ static TCGv cpu_deba;
 static TCGv cpu_bp[4];
 static TCGv cpu_wp[4];
 
-#include "gen-icount.h"
+#include "exec/gen-icount.h"
 
 enum {
     OP_FMT_RI,
@@ -324,10 +324,20 @@ static inline void gen_compare(DisasContext *dc, int cond)
     int rX = (dc->format == OP_FMT_RR) ? dc->r2 : dc->r1;
     int rY = (dc->format == OP_FMT_RR) ? dc->r0 : dc->r0;
     int rZ = (dc->format == OP_FMT_RR) ? dc->r1 : -1;
+    int i;
 
     if (dc->format == OP_FMT_RI) {
-        tcg_gen_setcondi_tl(cond, cpu_R[rX], cpu_R[rY],
-                sign_extend(dc->imm16, 16));
+        switch (cond) {
+        case TCG_COND_GEU:
+        case TCG_COND_GTU:
+            i = zero_extend(dc->imm16, 16);
+            break;
+        default:
+            i = sign_extend(dc->imm16, 16);
+            break;
+        }
+
+        tcg_gen_setcondi_tl(cond, cpu_R[rX], cpu_R[rY], i);
     } else {
         tcg_gen_setcond_tl(cond, cpu_R[rX], cpu_R[rY], cpu_R[rZ]);
     }
@@ -373,7 +383,7 @@ static void dec_cmpgeu(DisasContext *dc)
 {
     if (dc->format == OP_FMT_RI) {
         LOG_DIS("cmpgeui r%d, r%d, %d\n", dc->r0, dc->r1,
-                sign_extend(dc->imm16, 16));
+                zero_extend(dc->imm16, 16));
     } else {
         LOG_DIS("cmpgeu r%d, r%d, r%d\n", dc->r2, dc->r0, dc->r1);
     }
@@ -385,7 +395,7 @@ static void dec_cmpgu(DisasContext *dc)
 {
     if (dc->format == OP_FMT_RI) {
         LOG_DIS("cmpgui r%d, r%d, %d\n", dc->r0, dc->r1,
-                sign_extend(dc->imm16, 16));
+                zero_extend(dc->imm16, 16));
     } else {
         LOG_DIS("cmpgu r%d, r%d, r%d\n", dc->r2, dc->r0, dc->r1);
     }
@@ -1012,8 +1022,6 @@ static void gen_intermediate_code_internal(CPULM32State *env,
     int num_insns;
     int max_insns;
 
-    qemu_log_try_set_file(stderr);
-
     pc_start = tb->pc;
     dc->env = env;
     dc->tb = tb;
@@ -1029,11 +1037,6 @@ static void gen_intermediate_code_internal(CPULM32State *env,
         cpu_abort(env, "LM32: unaligned PC=%x\n", pc_start);
     }
 
-    if (qemu_loglevel_mask(CPU_LOG_TB_IN_ASM)) {
-        qemu_log("-----------------------------------------\n");
-        log_cpu_state(env, 0);
-    }
-
     next_page_start = (pc_start & TARGET_PAGE_MASK) + TARGET_PAGE_SIZE;
     lj = -1;
     num_insns = 0;
@@ -1042,7 +1045,7 @@ static void gen_intermediate_code_internal(CPULM32State *env,
         max_insns = CF_COUNT_MASK;
     }
 
-    gen_icount_start();
+    gen_tb_start();
     do {
         check_breakpoint(env, dc);
 
@@ -1051,12 +1054,12 @@ static void gen_intermediate_code_internal(CPULM32State *env,
             if (lj < j) {
                 lj++;
                 while (lj < j) {
-                    gen_opc_instr_start[lj++] = 0;
+                    tcg_ctx.gen_opc_instr_start[lj++] = 0;
                 }
             }
-            gen_opc_pc[lj] = dc->pc;
-            gen_opc_instr_start[lj] = 1;
-            gen_opc_icount[lj] = num_insns;
+            tcg_ctx.gen_opc_pc[lj] = dc->pc;
+            tcg_ctx.gen_opc_instr_start[lj] = 1;
+            tcg_ctx.gen_opc_icount[lj] = num_insns;
         }
 
         /* Pretty disas.  */
@@ -1104,13 +1107,13 @@ static void gen_intermediate_code_internal(CPULM32State *env,
         }
     }
 
-    gen_icount_end(tb, num_insns);
+    gen_tb_end(tb, num_insns);
     *tcg_ctx.gen_opc_ptr = INDEX_op_end;
     if (search_pc) {
         j = tcg_ctx.gen_opc_ptr - tcg_ctx.gen_opc_buf;
         lj++;
         while (lj <= j) {
-            gen_opc_instr_start[lj++] = 0;
+            tcg_ctx.gen_opc_instr_start[lj++] = 0;
         }
     } else {
         tb->size = dc->pc - pc_start;
@@ -1172,7 +1175,7 @@ void cpu_dump_state(CPULM32State *env, FILE *f, fprintf_function cpu_fprintf,
 
 void restore_state_to_opc(CPULM32State *env, TranslationBlock *tb, int pc_pos)
 {
-    env->pc = gen_opc_pc[pc_pos];
+    env->pc = tcg_ctx.gen_opc_pc[pc_pos];
 }
 
 void lm32_translate_init(void)

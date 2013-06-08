@@ -1,11 +1,11 @@
 /* General "disassemble this chunk" code.  Used for debugging. */
 #include "config.h"
-#include "dis-asm.h"
+#include "disas/bfd.h"
 #include "elf.h"
 #include <errno.h>
 
 #include "cpu.h"
-#include "disas.h"
+#include "disas/disas.h"
 
 typedef struct CPUDebug {
     struct disassemble_info info;
@@ -227,6 +227,7 @@ void target_disas(FILE *out, CPUArchState *env, target_ulong code,
         s.info.mach = bfd_mach_ppc;
 #endif
     }
+    s.info.disassembler_options = (char *)"any";
     print_insn = print_insn_ppc;
 #elif defined(TARGET_M68K)
     print_insn = print_insn_m68k;
@@ -256,6 +257,9 @@ void target_disas(FILE *out, CPUArchState *env, target_ulong code,
 #elif defined(TARGET_MICROBLAZE)
     s.info.mach = bfd_arch_microblaze;
     print_insn = print_insn_microblaze;
+#elif defined(TARGET_MOXIE)
+    s.info.mach = bfd_arch_moxie;
+    print_insn = print_insn_moxie;
 #elif defined(TARGET_NIOS2)
     s.info.mach = bfd_arch_nios2;
     print_insn = print_insn_nios2;
@@ -325,6 +329,7 @@ void disas(FILE *out, void *code, unsigned long size)
     s.info.mach = bfd_mach_x86_64;
     print_insn = print_insn_i386;
 #elif defined(_ARCH_PPC)
+    s.info.disassembler_options = (char *)"any";
     print_insn = print_insn_ppc;
 #elif defined(__alpha__)
     print_insn = print_insn_alpha;
@@ -377,7 +382,7 @@ const char *lookup_symbol(target_ulong orig_addr)
 
 #if !defined(CONFIG_USER_ONLY)
 
-#include "monitor.h"
+#include "monitor/monitor.h"
 
 static int monitor_disas_is_physical;
 
@@ -465,6 +470,9 @@ void monitor_disas(Monitor *mon, CPUArchState *env,
 #elif defined(TARGET_S390X)
     s.info.mach = bfd_mach_s390_64;
     print_insn = print_insn_s390;
+#elif defined(TARGET_MOXIE)
+    s.info.mach = bfd_arch_moxie;
+    print_insn = print_insn_moxie;
 #elif defined(TARGET_LM32)
     s.info.mach = bfd_mach_lm32;
     print_insn = print_insn_lm32;

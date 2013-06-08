@@ -27,9 +27,9 @@
 
 #define CPUArchState struct CPUNios2State
 
-#include "cpu-defs.h"
-#include "softfloat.h"
-#include "qemu/cpu.h"
+#include "exec/cpu-defs.h"
+#include "fpu/softfloat.h"
+#include "qom/cpu.h"
 struct CPUNios2State;
 typedef struct CPUNios2State CPUNios2State;
 #if !defined(CONFIG_USER_ONLY)
@@ -202,10 +202,12 @@ static inline Nios2CPU *nios2_env_get_cpu(CPUNios2State *env)
 
 #define ENV_GET_CPU(e) CPU(nios2_env_get_cpu(e))
 
+#define ENV_OFFSET offsetof(Nios2CPU, env)
+
 Nios2CPU *cpu_nios2_init(const char *cpu_model);
 int cpu_nios2_exec(CPUNios2State *s);
 void cpu_nios2_close(CPUNios2State *s);
-void do_interrupt(CPUNios2State *env);
+void nios2_cpu_do_interrupt(CPUState *cs);
 int cpu_nios2_signal_handler(int host_signum, void *pinfo, void *puc);
 void dump_mmu(FILE *f, fprintf_function cpu_fprintf, CPUNios2State *env);
 
@@ -264,7 +266,7 @@ static inline int cpu_interrupts_enabled(CPUNios2State *env)
     return env->regs[CR_STATUS] & CR_STATUS_PIE;
 }
 
-#include "cpu-all.h"
+#include "exec/cpu-all.h"
 
 static inline target_ulong cpu_get_pc(CPUNios2State *env)
 {
@@ -286,12 +288,10 @@ void cpu_unassigned_access(CPUNios2State *env1, hwaddr addr,
 
 static inline bool cpu_has_work(CPUState *cpu)
 {
-    CPUNios2State *env = &NIOS2_CPU(cpu)->env;
-
-    return env->interrupt_request & (CPU_INTERRUPT_HARD | CPU_INTERRUPT_NMI);
+    return cpu->interrupt_request & (CPU_INTERRUPT_HARD | CPU_INTERRUPT_NMI);
 }
 
-#include "exec-all.h"
+#include "exec/exec-all.h"
 
 static inline void cpu_pc_from_tb(CPUNios2State *env, TranslationBlock *tb)
 {

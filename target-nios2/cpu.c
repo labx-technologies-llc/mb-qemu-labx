@@ -30,7 +30,7 @@ static void nios2_cpu_reset(CPUState *s)
     CPUNios2State *env = &cpu->env;
 
     if (qemu_loglevel_mask(CPU_LOG_RESET)) {
-        qemu_log("CPU Reset (CPU %d)\n", env->cpu_index);
+        qemu_log("CPU Reset (CPU %d)\n", s->cpu_index);
         log_cpu_state(env, 0);
     }
 
@@ -51,9 +51,11 @@ static void nios2_cpu_reset(CPUState *s)
 
 static void nios2_cpu_initfn(Object *obj)
 {
+    CPUState *cs = CPU(obj);
     Nios2CPU *cpu = NIOS2_CPU(obj);
     CPUNios2State *env = &cpu->env;
 
+    cs->env_ptr = env;
     cpu_exec_init(env);
 }
 
@@ -64,6 +66,7 @@ static void nios2_cpu_class_init(ObjectClass *oc, void *data)
 
     mcc->parent_reset = cc->reset;
     cc->reset = nios2_cpu_reset;
+    cc->do_interrupt = nios2_cpu_do_interrupt;
 }
 
 static const TypeInfo nios2_cpu_type_info = {

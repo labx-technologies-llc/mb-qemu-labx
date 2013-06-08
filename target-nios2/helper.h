@@ -18,7 +18,7 @@
  * <http://www.gnu.org/licenses/lgpl-2.1.html>
  */
 
-#include "def-helper.h"
+#include "exec/def-helper.h"
 
 /* Define this to enable tracing calls/returns */
 /* #define CALL_TRACING */
@@ -41,5 +41,5 @@ DEF_HELPER_2(divu, i32, i32, i32)
 
 DEF_HELPER_5(memalign, void, env, i32, i32, i32, i32)
 
-#include "def-helper.h"
+#include "exec/def-helper.h"
 

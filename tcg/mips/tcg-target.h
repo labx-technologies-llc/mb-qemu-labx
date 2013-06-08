@@ -23,6 +23,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
+#ifndef TCG_TARGET_MIPS 
 #define TCG_TARGET_MIPS 1
 
 #ifdef __MIPSEB__
@@ -86,6 +87,7 @@ typedef enum {
 #define TCG_TARGET_HAS_orc_i32          0
 #define TCG_TARGET_HAS_eqv_i32          0
 #define TCG_TARGET_HAS_nand_i32         0
+#define TCG_TARGET_HAS_muls2_i32        1
 
 /* optional instructions only implemented on MIPS4, MIPS32 and Loongson 2 */
 #if (defined(__mips_isa_rev) && (__mips_isa_rev >= 1)) || \
@@ -127,3 +129,5 @@ static inline void flush_icache_range(tcg_target_ulong start,
 {
     cacheflush ((void *)start, stop-start, ICACHE);
 }
+
+#endif

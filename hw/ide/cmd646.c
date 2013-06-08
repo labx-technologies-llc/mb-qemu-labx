@@ -23,12 +23,12 @@
  * THE SOFTWARE.
  */
 #include <hw/hw.h>
-#include <hw/pc.h>
-#include <hw/pci.h>
-#include <hw/isa.h>
-#include "block.h"
-#include "sysemu.h"
-#include "dma.h"
+#include <hw/i386/pc.h>
+#include <hw/pci/pci.h>
+#include <hw/isa/isa.h>
+#include "block/block.h"
+#include "sysemu/sysemu.h"
+#include "sysemu/dma.h"
 
 #include <hw/ide/pci.h>
 
@@ -281,7 +281,7 @@ static int pci_cmd646_ide_initfn(PCIDevice *dev)
 
     irq = qemu_allocate_irqs(cmd646_set_irq, d, 2);
     for (i = 0; i < 2; i++) {
-        ide_bus_new(&d->bus[i], &d->dev.qdev, i);
+        ide_bus_new(&d->bus[i], &d->dev.qdev, i, 2);
         ide_init2(&d->bus[i], irq[i]);
 
         bmdma_init(&d->bus[i], &d->bmdma[i], d);
@@ -342,7 +342,7 @@ static void cmd646_ide_class_init(ObjectClass *klass, void *data)
     dc->props = cmd646_ide_properties;
 }
 
-static TypeInfo cmd646_ide_info = {
+static const TypeInfo cmd646_ide_info = {
     .name          = "cmd646-ide",
     .parent        = TYPE_PCI_DEVICE,
     .instance_size = sizeof(PCIIDEState),

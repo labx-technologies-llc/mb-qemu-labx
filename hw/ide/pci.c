@@ -23,11 +23,11 @@
  * THE SOFTWARE.
  */
 #include <hw/hw.h>
-#include <hw/pc.h>
-#include <hw/pci.h>
-#include <hw/isa.h>
-#include "block.h"
-#include "dma.h"
+#include <hw/i386/pc.h>
+#include <hw/pci/pci.h>
+#include <hw/isa/isa.h>
+#include "block/block.h"
+#include "sysemu/dma.h"
 
 #include <hw/ide/pci.h>
 
@@ -311,8 +311,8 @@ void bmdma_cmd_writeb(BMDMAState *bm, uint32_t val)
             if (bm->bus->dma->aiocb) {
                 bdrv_drain_all();
                 assert(bm->bus->dma->aiocb == NULL);
-                assert((bm->status & BM_STATUS_DMAING) == 0);
             }
+            bm->status &= ~BM_STATUS_DMAING;
         } else {
             bm->cur_addr = bm->addr;
             if (!(bm->status & BM_STATUS_DMAING)) {

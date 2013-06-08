@@ -24,13 +24,15 @@
 
 #include "config.h"
 #include "cpu.h"
-#include "exec-all.h"
-#include "host-utils.h"
+#include "exec/exec-all.h"
+#include "qemu/host-utils.h"
 
 #if defined(CONFIG_USER_ONLY)
 
-void do_interrupt(CPUNios2State *env)
+void nios2_cpu_do_interrupt(CPUState *cs)
 {
+    Nios2CPU *cpu = NIOS2_CPU(cs);
+    CPUNios2State *env = &cpu->env;
     env->exception_index = -1;
     env->regs[R_EA] = env->regs[R_PC] + 4;
 }
@@ -47,8 +49,11 @@ int cpu_nios2_handle_mmu_fault(CPUNios2State *env, target_ulong address,
 
 bool has_mmu = true;
 
-void do_interrupt(CPUNios2State *env)
+void nios2_cpu_do_interrupt(CPUState *cs)
 {
+    Nios2CPU *cpu = NIOS2_CPU(cs);
+    CPUNios2State *env = &cpu->env;
+
     switch (env->exception_index) {
     case EXCP_IRQ:
         assert(env->regs[CR_STATUS] & CR_STATUS_PIE);

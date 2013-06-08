@@ -22,7 +22,7 @@
 #include <stdio.h>
 
 #include "instruction.h"
-#include "exec-all.h"
+#include "exec/exec-all.h"
 #include "helper.h"
 
 #define GEN_HELPER 1

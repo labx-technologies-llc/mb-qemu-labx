@@ -24,7 +24,7 @@
 
 #include "config.h"
 #include "cpu.h"
-#include "exec-all.h"
+#include "exec/exec-all.h"
 
 /* Define this to enable MMU debug messages */
 /* #define DEBUG_MMU */

@@ -920,7 +920,7 @@ static void tcg_out_setcond2(TCGContext *s, TCGCond cond, TCGReg ret,
 
 #if defined(CONFIG_SOFTMMU)
 
-#include "../../softmmu_defs.h"
+#include "exec/softmmu_defs.h"
 
 /* helper signature: helper_ld_mmu(CPUState *env, target_ulong addr,
    int mmu_idx) */
@@ -1413,6 +1413,11 @@ static inline void tcg_out_op(TCGContext *s, TCGOpcode opc,
         tcg_out_opc_reg(s, OPC_MFLO, args[0], 0, 0);
 #endif
         break;
+    case INDEX_op_muls2_i32:
+        tcg_out_opc_reg(s, OPC_MULT, 0, args[2], args[3]);
+        tcg_out_opc_reg(s, OPC_MFLO, args[0], 0, 0);
+        tcg_out_opc_reg(s, OPC_MFHI, args[1], 0, 0);
+        break;
     case INDEX_op_mulu2_i32:
         tcg_out_opc_reg(s, OPC_MULTU, 0, args[2], args[3]);
         tcg_out_opc_reg(s, OPC_MFLO, args[0], 0, 0);
@@ -1595,6 +1600,7 @@ static const TCGTargetOpDef mips_op_defs[] = {
 
     { INDEX_op_add_i32, { "r", "rZ", "rJ" } },
     { INDEX_op_mul_i32, { "r", "rZ", "rZ" } },
+    { INDEX_op_muls2_i32, { "r", "r", "rZ", "rZ" } },
     { INDEX_op_mulu2_i32, { "r", "r", "rZ", "rZ" } },
     { INDEX_op_div_i32, { "r", "rZ", "rZ" } },
     { INDEX_op_divu_i32, { "r", "rZ", "rZ" } },
