@@ -181,13 +181,11 @@ ssize_t iov_send_recv(int sockfd, struct iovec *iov, unsigned iov_cnt,
             assert(iov[niov].iov_len > tail);
             orig_len = iov[niov].iov_len;
             iov[niov++].iov_len = tail;
-        }
-
-        ret = do_send_recv(sockfd, iov, niov, do_send);
-
-        /* Undo the changes above before checking for errors */
-        if (tail) {
+            ret = do_send_recv(sockfd, iov, niov, do_send);
+            /* Undo the changes above before checking for errors */
             iov[niov-1].iov_len = orig_len;
+        } else {
+            ret = do_send_recv(sockfd, iov, niov, do_send);
         }
         if (offset) {
             iov[0].iov_base -= offset;
@@ -200,6 +198,12 @@ ssize_t iov_send_recv(int sockfd, struct iovec *iov, unsigned iov_cnt,
                 return total;
             }
             return -1;
+        }
+
+        if (ret == 0 && !do_send) {
+            /* recv returns 0 when the peer has performed an orderly
+             * shutdown. */
+            break;
         }
 
         /* Prepare for the next iteration */

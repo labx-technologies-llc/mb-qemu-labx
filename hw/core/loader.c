@@ -54,6 +54,8 @@
 
 #include <zlib.h>
 
+bool rom_file_in_ram = true;
+
 static int roms_loaded;
 
 /* return the size or -1 if error */
@@ -434,15 +436,17 @@ static ssize_t gunzip(void *dst, size_t dstlen, uint8_t *src,
 }
 
 /* Load a U-Boot image.  */
-int load_uimage(const char *filename, hwaddr *ep,
-                hwaddr *loadaddr, int *is_linux)
+static int load_uboot_image(const char *filename, hwaddr *ep, hwaddr *loadaddr,
+                            int *is_linux, uint8_t image_type)
 {
     int fd;
     int size;
+    hwaddr address;
     uboot_image_header_t h;
     uboot_image_header_t *hdr = &h;
     uint8_t *data = NULL;
     int ret = -1;
+    int do_uncompress = 0;
 
     fd = open(filename, O_RDONLY | O_BINARY);
     if (fd < 0)
@@ -457,32 +461,55 @@ int load_uimage(const char *filename, hwaddr *ep,
     if (hdr->ih_magic != IH_MAGIC)
         goto out;
 
-    /* TODO: Implement other image types.  */
-    if (hdr->ih_type != IH_TYPE_KERNEL) {
-        fprintf(stderr, "Can only load u-boot image type \"kernel\"\n");
+    if (hdr->ih_type != image_type) {
+        fprintf(stderr, "Wrong image type %d, expected %d\n", hdr->ih_type,
+                image_type);
         goto out;
     }
 
-    switch (hdr->ih_comp) {
-    case IH_COMP_NONE:
-    case IH_COMP_GZIP:
+    /* TODO: Implement other image types.  */
+    switch (hdr->ih_type) {
+    case IH_TYPE_KERNEL:
+        address = hdr->ih_load;
+        if (loadaddr) {
+            *loadaddr = hdr->ih_load;
+        }
+
+        switch (hdr->ih_comp) {
+        case IH_COMP_NONE:
+            break;
+        case IH_COMP_GZIP:
+            do_uncompress = 1;
+            break;
+        default:
+            fprintf(stderr,
+                    "Unable to load u-boot images with compression type %d\n",
+                    hdr->ih_comp);
+            goto out;
+        }
+
+        if (ep) {
+            *ep = hdr->ih_ep;
+        }
+
+        /* TODO: Check CPU type.  */
+        if (is_linux) {
+            if (hdr->ih_os == IH_OS_LINUX) {
+                *is_linux = 1;
+            } else {
+                *is_linux = 0;
+            }
+        }
+
+        break;
+    case IH_TYPE_RAMDISK:
+        address = *loadaddr;
         break;
     default:
-        fprintf(stderr,
-                "Unable to load u-boot images with compression type %d\n",
-                hdr->ih_comp);
+        fprintf(stderr, "Unsupported u-boot image type %d\n", hdr->ih_type);
         goto out;
     }
 
-    /* TODO: Check CPU type.  */
-    if (is_linux) {
-        if (hdr->ih_os == IH_OS_LINUX)
-            *is_linux = 1;
-        else
-            *is_linux = 0;
-    }
-
-    *ep = hdr->ih_ep;
     data = g_malloc(hdr->ih_size);
 
     if (read(fd, data, hdr->ih_size) != hdr->ih_size) {
@@ -490,7 +517,7 @@ int load_uimage(const char *filename, hwaddr *ep,
         goto out;
     }
 
-    if (hdr->ih_comp == IH_COMP_GZIP) {
+    if (do_uncompress) {
         uint8_t *compressed_data;
         size_t max_bytes;
         ssize_t bytes;
@@ -508,10 +535,7 @@ int load_uimage(const char *filename, hwaddr *ep,
         hdr->ih_size = bytes;
     }
 
-    rom_add_blob_fixed(filename, data, hdr->ih_size, hdr->ih_load);
-
-    if (loadaddr)
-        *loadaddr = hdr->ih_load;
+    rom_add_blob_fixed(filename, data, hdr->ih_size, address);
 
     ret = hdr->ih_size;
 
@@ -520,6 +544,18 @@ out:
         g_free(data);
     close(fd);
     return ret;
+}
+
+int load_uimage(const char *filename, hwaddr *ep, hwaddr *loadaddr,
+                int *is_linux)
+{
+    return load_uboot_image(filename, ep, loadaddr, is_linux, IH_TYPE_KERNEL);
+}
+
+/* Load a ramdisk.  */
+int load_ramdisk(const char *filename, hwaddr addr, uint64_t max_sz)
+{
+    return load_uboot_image(filename, NULL, &addr, NULL, IH_TYPE_RAMDISK);
 }
 
 /*
@@ -542,6 +578,7 @@ struct Rom {
     size_t datasize;
 
     uint8_t *data;
+    MemoryRegion *mr;
     int isrom;
     char *fw_dir;
     char *fw_file;
@@ -569,6 +606,21 @@ static void rom_insert(Rom *rom)
         return;
     }
     QTAILQ_INSERT_TAIL(&roms, rom, next);
+}
+
+static void *rom_set_mr(Rom *rom, Object *owner, const char *name)
+{
+    void *data;
+
+    rom->mr = g_malloc(sizeof(*rom->mr));
+    memory_region_init_ram(rom->mr, owner, name, rom->datasize);
+    memory_region_set_readonly(rom->mr, true);
+    vmstate_register_ram_global(rom->mr);
+
+    data = memory_region_get_ram_ptr(rom->mr);
+    memcpy(data, rom->data, rom->datasize);
+
+    return data;
 }
 
 int rom_add_file(const char *file, const char *fw_dir,
@@ -611,7 +663,8 @@ int rom_add_file(const char *file, const char *fw_dir,
     rom_insert(rom);
     if (rom->fw_file && fw_cfg) {
         const char *basename;
-        char fw_file_name[56];
+        char fw_file_name[FW_CFG_MAX_FILE_PATH];
+        void *data;
 
         basename = strrchr(rom->fw_file, '/');
         if (basename) {
@@ -621,8 +674,15 @@ int rom_add_file(const char *file, const char *fw_dir,
         }
         snprintf(fw_file_name, sizeof(fw_file_name), "%s/%s", rom->fw_dir,
                  basename);
-        fw_cfg_add_file(fw_cfg, fw_file_name, rom->data, rom->romsize);
         snprintf(devpath, sizeof(devpath), "/rom@%s", fw_file_name);
+
+        if (rom_file_in_ram) {
+            data = rom_set_mr(rom, OBJECT(fw_cfg), devpath);
+        } else {
+            data = rom->data;
+        }
+
+        fw_cfg_add_file(fw_cfg, fw_file_name, data, rom->romsize);
     } else {
         snprintf(devpath, sizeof(devpath), "/rom@" TARGET_FMT_plx, addr);
     }
@@ -640,10 +700,12 @@ err:
     return -1;
 }
 
-int rom_add_blob(const char *name, const void *blob, size_t len,
-                 hwaddr addr)
+void *rom_add_blob(const char *name, const void *blob, size_t len,
+                   hwaddr addr, const char *fw_file_name,
+                   FWCfgReadCallback fw_callback, void *callback_opaque)
 {
     Rom *rom;
+    void *data = NULL;
 
     rom           = g_malloc0(sizeof(*rom));
     rom->name     = g_strdup(name);
@@ -653,7 +715,22 @@ int rom_add_blob(const char *name, const void *blob, size_t len,
     rom->data     = g_malloc0(rom->datasize);
     memcpy(rom->data, blob, len);
     rom_insert(rom);
-    return 0;
+    if (fw_file_name && fw_cfg) {
+        char devpath[100];
+
+        snprintf(devpath, sizeof(devpath), "/rom@%s", fw_file_name);
+
+        if (rom_file_in_ram) {
+            data = rom_set_mr(rom, OBJECT(fw_cfg), devpath);
+        } else {
+            data = rom->data;
+        }
+
+        fw_cfg_add_file_callback(fw_cfg, fw_file_name,
+                                 fw_callback, callback_opaque,
+                                 data, rom->romsize);
+    }
+    return data;
 }
 
 /* This function is specific for elf program because we don't need to allocate
@@ -697,7 +774,12 @@ static void rom_reset(void *unused)
         if (rom->data == NULL) {
             continue;
         }
-        cpu_physical_memory_write_rom(rom->addr, rom->data, rom->datasize);
+        if (rom->mr) {
+            void *host = memory_region_get_ram_ptr(rom->mr);
+            memcpy(host, rom->data, rom->datasize);
+        } else {
+            cpu_physical_memory_write_rom(rom->addr, rom->data, rom->datasize);
+        }
         if (rom->isrom) {
             /* rom needs to be written only once */
             g_free(rom->data);
@@ -726,11 +808,16 @@ int rom_load_all(void)
         addr  = rom->addr;
         addr += rom->romsize;
         section = memory_region_find(get_system_memory(), rom->addr, 1);
-        rom->isrom = section.size && memory_region_is_rom(section.mr);
+        rom->isrom = int128_nz(section.size) && memory_region_is_rom(section.mr);
+        memory_region_unref(section.mr);
     }
     qemu_register_reset(rom_reset, NULL);
-    roms_loaded = 1;
     return 0;
+}
+
+void rom_load_done(void)
+{
+    roms_loaded = 1;
 }
 
 void rom_set_fw(FWCfgState *f)
@@ -744,6 +831,9 @@ static Rom *find_rom(hwaddr addr)
 
     QTAILQ_FOREACH(rom, &roms, next) {
         if (rom->fw_file) {
+            continue;
+        }
+        if (rom->mr) {
             continue;
         }
         if (rom->addr > addr) {
@@ -773,14 +863,14 @@ int rom_copy(uint8_t *dest, hwaddr addr, size_t size)
         if (rom->fw_file) {
             continue;
         }
+        if (rom->mr) {
+            continue;
+        }
         if (rom->addr + rom->romsize < addr) {
             continue;
         }
         if (rom->addr > end) {
             break;
-        }
-        if (!rom->data) {
-            continue;
         }
 
         d = dest + (rom->addr - addr);
@@ -791,7 +881,9 @@ int rom_copy(uint8_t *dest, hwaddr addr, size_t size)
             l = dest - d;
         }
 
-        memcpy(d, s, l);
+        if (l > 0) {
+            memcpy(d, s, l);
+        }
 
         if (rom->romsize > rom->datasize) {
             /* If datasize is less than romsize, it means that we didn't
@@ -832,7 +924,13 @@ void do_info_roms(Monitor *mon, const QDict *qdict)
     Rom *rom;
 
     QTAILQ_FOREACH(rom, &roms, next) {
-        if (!rom->fw_file) {
+        if (rom->mr) {
+            monitor_printf(mon, "%s"
+                           " size=0x%06zx name=\"%s\"\n",
+                           rom->mr->name,
+                           rom->romsize,
+                           rom->name);
+        } else if (!rom->fw_file) {
             monitor_printf(mon, "addr=" TARGET_FMT_plx
                            " size=0x%06zx mem=%s name=\"%s\"\n",
                            rom->addr, rom->romsize,

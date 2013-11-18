@@ -75,7 +75,7 @@ void nios2_cpu_do_interrupt(CPUState *cs)
         if ((env->regs[CR_STATUS] & CR_STATUS_EH) == 0) {
             qemu_log_mask(CPU_LOG_INT, "TLB MISS (fast) at pc=%x\n",
                           env->regs[R_PC]);
-            log_cpu_state(env, 0);
+            log_cpu_state(cs, 0);
 
             /* Fast TLB miss */
             /* Variation from the spec. Table 3-35 of the cpu reference shows
@@ -114,7 +114,7 @@ void nios2_cpu_do_interrupt(CPUState *cs)
     case EXCP_TLBW:
     case EXCP_TLBX:
         qemu_log_mask(CPU_LOG_INT, "TLB PERM at pc=%x\n", env->regs[R_PC]);
-        log_cpu_state(env, 0);
+        log_cpu_state(cs, 0);
 
         env->regs[CR_ESTATUS] = env->regs[CR_STATUS];
         env->regs[CR_STATUS] |= CR_STATUS_EH;
@@ -270,8 +270,10 @@ int cpu_nios2_handle_mmu_fault(CPUNios2State *env, target_ulong address,
     return 0;
 }
 
-hwaddr cpu_get_phys_page_debug(CPUNios2State *env, target_ulong addr)
+hwaddr nios2_cpu_get_phys_page_debug(CPUState *cs, vaddr addr)
 {
+    Nios2CPU *cpu = NIOS2_CPU(cs);
+    CPUNios2State *env = &cpu->env;
     target_ulong vaddr, paddr = 0;
     Nios2MMULookup lu;
     unsigned int hit;

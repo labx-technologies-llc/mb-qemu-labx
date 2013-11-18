@@ -208,8 +208,8 @@ static void gui_update(void *opaque)
         }
         trace_console_refresh(interval);
     }
-    ds->last_update = qemu_get_clock_ms(rt_clock);
-    qemu_mod_timer(ds->gui_timer, ds->last_update + interval);
+    ds->last_update = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
+    timer_mod(ds->gui_timer, ds->last_update + interval);
 }
 
 static void gui_setup_refresh(DisplayState *ds)
@@ -232,12 +232,12 @@ static void gui_setup_refresh(DisplayState *ds)
     }
 
     if (need_timer && ds->gui_timer == NULL) {
-        ds->gui_timer = qemu_new_timer_ms(rt_clock, gui_update, ds);
-        qemu_mod_timer(ds->gui_timer, qemu_get_clock_ms(rt_clock));
+        ds->gui_timer = timer_new_ms(QEMU_CLOCK_REALTIME, gui_update, ds);
+        timer_mod(ds->gui_timer, qemu_clock_get_ms(QEMU_CLOCK_REALTIME));
     }
     if (!need_timer && ds->gui_timer != NULL) {
-        qemu_del_timer(ds->gui_timer);
-        qemu_free_timer(ds->gui_timer);
+        timer_del(ds->gui_timer);
+        timer_free(ds->gui_timer);
         ds->gui_timer = NULL;
     }
 
@@ -1040,7 +1040,7 @@ void console_select(unsigned int index)
         DisplayState *ds = s->ds;
 
         if (active_console && active_console->cursor_timer) {
-            qemu_del_timer(active_console->cursor_timer);
+            timer_del(active_console->cursor_timer);
         }
         active_console = s;
         if (ds->have_gfx) {
@@ -1059,8 +1059,8 @@ void console_select(unsigned int index)
             dpy_text_resize(s, s->width, s->height);
         }
         if (s->cursor_timer) {
-            qemu_mod_timer(s->cursor_timer,
-                   qemu_get_clock_ms(rt_clock) + CONSOLE_CURSOR_PERIOD / 2);
+            timer_mod(s->cursor_timer,
+                   qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + CONSOLE_CURSOR_PERIOD / 2);
         }
     }
 }
@@ -1105,7 +1105,7 @@ static void kbd_send_chars(void *opaque)
     /* characters are pending: we send them a bit later (XXX:
        horrible, should change char device API) */
     if (s->out_fifo.count > 0) {
-        qemu_mod_timer(s->kbd_timer, qemu_get_clock_ms(rt_clock) + 1);
+        timer_mod(s->kbd_timer, qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + 1);
     }
 }
 
@@ -1366,7 +1366,7 @@ void update_displaychangelistener(DisplayChangeListener *dcl,
 
     dcl->update_interval = interval;
     if (!ds->refreshing && ds->update_interval > interval) {
-        qemu_mod_timer(ds->gui_timer, ds->last_update + interval);
+        timer_mod(ds->gui_timer, ds->last_update + interval);
     }
 }
 
@@ -1580,6 +1580,8 @@ static DisplayState *get_alloc_displaystate(void)
  */
 DisplayState *init_displaystate(void)
 {
+    Error *local_err = NULL;
+    gchar *name;
     int i;
 
     if (!display_state) {
@@ -1591,6 +1593,14 @@ DisplayState *init_displaystate(void)
             consoles[i]->ds == NULL) {
             text_console_do_init(consoles[i]->chr, display_state);
         }
+
+        /* Hook up into the qom tree here (not in new_console()), once
+         * all QemuConsoles are created and the order / numbering
+         * doesn't change any more */
+        name = g_strdup_printf("console[%d]", i);
+        object_property_add_child(container_get(object_get_root(), "/backend"),
+                                  name, OBJECT(consoles[i]), &local_err);
+        g_free(name);
     }
 
     return display_state;
@@ -1681,8 +1691,8 @@ static void text_console_update_cursor(void *opaque)
 
     s->cursor_visible_phase = !s->cursor_visible_phase;
     graphic_hw_invalidate(s);
-    qemu_mod_timer(s->cursor_timer,
-                   qemu_get_clock_ms(rt_clock) + CONSOLE_CURSOR_PERIOD / 2);
+    timer_mod(s->cursor_timer,
+                   qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + CONSOLE_CURSOR_PERIOD / 2);
 }
 
 static const GraphicHwOps text_console_ops = {
@@ -1702,7 +1712,7 @@ static void text_console_do_init(CharDriverState *chr, DisplayState *ds)
 
     s->out_fifo.buf = s->out_fifo_buf;
     s->out_fifo.buf_size = sizeof(s->out_fifo_buf);
-    s->kbd_timer = qemu_new_timer_ms(rt_clock, kbd_send_chars, s);
+    s->kbd_timer = timer_new_ms(QEMU_CLOCK_REALTIME, kbd_send_chars, s);
     s->ds = ds;
 
     s->y_displayed = 0;
@@ -1719,7 +1729,7 @@ static void text_console_do_init(CharDriverState *chr, DisplayState *ds)
     }
 
     s->cursor_timer =
-        qemu_new_timer_ms(rt_clock, text_console_update_cursor, s);
+        timer_new_ms(QEMU_CLOCK_REALTIME, text_console_update_cursor, s);
 
     s->hw_ops = &text_console_ops;
     s->hw = s;
@@ -1788,6 +1798,10 @@ static CharDriverState *text_console_init(ChardevVC *vc)
     s->chr = chr;
     chr->opaque = s;
     chr->chr_set_echo = text_console_set_echo;
+    /* console/chardev init sometimes completes elsewhere in a 2nd
+     * stage, so defer OPENED events until they are fully initialized
+     */
+    chr->explicit_be_open = true;
 
     if (display_state) {
         text_console_do_init(chr, display_state);

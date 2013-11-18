@@ -30,7 +30,8 @@
  * return here */
 const char *cpu_to_uname_machine(void *cpu_env)
 {
-#ifdef TARGET_ARM
+#if defined(TARGET_ARM) && !defined(TARGET_AARCH64)
+
     /* utsname machine name on linux arm is CPU arch name + endianness, e.g.
      * armv7l; to get a list of CPU arch names from the linux source, use:
      *     grep arch_name: -A1 linux/arch/arm/mm/proc-*.S
@@ -55,12 +56,14 @@ const char *cpu_to_uname_machine(void *cpu_env)
     return "x86-64";
 #elif defined(TARGET_I386)
     /* see arch/x86/kernel/cpu/bugs.c: check_bugs(), 386, 486, 586, 686 */
-    uint32_t cpuid_version = ((CPUX86State *)cpu_env)->cpuid_version;
-    int family = ((cpuid_version >> 8) & 0x0f) + ((cpuid_version >> 20) & 0xff);
-    if (family == 4)
+    CPUState *cpu = ENV_GET_CPU((CPUX86State *)cpu_env);
+    int family = object_property_get_int(OBJECT(cpu), "family", NULL);
+    if (family == 4) {
         return "i486";
-    if (family == 5)
+    }
+    if (family == 5) {
         return "i586";
+    }
     return "i686";
 #else
     /* default is #define-d in each arch/ subdir */

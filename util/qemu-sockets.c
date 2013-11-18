@@ -24,7 +24,6 @@
 
 #include "monitor/monitor.h"
 #include "qemu/sockets.h"
-#include "qemu-common.h" /* for qemu_isdigit */
 #include "qemu/main-loop.h"
 
 #ifndef AI_ADDRCONFIG
@@ -156,7 +155,7 @@ int inet_listen_opts(QemuOpts *opts, int port_offset, Error **errp)
             continue;
         }
 
-        qemu_setsockopt(slisten, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+        socket_set_fast_reuse(slisten);
 #ifdef IPV6_V6ONLY
         if (e->ai_family == PF_INET6) {
             /* listen on both ipv4 and ipv6 */
@@ -275,7 +274,7 @@ static int inet_connect_addr(struct addrinfo *addr, bool *in_progress,
         error_set_errno(errp, errno, QERR_SOCKET_CREATE_FAILED);
         return -1;
     }
-    qemu_setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+    socket_set_fast_reuse(sock);
     if (connect_state != NULL) {
         qemu_set_nonblock(sock);
     }
@@ -456,7 +455,7 @@ int inet_dgram_opts(QemuOpts *opts, Error **errp)
         error_set_errno(errp, errno, QERR_SOCKET_CREATE_FAILED);
         goto err;
     }
-    qemu_setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+    socket_set_fast_reuse(sock);
 
     /* bind socket */
     if (bind(sock, local->ai_addr, local->ai_addrlen) < 0) {
@@ -511,18 +510,14 @@ InetSocketAddress *inet_parse(const char *str, Error **errp)
             goto fail;
         }
         addr->ipv6 = addr->has_ipv6 = true;
-    } else if (qemu_isdigit(str[0])) {
-        /* IPv4 addr */
-        if (2 != sscanf(str, "%64[0-9.]:%32[^,]%n", host, port, &pos)) {
-            error_setg(errp, "error parsing IPv4 address '%s'", str);
-            goto fail;
-        }
-        addr->ipv4 = addr->has_ipv4 = true;
     } else {
-        /* hostname */
+        /* hostname or IPv4 addr */
         if (2 != sscanf(str, "%64[^:]:%32[^,]%n", host, port, &pos)) {
             error_setg(errp, "error parsing address '%s'", str);
             goto fail;
+        }
+        if (host[strspn(host, "0123456789.")] == '\0') {
+            addr->ipv4 = addr->has_ipv4 = true;
         }
     }
 
@@ -853,9 +848,9 @@ int unix_nonblocking_connect(const char *path,
 
 SocketAddress *socket_parse(const char *str, Error **errp)
 {
-    SocketAddress *addr = NULL;
+    SocketAddress *addr;
 
-    addr = g_new(SocketAddress, 1);
+    addr = g_new0(SocketAddress, 1);
     if (strstart(str, "unix:", NULL)) {
         if (str[5] == '\0') {
             error_setg(errp, "invalid Unix socket address");
@@ -876,7 +871,6 @@ SocketAddress *socket_parse(const char *str, Error **errp)
         }
     } else {
         addr->kind = SOCKET_ADDRESS_KIND_INET;
-        addr->inet = g_new(InetSocketAddress, 1);
         addr->inet = inet_parse(str, errp);
         if (addr->inet == NULL) {
             goto fail;
@@ -909,7 +903,7 @@ int socket_connect(SocketAddress *addr, Error **errp,
 
     case SOCKET_ADDRESS_KIND_FD:
         fd = monitor_get_fd(cur_mon, addr->fd->str, errp);
-        if (callback) {
+        if (fd >= 0 && callback) {
             qemu_set_nonblock(fd);
             callback(fd, opaque);
         }
@@ -969,7 +963,7 @@ int socket_dgram(SocketAddress *remote, SocketAddress *local, Error **errp)
 
     default:
         error_setg(errp, "socket type unsupported for datagram");
-        return -1;
+        fd = -1;
     }
     qemu_opts_del(opts);
     return fd;

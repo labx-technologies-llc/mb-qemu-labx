@@ -46,6 +46,7 @@ typedef struct QEMUOptionParameter {
         char* s;
     } value;
     const char *help;
+    bool assigned;
 } QEMUOptionParameter;
 
 
@@ -55,8 +56,6 @@ int get_next_param_value(char *buf, int buf_size,
                          const char *tag, const char **pstr);
 int get_param_value(char *buf, int buf_size,
                     const char *tag, const char *str);
-int check_params(char *buf, int buf_size,
-                 const char * const *params, const char *str);
 
 
 /*
@@ -75,6 +74,8 @@ QEMUOptionParameter *append_option_parameters(QEMUOptionParameter *dest,
     QEMUOptionParameter *list);
 QEMUOptionParameter *parse_option_parameters(const char *param,
     QEMUOptionParameter *list, QEMUOptionParameter *dest);
+void parse_option_size(const char *name, const char *value,
+                       uint64_t *ret, Error **errp);
 void free_option_parameters(QEMUOptionParameter *list);
 void print_option_parameters(QEMUOptionParameter *list);
 void print_option_help(QEMUOptionParameter *list);
@@ -122,6 +123,7 @@ bool qemu_opt_has_help_opt(QemuOpts *opts);
 bool qemu_opt_get_bool(QemuOpts *opts, const char *name, bool defval);
 uint64_t qemu_opt_get_number(QemuOpts *opts, const char *name, uint64_t defval);
 uint64_t qemu_opt_get_size(QemuOpts *opts, const char *name, uint64_t defval);
+int qemu_opt_unset(QemuOpts *opts, const char *name);
 int qemu_opt_set(QemuOpts *opts, const char *name, const char *value);
 void qemu_opt_set_err(QemuOpts *opts, const char *name, const char *value,
                       Error **errp);
@@ -140,6 +142,7 @@ void qemu_opts_loc_restore(QemuOpts *opts);
 int qemu_opts_set(QemuOptsList *list, const char *id,
                   const char *name, const char *value);
 const char *qemu_opts_id(QemuOpts *opts);
+void qemu_opts_set_id(QemuOpts *opts, char *id);
 void qemu_opts_del(QemuOpts *opts);
 void qemu_opts_validate(QemuOpts *opts, const QemuOptDesc *desc, Error **errp);
 int qemu_opts_do_parse(QemuOpts *opts, const char *params, const char *firstname);

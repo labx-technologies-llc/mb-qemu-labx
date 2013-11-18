@@ -25,6 +25,9 @@
 #define min_bits qemu_fls
 #define RAM_INDEX(addr, size) (((addr)>>2)&((1<<min_bits((size)-1))-1))
 
+#define TYPE_LABX_DMA "labx.dma"
+#define LABX_DMA(obj) \
+    OBJECT_CHECK(LabXDMA, (obj), TYPE_LABX_DMA)
 
 typedef struct LabXDMA {
     SysBusDevice busdev;
@@ -190,7 +193,7 @@ static const MemoryRegionOps microcode_ram_ops = {
 
 static int labx_dma_init(SysBusDevice *dev)
 {
-    LabXDMA *p = FROM_SYSBUS(typeof(*p), dev);
+    LabXDMA *p = LABX_DMA(dev);
 
     /* Initialize defaults */
     p->microcodeRam = g_malloc0(p->microcodeWords*4);
@@ -199,9 +202,9 @@ static int labx_dma_init(SysBusDevice *dev)
     sysbus_init_irq(dev, &p->irq);
 
     /* Set up memory regions */
-    memory_region_init_io(&p->mmio_dma,       &dma_regs_ops,      p,
+    memory_region_init_io(&p->mmio_dma,       OBJECT(p), &dma_regs_ops,      p,
                           "labx,dma-regs",      0x100 * 4);
-    memory_region_init_io(&p->mmio_microcode, &microcode_ram_ops, p,
+    memory_region_init_io(&p->mmio_microcode, OBJECT(p), &microcode_ram_ops, p,
                           "labx,dma-microcode", 4 * p->microcodeWords);
 
     sysbus_init_mmio(dev, &p->mmio_dma);
@@ -235,7 +238,7 @@ static void labx_dma_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo labx_dma_info = {
-    .name          = "labx.dma",
+    .name          = TYPE_LABX_DMA,
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(LabXDMA),
     .class_init    = labx_dma_class_init,
@@ -243,20 +246,18 @@ static const TypeInfo labx_dma_info = {
 
 static const TypeInfo labx_dma_info2 = {
     .name          = "xlnx.labx-dma",
-    .parent        = TYPE_SYS_BUS_DEVICE,
+    .parent        = TYPE_LABX_DMA,
     .instance_size = sizeof(LabXDMA),
-    .class_init    = labx_dma_class_init,
 };
 
 static void labrinth_tdm_output_class_init(ObjectClass *klass, void *data)
 {
-    // TODO: add on the TDM/LA registers. For now call the dma init
-    labx_dma_class_init(klass, data);
+    // TODO: add on the TDM/LA registers
 }
 
 static const TypeInfo labrinth_tdm_output_info = {
     .name          = "xlnx.labrinth-tdm-output",
-    .parent        = TYPE_SYS_BUS_DEVICE,
+    .parent        = TYPE_LABX_DMA,
     .instance_size = sizeof(LabXDMA),
     .class_init    = labrinth_tdm_output_class_init,
 };

@@ -21,6 +21,10 @@
 #include "hw/sysbus.h"
 #include "cpu.h"
 
+#define TYPE_ALTERA_IIC "altera,iic"
+#define ALTERA_IIC(obj) \
+    OBJECT_CHECK(AlteraIIC, (obj), TYPE_ALTERA_IIC)
+
 typedef struct AlteraIIC {
     SysBusDevice busdev;
     void        *cpu;
@@ -63,9 +67,9 @@ static void irq_handler(void *opaque, int irq, int level)
 
 static int altera_iic_init(SysBusDevice *dev)
 {
-    AlteraIIC *pv = FROM_SYSBUS(typeof(*pv), dev);
+    AlteraIIC *pv = ALTERA_IIC(dev);
 
-    qdev_init_gpio_in(&dev->qdev, irq_handler, 32);
+    qdev_init_gpio_in(DEVICE(pv), irq_handler, 32);
     sysbus_init_irq(dev, &pv->parent_irq);
 
     return 0;

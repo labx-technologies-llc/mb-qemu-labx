@@ -26,6 +26,10 @@
 #define FIFO_RAM_BYTES 2048
 #define LENGTH_FIFO_WORDS 16
 
+#define TYPE_LABX_ETHERNET "labx.ethernet"
+#define LABX_ETHERNET(obj) \
+    OBJECT_CHECK(LabXEthernet, (obj), TYPE_LABX_ETHERNET)
+
 typedef struct LabXEthernet {
     SysBusDevice busdev;
     qemu_irq hostIrq;
@@ -538,7 +542,7 @@ static NetClientInfo net_labx_ethernet_info = {
 
 static int labx_ethernet_init(SysBusDevice *dev)
 {
-    LabXEthernet *p = FROM_SYSBUS(typeof(*p), dev);
+    LabXEthernet *p = LABX_ETHERNET(dev);
 
     /* Initialize defaults */
     p->txBuffer = g_malloc0(FIFO_RAM_BYTES);
@@ -556,11 +560,11 @@ static int labx_ethernet_init(SysBusDevice *dev)
     p->rxLengthPopIndex = 0;
 
     /* Set up memory regions */
-    memory_region_init_io(&p->mmio_ethernet, &ethernet_regs_ops, p,
+    memory_region_init_io(&p->mmio_ethernet, OBJECT(p), &ethernet_regs_ops, p,
                           "labx.ethernet-regs",      0x10 * 4);
-    memory_region_init_io(&p->mmio_mac,      &mac_regs_ops,      p,
+    memory_region_init_io(&p->mmio_mac,      OBJECT(p), &mac_regs_ops,      p,
                           "labx.ethernet-mac-regs",  0x10 * 4);
-    memory_region_init_io(&p->mmio_fifo,     &fifo_regs_ops,     p,
+    memory_region_init_io(&p->mmio_fifo,     OBJECT(p), &fifo_regs_ops,     p,
                           "labx.ethernet-fifo-regs", 0x10 * 4);
 
     sysbus_init_mmio(dev, &p->mmio_ethernet);
@@ -579,7 +583,7 @@ static int labx_ethernet_init(SysBusDevice *dev)
     /* Set up the NIC */
     qemu_macaddr_default_if_unset(&p->conf.macaddr);
     p->nic = qemu_new_nic(&net_labx_ethernet_info, &p->conf,
-                          object_get_typename(OBJECT(p)), dev->qdev.id, p);
+                          object_get_typename(OBJECT(p)), DEVICE(p)->id, p);
     qemu_format_nic_info_str(qemu_get_queue(p->nic), p->conf.macaddr.a);
     return 0;
 }
@@ -600,7 +604,7 @@ static void labx_ethernet_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo labx_ethernet_info = {
-    .name          = "labx.labx_ethernet",
+    .name          = TYPE_LABX_ETHERNET,
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(LabXEthernet),
     .class_init    = labx_ethernet_class_init,
@@ -608,9 +612,8 @@ static const TypeInfo labx_ethernet_info = {
 
 static const TypeInfo labx_ethernet_info2 = {
     .name          = "xlnx.labx-ethernet",
-    .parent        = TYPE_SYS_BUS_DEVICE,
+    .parent        = TYPE_LABX_ETHERNET,
     .instance_size = sizeof(LabXEthernet),
-    .class_init    = labx_ethernet_class_init,
 };
 
 static void labx_ethernet_register(void)

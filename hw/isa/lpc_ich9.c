@@ -29,6 +29,7 @@
  */
 #include "qemu-common.h"
 #include "hw/hw.h"
+#include "qapi/visitor.h"
 #include "qemu/range.h"
 #include "hw/isa/isa.h"
 #include "hw/sysbus.h"
@@ -380,7 +381,7 @@ static void ich9_apm_ctrl_changed(uint32_t val, void *arg)
 
     /* SMI_EN = PMBASE + 30. SMI control and enable register */
     if (lpc->pm.smi_en & ICH9_PMIO_SMI_EN_APMC_EN) {
-        cpu_interrupt(CPU(x86_env_get_cpu(first_cpu)), CPU_INTERRUPT_SMI);
+        cpu_interrupt(first_cpu, CPU_INTERRUPT_SMI);
     }
 }
 
@@ -477,22 +478,23 @@ static const MemoryRegionOps rbca_mmio_ops = {
 static void ich9_lpc_machine_ready(Notifier *n, void *opaque)
 {
     ICH9LPCState *s = container_of(n, ICH9LPCState, machine_ready);
+    MemoryRegion *io_as = pci_address_space_io(&s->d);
     uint8_t *pci_conf;
 
     pci_conf = s->d.config;
-    if (isa_is_ioport_assigned(0x3f8)) {
+    if (memory_region_present(io_as, 0x3f8)) {
         /* com1 */
         pci_conf[0x82] |= 0x01;
     }
-    if (isa_is_ioport_assigned(0x2f8)) {
+    if (memory_region_present(io_as, 0x2f8)) {
         /* com2 */
         pci_conf[0x82] |= 0x02;
     }
-    if (isa_is_ioport_assigned(0x378)) {
+    if (memory_region_present(io_as, 0x378)) {
         /* lpt */
         pci_conf[0x82] |= 0x04;
     }
-    if (isa_is_ioport_assigned(0x3f0)) {
+    if (memory_region_present(io_as, 0x3f0)) {
         /* floppy */
         pci_conf[0x82] |= 0x08;
     }
@@ -524,6 +526,43 @@ static const MemoryRegionOps ich9_rst_cnt_ops = {
     .endianness = DEVICE_LITTLE_ENDIAN
 };
 
+Object *ich9_lpc_find(void)
+{
+    bool ambig;
+    Object *o = object_resolve_path_type("", TYPE_ICH9_LPC_DEVICE, &ambig);
+
+    if (ambig) {
+        return NULL;
+    }
+    return o;
+}
+
+static void ich9_lpc_get_sci_int(Object *obj, Visitor *v,
+                                 void *opaque, const char *name,
+                                 Error **errp)
+{
+    ICH9LPCState *lpc = ICH9_LPC_DEVICE(obj);
+    uint32_t value = ich9_lpc_sci_irq(lpc);
+
+    visit_type_uint32(v, &value, name, errp);
+}
+
+static void ich9_lpc_add_properties(ICH9LPCState *lpc)
+{
+    static const uint8_t acpi_enable_cmd = ICH9_APM_ACPI_ENABLE;
+    static const uint8_t acpi_disable_cmd = ICH9_APM_ACPI_DISABLE;
+
+    object_property_add(OBJECT(lpc), ACPI_PM_PROP_SCI_INT, "uint32",
+                        ich9_lpc_get_sci_int,
+                        NULL, NULL, NULL, NULL);
+    object_property_add_uint8_ptr(OBJECT(lpc), ACPI_PM_PROP_ACPI_ENABLE_CMD,
+                                  &acpi_enable_cmd, NULL);
+    object_property_add_uint8_ptr(OBJECT(lpc), ACPI_PM_PROP_ACPI_DISABLE_CMD,
+                                  &acpi_disable_cmd, NULL);
+
+    ich9_pm_add_properties(OBJECT(lpc), &lpc->pm, NULL);
+}
+
 static int ich9_lpc_initfn(PCIDevice *d)
 {
     ICH9LPCState *lpc = ICH9_LPC_DEVICE(d);
@@ -534,7 +573,7 @@ static int ich9_lpc_initfn(PCIDevice *d)
     pci_set_long(d->wmask + ICH9_LPC_PMBASE,
                  ICH9_LPC_PMBASE_BASE_ADDRESS_MASK);
 
-    memory_region_init_io(&lpc->rbca_mem, &rbca_mmio_ops, lpc,
+    memory_region_init_io(&lpc->rbca_mem, OBJECT(d), &rbca_mmio_ops, lpc,
                             "lpc-rbca-mmio", ICH9_CC_SIZE);
 
     lpc->isa_bus = isa_bus;
@@ -545,11 +584,13 @@ static int ich9_lpc_initfn(PCIDevice *d)
     lpc->machine_ready.notify = ich9_lpc_machine_ready;
     qemu_add_machine_init_done_notifier(&lpc->machine_ready);
 
-    memory_region_init_io(&lpc->rst_cnt_mem, &ich9_rst_cnt_ops, lpc,
+    memory_region_init_io(&lpc->rst_cnt_mem, OBJECT(d), &ich9_rst_cnt_ops, lpc,
                           "lpc-reset-control", 1);
     memory_region_add_subregion_overlap(pci_address_space_io(d),
                                         ICH9_RST_CNT_IOPORT, &lpc->rst_cnt_mem,
                                         1);
+
+    ich9_lpc_add_properties(lpc);
 
     return 0;
 }
@@ -599,6 +640,7 @@ static void ich9_lpc_class_init(ObjectClass *klass, void *data)
     DeviceClass *dc = DEVICE_CLASS(klass);
     PCIDeviceClass *k = PCI_DEVICE_CLASS(klass);
 
+    set_bit(DEVICE_CATEGORY_BRIDGE, dc->categories);
     dc->reset = ich9_lpc_reset;
     k->init = ich9_lpc_initfn;
     dc->vmsd = &vmstate_ich9_lpc;

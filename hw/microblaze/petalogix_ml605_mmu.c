@@ -98,12 +98,12 @@ petalogix_ml605_init(QEMUMachineInitArgs *args)
     env = &cpu->env;
 
     /* Attach emulated BRAM through the LMB.  */
-    memory_region_init_ram(phys_lmb_bram, "petalogix_ml605.lmb_bram",
+    memory_region_init_ram(phys_lmb_bram, NULL, "petalogix_ml605.lmb_bram",
                            LMB_BRAM_SIZE);
     vmstate_register_ram_global(phys_lmb_bram);
     memory_region_add_subregion(address_space_mem, 0x00000000, phys_lmb_bram);
 
-    memory_region_init_ram(phys_ram, "petalogix_ml605.ram", ram_size);
+    memory_region_init_ram(phys_ram, NULL, "petalogix_ml605.ram", ram_size);
     vmstate_register_ram_global(phys_ram);
     memory_region_add_subregion(address_space_mem, ddr_base, phys_ram);
 
@@ -176,8 +176,10 @@ petalogix_ml605_init(QEMUMachineInitArgs *args)
         }
     }
 
-    microblaze_load_kernel(cpu, ddr_base, ram_size, BINARY_DEVICE_TREE_FILE,
-                                                            machine_cpu_reset, NULL);
+    microblaze_load_kernel(cpu, ddr_base, ram_size,
+                           args->initrd_filename,
+                           BINARY_DEVICE_TREE_FILE,
+                           machine_cpu_reset, NULL);
 
 }
 
@@ -186,7 +188,6 @@ static QEMUMachine petalogix_ml605_machine = {
     .desc = "PetaLogix linux refdesign for xilinx ml605 little endian",
     .init = petalogix_ml605_init,
     .is_default = 0,
-    DEFAULT_MACHINE_OPTIONS,
 };
 
 static void petalogix_ml605_machine_init(void)

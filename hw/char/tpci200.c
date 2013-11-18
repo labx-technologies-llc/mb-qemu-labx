@@ -134,8 +134,8 @@ static void tpci200_set_irq(void *opaque, int intno, int level)
     /* Check if the interrupt is edge sensitive */
     if (dev->ctrl[ip_n] & CTRL_INT_EDGE(intno)) {
         if (level) {
-            qemu_set_irq(dev->dev.irq[0], !dev->int_set);
-            qemu_set_irq(dev->dev.irq[0],  dev->int_set);
+            pci_set_irq(&dev->dev, !dev->int_set);
+            pci_set_irq(&dev->dev,  dev->int_set);
         }
     } else {
         unsigned i, j;
@@ -153,10 +153,10 @@ static void tpci200_set_irq(void *opaque, int intno, int level)
         }
 
         if (level_status && !dev->int_set) {
-            qemu_irq_raise(dev->dev.irq[0]);
+            pci_irq_assert(&dev->dev);
             dev->int_set = 1;
         } else if (!level_status && dev->int_set) {
-            qemu_irq_lower(dev->dev.irq[0]);
+            pci_irq_deassert(&dev->dev);
             dev->int_set = 0;
         }
     }
@@ -588,17 +588,17 @@ static int tpci200_initfn(PCIDevice *pci_dev)
     pci_set_long(c + 0x48, 0x00024C06);
     pci_set_long(c + 0x4C, 0x00000003);
 
-    memory_region_init_io(&s->mmio, &tpci200_cfg_ops,
+    memory_region_init_io(&s->mmio, OBJECT(s), &tpci200_cfg_ops,
                           s, "tpci200_mmio", 128);
-    memory_region_init_io(&s->io,   &tpci200_cfg_ops,
+    memory_region_init_io(&s->io, OBJECT(s),   &tpci200_cfg_ops,
                           s, "tpci200_io",   128);
-    memory_region_init_io(&s->las0, &tpci200_las0_ops,
+    memory_region_init_io(&s->las0, OBJECT(s), &tpci200_las0_ops,
                           s, "tpci200_las0", 256);
-    memory_region_init_io(&s->las1, &tpci200_las1_ops,
+    memory_region_init_io(&s->las1, OBJECT(s), &tpci200_las1_ops,
                           s, "tpci200_las1", 1024);
-    memory_region_init_io(&s->las2, &tpci200_las2_ops,
+    memory_region_init_io(&s->las2, OBJECT(s), &tpci200_las2_ops,
                           s, "tpci200_las2", 1024*1024*32);
-    memory_region_init_io(&s->las3, &tpci200_las3_ops,
+    memory_region_init_io(&s->las3, OBJECT(s), &tpci200_las3_ops,
                           s, "tpci200_las3", 1024*1024*16);
     pci_register_bar(&s->dev, 0, PCI_BASE_ADDRESS_SPACE_MEMORY, &s->mmio);
     pci_register_bar(&s->dev, 1, PCI_BASE_ADDRESS_SPACE_IO,     &s->io);
@@ -607,7 +607,7 @@ static int tpci200_initfn(PCIDevice *pci_dev)
     pci_register_bar(&s->dev, 4, PCI_BASE_ADDRESS_SPACE_MEMORY, &s->las2);
     pci_register_bar(&s->dev, 5, PCI_BASE_ADDRESS_SPACE_MEMORY, &s->las3);
 
-    ipack_bus_new_inplace(&s->bus, DEVICE(&s->dev), NULL,
+    ipack_bus_new_inplace(&s->bus, sizeof(s->bus), DEVICE(pci_dev), NULL,
                           N_MODULES, tpci200_set_irq);
 
     return 0;
@@ -652,6 +652,7 @@ static void tpci200_class_init(ObjectClass *klass, void *data)
     k->class_id = PCI_CLASS_BRIDGE_OTHER;
     k->subsystem_vendor_id = PCI_VENDOR_ID_TEWS;
     k->subsystem_id = 0x300A;
+    set_bit(DEVICE_CATEGORY_INPUT, dc->categories);
     dc->desc = "TEWS TPCI200 IndustryPack carrier";
     dc->vmsd = &vmstate_tpci200;
 }

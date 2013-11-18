@@ -17,6 +17,7 @@
 #include "hw/boards.h"
 #include "hw/loader.h"
 #include "hw/i386/pc.h"
+#include "sysemu/qtest.h"
 
 #undef DEBUG_PUV3
 #include "hw/unicore32/puv3.h"
@@ -73,7 +74,7 @@ static void puv3_board_init(CPUUniCore32State *env, ram_addr_t ram_size)
     MemoryRegion *ram_memory = g_new(MemoryRegion, 1);
 
     /* SDRAM at address zero.  */
-    memory_region_init_ram(ram_memory, "puv3.ram", ram_size);
+    memory_region_init_ram(ram_memory, NULL, "puv3.ram", ram_size);
     vmstate_register_ram_global(ram_memory);
     memory_region_add_subregion(get_system_memory(), 0, ram_memory);
 }
@@ -84,6 +85,9 @@ static void puv3_load_kernel(const char *kernel_filename)
 {
     int size;
 
+    if (kernel_filename == NULL && qtest_enabled()) {
+        return;
+    }
     assert(kernel_filename != NULL);
 
     /* only zImage format supported */
@@ -128,7 +132,6 @@ static QEMUMachine puv3_machine = {
     .desc = "PKUnity Version-3 based on UniCore32",
     .init = puv3_init,
     .is_default = 1,
-    DEFAULT_MACHINE_OPTIONS,
 };
 
 static void puv3_machine_init(void)

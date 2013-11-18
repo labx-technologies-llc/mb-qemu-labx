@@ -337,11 +337,11 @@ static void microblaze_generic_fdt_init(QEMUMachineInitArgs *args)
 
     /* FIXME: instantiate from FDT like evrything else */
     /* Attach emulated BRAM through the LMB.  */
-    memory_region_init_ram(lmb_bram, "microblaze_fdt.lmb_bram", LMB_BRAM_SIZE);
+    memory_region_init_ram(lmb_bram, NULL, "microblaze_fdt.lmb_bram", LMB_BRAM_SIZE);
     vmstate_register_ram_global(lmb_bram);
     memory_region_add_subregion(address_space_mem, 0, lmb_bram);
 
-    memory_region_init_ram(ddr_ram, "microblaze_fdt.ddr_ram", ram_size);
+    memory_region_init_ram(ddr_ram, NULL, "microblaze_fdt.ddr_ram", ram_size);
     vmstate_register_ram_global(ddr_ram);
     memory_region_add_subregion(address_space_mem, ram_base, ddr_ram);
 
@@ -349,8 +349,10 @@ static void microblaze_generic_fdt_init(QEMUMachineInitArgs *args)
     fdt_init_destroy_fdti(
         fdt_generic_create_machine(fdt, microblaze_pic_init_cpu(&cpu->env)));
 
-    microblaze_load_kernel(cpu, ram_base, ram_size, NULL,
-                                        microblaze_generic_fdt_reset, fdt);
+    microblaze_load_kernel(cpu, ram_base, ram_size,
+                           args->initrd_filename,
+                           NULL,
+                           microblaze_generic_fdt_reset, fdt);
     return;
 no_dtb_arg:
     hw_error("DTB must be specified for %s machine model\n", MACHINE_NAME);

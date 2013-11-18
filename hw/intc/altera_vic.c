@@ -36,6 +36,10 @@
 #define R_VEC_TBL_ADDR     43
 #define R_MAX              44
 
+#define TYPE_ALTERA_VIC "altera,vic"
+#define ALTERA_VIC(obj) \
+    OBJECT_CHECK(AlteraVIC, (obj), TYPE_ALTERA_VIC)
+
 typedef struct AlteraVIC {
     SysBusDevice busdev;
     MemoryRegion mmio;
@@ -154,14 +158,14 @@ static void irq_handler(void *opaque, int irq, int level)
 
 static int altera_vic_init(SysBusDevice *dev)
 {
-    AlteraVIC *pv = FROM_SYSBUS(typeof(*pv), dev);
+    AlteraVIC *pv = ALTERA_VIC(dev);
 
-    qdev_init_gpio_in(&dev->qdev, irq_handler, 32);
+    qdev_init_gpio_in(DEVICE(pv), irq_handler, 32);
     sysbus_init_irq(dev, &pv->parent_irq);
 
     memset(pv->regs, 0, sizeof(uint32_t) * R_MAX);
-    memory_region_init_io(&pv->mmio, &pic_ops, pv,
-                          "ALTR.vic", R_MAX * sizeof(uint32_t));
+    memory_region_init_io(&pv->mmio, OBJECT(pv), &pic_ops, pv,
+                          TYPE_ALTERA_VIC, R_MAX * sizeof(uint32_t));
     sysbus_init_mmio(dev, &pv->mmio);
     return 0;
 }
@@ -180,7 +184,7 @@ static void altera_vic_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo altera_vic_info = {
-    .name          = "ALTR.vic",
+    .name          = TYPE_ALTERA_VIC,
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(AlteraVIC),
     .class_init    = altera_vic_class_init,

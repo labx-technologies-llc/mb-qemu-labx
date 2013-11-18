@@ -19,13 +19,19 @@
 #ifndef CPU_ARM_H
 #define CPU_ARM_H
 
-#define TARGET_LONG_BITS 32
+#include "config.h"
 
-#define ELF_MACHINE	EM_ARM
+#if defined(TARGET_AARCH64)
+  /* AArch64 definitions */
+#  define TARGET_LONG_BITS 64
+#  define ELF_MACHINE EM_AARCH64
+#else
+#  define TARGET_LONG_BITS 32
+#  define ELF_MACHINE EM_ARM
+#endif
 
 #define CPUArchState struct CPUARMState
 
-#include "config.h"
 #include "qemu-common.h"
 #include "exec/cpu-defs.h"
 
@@ -58,6 +64,9 @@
 /* ARM-specific interrupt pending bits.  */
 #define CPU_INTERRUPT_FIQ   CPU_INTERRUPT_TGT_EXT_1
 
+/* Meanings of the ARMCPU object's two inbound GPIO lines */
+#define ARM_CPU_IRQ 0
+#define ARM_CPU_FIQ 1
 
 typedef void ARMWriteCPFunc(void *opaque, int cp_info,
                             int srcreg, int operand, uint32_t value);
@@ -76,9 +85,38 @@ struct arm_boot_info;
    s<2n+1> maps to the most significant half of d<n>
  */
 
+/* CPU state for each instance of a generic timer (in cp15 c14) */
+typedef struct ARMGenericTimer {
+    uint64_t cval; /* Timer CompareValue register */
+    uint32_t ctl; /* Timer Control register */
+} ARMGenericTimer;
+
+#define GTIMER_PHYS 0
+#define GTIMER_VIRT 1
+#define NUM_GTIMERS 2
+
+/* Scale factor for generic timers, ie number of ns per tick.
+ * This gives a 62.5MHz timer.
+ */
+#define GTIMER_SCALE 16
+
 typedef struct CPUARMState {
     /* Regs for current mode.  */
     uint32_t regs[16];
+
+    /* 32/64 switch only happens when taking and returning from
+     * exceptions so the overlap semantics are taken care of then
+     * instead of having a complicated union.
+     */
+    /* Regs for A64 mode.  */
+    uint64_t xregs[32];
+    uint64_t pc;
+    /* TODO: pstate doesn't correspond to an architectural register;
+     * it would be better modelled as the underlying fields.
+     */
+    uint32_t pstate;
+    uint32_t aarch64; /* 1 if CPU is in aarch64 state; inverse of PSTATE.nRW */
+
     /* Frequently accessed CPSR bits are stored separately for efficiency.
        This contains all the other bits.  Use cpsr_{read,write} to access
        the whole CPSR.  */
@@ -138,11 +176,15 @@ typedef struct CPUARMState {
         uint32_t c9_pmxevtyper; /* perf monitor event type */
         uint32_t c9_pmuserenr; /* perf monitor user enable */
         uint32_t c9_pminten; /* perf monitor interrupt enables */
+        uint32_t c12_vbar; /* vector base address register */
         uint32_t c13_fcse; /* FCSE PID.  */
         uint32_t c13_context; /* Context ID.  */
         uint32_t c13_tls1; /* User RW Thread register.  */
         uint32_t c13_tls2; /* User RO Thread register.  */
         uint32_t c13_tls3; /* Privileged Thread register.  */
+        uint32_t c14_cntfrq; /* Counter Frequency register */
+        uint32_t c14_cntkctl; /* Timer Control register */
+        ARMGenericTimer c14_timer[NUM_GTIMERS];
         uint32_t c15_cpar; /* XScale Coprocessor Access Register */
         uint32_t c15_ticonfig; /* TI925T configuration byte.  */
         uint32_t c15_i_max; /* Maximum D-cache dirty line index.  */
@@ -153,6 +195,11 @@ typedef struct CPUARMState {
         uint32_t c15_power_diagnostic;
         uint32_t c15_power_control; /* power control */
     } cp15;
+
+    /* System registers (AArch64) */
+    struct {
+        uint64_t tpidr_el0;
+    } sr;
 
     struct {
         uint32_t other_sp;
@@ -170,7 +217,22 @@ typedef struct CPUARMState {
 
     /* VFP coprocessor state.  */
     struct {
-        float64 regs[32];
+        /* VFP/Neon register state. Note that the mapping between S, D and Q
+         * views of the register bank differs between AArch64 and AArch32:
+         * In AArch32:
+         *  Qn = regs[2n+1]:regs[2n]
+         *  Dn = regs[n]
+         *  Sn = regs[n/2] bits 31..0 for even n, and bits 63..32 for odd n
+         * (and regs[32] to regs[63] are inaccessible)
+         * In AArch64:
+         *  Qn = regs[2n+1]:regs[2n]
+         *  Dn = regs[2n]
+         *  Sn = regs[2n] bits 31..0
+         * This corresponds to the architecturally defined mapping between
+         * the two execution states, and means we do not need to explicitly
+         * map these registers when changing states.
+         */
+        float64 regs[64];
 
         uint32_t xregs[16];
         /* We store these fpcsr fields separately for convenience.  */
@@ -240,6 +302,20 @@ int bank_number(int mode);
 void switch_mode(CPUARMState *, int);
 uint32_t do_arm_semihosting(CPUARMState *env);
 
+static inline bool is_a64(CPUARMState *env)
+{
+    return env->aarch64;
+}
+
+#define PSTATE_N_SHIFT 3
+#define PSTATE_N  (1 << PSTATE_N_SHIFT)
+#define PSTATE_Z_SHIFT 2
+#define PSTATE_Z  (1 << PSTATE_Z_SHIFT)
+#define PSTATE_C_SHIFT 1
+#define PSTATE_C  (1 << PSTATE_C_SHIFT)
+#define PSTATE_V_SHIFT 0
+#define PSTATE_V  (1 << PSTATE_V_SHIFT)
+
 /* you can call this signal handler from your SIGBUS and SIGSEGV
    signal handlers to inform the virtual CPU of exceptions. non zero
    is returned if the signal was handled by the virtual CPU.  */
@@ -249,27 +325,22 @@ int cpu_arm_handle_mmu_fault (CPUARMState *env, target_ulong address, int rw,
                               int mmu_idx);
 #define cpu_handle_mmu_fault cpu_arm_handle_mmu_fault
 
-static inline void cpu_set_tls(CPUARMState *env, target_ulong newtls)
-{
-  env->cp15.c13_tls2 = newtls;
-}
-
-#define CPSR_M (0x1f)
-#define CPSR_T (1 << 5)
-#define CPSR_F (1 << 6)
-#define CPSR_I (1 << 7)
-#define CPSR_A (1 << 8)
-#define CPSR_E (1 << 9)
-#define CPSR_IT_2_7 (0xfc00)
-#define CPSR_GE (0xf << 16)
-#define CPSR_RESERVED (0xf << 20)
-#define CPSR_J (1 << 24)
-#define CPSR_IT_0_1 (3 << 25)
-#define CPSR_Q (1 << 27)
-#define CPSR_V (1 << 28)
-#define CPSR_C (1 << 29)
-#define CPSR_Z (1 << 30)
-#define CPSR_N (1 << 31)
+#define CPSR_M (0x1fU)
+#define CPSR_T (1U << 5)
+#define CPSR_F (1U << 6)
+#define CPSR_I (1U << 7)
+#define CPSR_A (1U << 8)
+#define CPSR_E (1U << 9)
+#define CPSR_IT_2_7 (0xfc00U)
+#define CPSR_GE (0xfU << 16)
+#define CPSR_RESERVED (0xfU << 20)
+#define CPSR_J (1U << 24)
+#define CPSR_IT_0_1 (3U << 25)
+#define CPSR_Q (1U << 27)
+#define CPSR_V (1U << 28)
+#define CPSR_C (1U << 29)
+#define CPSR_Z (1U << 30)
+#define CPSR_N (1U << 31)
 #define CPSR_NZCV (CPSR_N | CPSR_Z | CPSR_C | CPSR_V)
 
 #define CPSR_IT (CPSR_IT_0_1 | CPSR_IT_2_7)
@@ -392,6 +463,8 @@ enum arm_features {
     ARM_FEATURE_MPIDR, /* has cp15 MPIDR */
     ARM_FEATURE_PXN, /* has Privileged Execute Never bit */
     ARM_FEATURE_LPAE, /* has Large Physical Address Extension */
+    ARM_FEATURE_V8,
+    ARM_FEATURE_AARCH64, /* supports 64 bit mode */
 };
 
 static inline int arm_feature(CPUARMState *env, int feature)
@@ -424,6 +497,43 @@ void armv7m_nvic_complete_irq(void *opaque, int irq);
     (((cp) << 16) | ((is64) << 15) | ((crn) << 11) |    \
      ((crm) << 7) | ((opc1) << 3) | (opc2))
 
+/* Note that these must line up with the KVM/ARM register
+ * ID field definitions (kvm.c will check this, but we
+ * can't just use the KVM defines here as the kvm headers
+ * are unavailable to non-KVM-specific files)
+ */
+#define CP_REG_SIZE_SHIFT 52
+#define CP_REG_SIZE_MASK       0x00f0000000000000ULL
+#define CP_REG_SIZE_U32        0x0020000000000000ULL
+#define CP_REG_SIZE_U64        0x0030000000000000ULL
+#define CP_REG_ARM             0x4000000000000000ULL
+
+/* Convert a full 64 bit KVM register ID to the truncated 32 bit
+ * version used as a key for the coprocessor register hashtable
+ */
+static inline uint32_t kvm_to_cpreg_id(uint64_t kvmid)
+{
+    uint32_t cpregid = kvmid;
+    if ((kvmid & CP_REG_SIZE_MASK) == CP_REG_SIZE_U64) {
+        cpregid |= (1 << 15);
+    }
+    return cpregid;
+}
+
+/* Convert a truncated 32 bit hashtable key into the full
+ * 64 bit KVM register ID.
+ */
+static inline uint64_t cpreg_to_kvm_id(uint32_t cpregid)
+{
+    uint64_t kvmid = cpregid & ~(1 << 15);
+    if (cpregid & (1 << 15)) {
+        kvmid |= CP_REG_SIZE_U64 | CP_REG_ARM;
+    } else {
+        kvmid |= CP_REG_SIZE_U32 | CP_REG_ARM;
+    }
+    return kvmid;
+}
+
 /* ARMCPRegInfo type field bits. If the SPECIAL bit is set this is a
  * special-behaviour cp reg and bits [15..8] indicate what behaviour
  * it has. Otherwise it is a simple cp reg, where CONST indicates that
@@ -434,19 +544,26 @@ void armv7m_nvic_complete_irq(void *opaque, int irq);
  * a register definition to override a previous definition for the
  * same (cp, is64, crn, crm, opc1, opc2) tuple: either the new or the
  * old must have the OVERRIDE bit set.
+ * NO_MIGRATE indicates that this register should be ignored for migration;
+ * (eg because any state is accessed via some other coprocessor register).
+ * IO indicates that this register does I/O and therefore its accesses
+ * need to be surrounded by gen_io_start()/gen_io_end(). In particular,
+ * registers which implement clocks or timers require this.
  */
 #define ARM_CP_SPECIAL 1
 #define ARM_CP_CONST 2
 #define ARM_CP_64BIT 4
 #define ARM_CP_SUPPRESS_TB_END 8
 #define ARM_CP_OVERRIDE 16
+#define ARM_CP_NO_MIGRATE 32
+#define ARM_CP_IO 64
 #define ARM_CP_NOP (ARM_CP_SPECIAL | (1 << 8))
 #define ARM_CP_WFI (ARM_CP_SPECIAL | (2 << 8))
 #define ARM_LAST_SPECIAL ARM_CP_WFI
 /* Used only as a terminator for ARMCPRegInfo lists */
 #define ARM_CP_SENTINEL 0xffff
 /* Mask of only the flag bits in a type field */
-#define ARM_CP_FLAG_MASK 0x1f
+#define ARM_CP_FLAG_MASK 0x7f
 
 /* Return true if cptype is a valid type field. This is used to try to
  * catch errors where the sentinel has been accidentally left off the end
@@ -456,7 +573,7 @@ static inline bool cptype_valid(int cptype)
 {
     return ((cptype & ~ARM_CP_FLAG_MASK) == 0)
         || ((cptype & ARM_CP_SPECIAL) &&
-            (cptype <= ARM_LAST_SPECIAL));
+            ((cptype & ~ARM_CP_FLAG_MASK) <= ARM_LAST_SPECIAL));
 }
 
 /* Access rights:
@@ -562,6 +679,19 @@ struct ARMCPRegInfo {
      * by fieldoffset.
      */
     CPWriteFn *writefn;
+    /* Function for doing a "raw" read; used when we need to copy
+     * coprocessor state to the kernel for KVM or out for
+     * migration. This only needs to be provided if there is also a
+     * readfn and it makes an access permission check.
+     */
+    CPReadFn *raw_readfn;
+    /* Function for doing a "raw" write; used when we need to copy KVM
+     * kernel coprocessor state into userspace, or for inbound
+     * migration. This only needs to be provided if there is also a
+     * writefn and it makes an access permission check or masks out
+     * "unwritable" bits or has write-one-to-clear or similar behaviour.
+     */
+    CPWriteFn *raw_writefn;
     /* Function for resetting the register. If NULL, then reset will be done
      * by writing resetvalue to the field specified in fieldoffset. If
      * fieldoffset is 0 then no reset will be done.
@@ -605,6 +735,38 @@ static inline bool cp_access_ok(CPUARMState *env,
     return (ri->access >> ((arm_current_pl(env) * 2) + isread)) & 1;
 }
 
+/**
+ * write_list_to_cpustate
+ * @cpu: ARMCPU
+ *
+ * For each register listed in the ARMCPU cpreg_indexes list, write
+ * its value from the cpreg_values list into the ARMCPUState structure.
+ * This updates TCG's working data structures from KVM data or
+ * from incoming migration state.
+ *
+ * Returns: true if all register values were updated correctly,
+ * false if some register was unknown or could not be written.
+ * Note that we do not stop early on failure -- we will attempt
+ * writing all registers in the list.
+ */
+bool write_list_to_cpustate(ARMCPU *cpu);
+
+/**
+ * write_cpustate_to_list:
+ * @cpu: ARMCPU
+ *
+ * For each register listed in the ARMCPU cpreg_indexes list, write
+ * its value from the ARMCPUState structure into the cpreg_values list.
+ * This is used to copy info from TCG's working data structures into
+ * KVM or for outbound migration.
+ *
+ * Returns: true if all register values were read correctly,
+ * false if some register was unknown or could not be read.
+ * Note that we do not stop early on failure -- we will attempt
+ * reading all registers in the list.
+ */
+bool write_cpustate_to_list(ARMCPU *cpu);
+
 /* Does the core conform to the the "MicroController" profile. e.g. Cortex-M3.
    Note the M in older cores (eg. ARM7TDMI) stands for Multiply. These are
    conventional cores (ie. Application or Realtime profile).  */
@@ -623,8 +785,13 @@ static inline bool cp_access_ok(CPUARMState *env,
 #define TARGET_PAGE_BITS 10
 #endif
 
-#define TARGET_PHYS_ADDR_SPACE_BITS 40
-#define TARGET_VIRT_ADDR_SPACE_BITS 32
+#if defined(TARGET_AARCH64)
+#  define TARGET_PHYS_ADDR_SPACE_BITS 48
+#  define TARGET_VIRT_ADDR_SPACE_BITS 64
+#else
+#  define TARGET_PHYS_ADDR_SPACE_BITS 40
+#  define TARGET_VIRT_ADDR_SPACE_BITS 32
+#endif
 
 static inline CPUARMState *cpu_init(const char *cpu_model)
 {
@@ -649,18 +816,15 @@ static inline int cpu_mmu_index (CPUARMState *env)
     return (env->uncached_cpsr & CPSR_M) == ARM_CPU_MODE_USR ? 1 : 0;
 }
 
-#if defined(CONFIG_USER_ONLY)
-static inline void cpu_clone_regs(CPUARMState *env, target_ulong newsp)
-{
-    if (newsp)
-        env->regs[13] = newsp;
-    env->regs[0] = 0;
-}
-#endif
-
 #include "exec/cpu-all.h"
 
-/* Bit usage in the TB flags field: */
+/* Bit usage in the TB flags field: bit 31 indicates whether we are
+ * in 32 or 64 bit mode. The meaning of the other bits depends on that.
+ */
+#define ARM_TBFLAG_AARCH64_STATE_SHIFT 31
+#define ARM_TBFLAG_AARCH64_STATE_MASK  (1U << ARM_TBFLAG_AARCH64_STATE_SHIFT)
+
+/* Bit usage when in AArch32 state: */
 #define ARM_TBFLAG_THUMB_SHIFT      0
 #define ARM_TBFLAG_THUMB_MASK       (1 << ARM_TBFLAG_THUMB_SHIFT)
 #define ARM_TBFLAG_VECLEN_SHIFT     1
@@ -675,9 +839,12 @@ static inline void cpu_clone_regs(CPUARMState *env, target_ulong newsp)
 #define ARM_TBFLAG_CONDEXEC_MASK    (0xff << ARM_TBFLAG_CONDEXEC_SHIFT)
 #define ARM_TBFLAG_BSWAP_CODE_SHIFT 16
 #define ARM_TBFLAG_BSWAP_CODE_MASK  (1 << ARM_TBFLAG_BSWAP_CODE_SHIFT)
-/* Bits 31..17 are currently unused. */
+
+/* Bit usage when in AArch64 state: currently no bits defined */
 
 /* some convenience accessor macros */
+#define ARM_TBFLAG_AARCH64_STATE(F) \
+    (((F) & ARM_TBFLAG_AARCH64_STATE_MASK) >> ARM_TBFLAG_AARCH64_STATE_SHIFT)
 #define ARM_TBFLAG_THUMB(F) \
     (((F) & ARM_TBFLAG_THUMB_MASK) >> ARM_TBFLAG_THUMB_SHIFT)
 #define ARM_TBFLAG_VECLEN(F) \
@@ -696,25 +863,31 @@ static inline void cpu_clone_regs(CPUARMState *env, target_ulong newsp)
 static inline void cpu_get_tb_cpu_state(CPUARMState *env, target_ulong *pc,
                                         target_ulong *cs_base, int *flags)
 {
-    int privmode;
-    *pc = env->regs[15];
-    *cs_base = 0;
-    *flags = (env->thumb << ARM_TBFLAG_THUMB_SHIFT)
-        | (env->vfp.vec_len << ARM_TBFLAG_VECLEN_SHIFT)
-        | (env->vfp.vec_stride << ARM_TBFLAG_VECSTRIDE_SHIFT)
-        | (env->condexec_bits << ARM_TBFLAG_CONDEXEC_SHIFT)
-        | (env->bswap_code << ARM_TBFLAG_BSWAP_CODE_SHIFT);
-    if (arm_feature(env, ARM_FEATURE_M)) {
-        privmode = !((env->v7m.exception == 0) && (env->v7m.control & 1));
+    if (is_a64(env)) {
+        *pc = env->pc;
+        *flags = ARM_TBFLAG_AARCH64_STATE_MASK;
     } else {
-        privmode = (env->uncached_cpsr & CPSR_M) != ARM_CPU_MODE_USR;
+        int privmode;
+        *pc = env->regs[15];
+        *flags = (env->thumb << ARM_TBFLAG_THUMB_SHIFT)
+            | (env->vfp.vec_len << ARM_TBFLAG_VECLEN_SHIFT)
+            | (env->vfp.vec_stride << ARM_TBFLAG_VECSTRIDE_SHIFT)
+            | (env->condexec_bits << ARM_TBFLAG_CONDEXEC_SHIFT)
+            | (env->bswap_code << ARM_TBFLAG_BSWAP_CODE_SHIFT);
+        if (arm_feature(env, ARM_FEATURE_M)) {
+            privmode = !((env->v7m.exception == 0) && (env->v7m.control & 1));
+        } else {
+            privmode = (env->uncached_cpsr & CPSR_M) != ARM_CPU_MODE_USR;
+        }
+        if (privmode) {
+            *flags |= ARM_TBFLAG_PRIV_MASK;
+        }
+        if (env->vfp.xregs[ARM_VFP_FPEXC] & (1 << 30)) {
+            *flags |= ARM_TBFLAG_VFPEN_MASK;
+        }
     }
-    if (privmode) {
-        *flags |= ARM_TBFLAG_PRIV_MASK;
-    }
-    if (env->vfp.xregs[ARM_VFP_FPEXC] & (1 << 30)) {
-        *flags |= ARM_TBFLAG_VFPEN_MASK;
-    }
+
+    *cs_base = 0;
 }
 
 static inline bool cpu_has_work(CPUState *cpu)
@@ -727,11 +900,15 @@ static inline bool cpu_has_work(CPUState *cpu)
 
 static inline void cpu_pc_from_tb(CPUARMState *env, TranslationBlock *tb)
 {
-    env->regs[15] = tb->pc;
+    if (ARM_TBFLAG_AARCH64_STATE(tb->flags)) {
+        env->pc = tb->pc;
+    } else {
+        env->regs[15] = tb->pc;
+    }
 }
 
 /* Load an instruction and return it in the standard little-endian order */
-static inline uint32_t arm_ldl_code(CPUARMState *env, uint32_t addr,
+static inline uint32_t arm_ldl_code(CPUARMState *env, target_ulong addr,
                                     bool do_swap)
 {
     uint32_t insn = cpu_ldl_code(env, addr);
@@ -742,7 +919,7 @@ static inline uint32_t arm_ldl_code(CPUARMState *env, uint32_t addr,
 }
 
 /* Ditto, for a halfword (Thumb) instruction */
-static inline uint16_t arm_lduw_code(CPUARMState *env, uint32_t addr,
+static inline uint16_t arm_lduw_code(CPUARMState *env, target_ulong addr,
                                      bool do_swap)
 {
     uint16_t insn = cpu_lduw_code(env, addr);

@@ -58,7 +58,6 @@ static int bamboo_load_device_tree(hwaddr addr,
                                      const char *kernel_cmdline)
 {
     int ret = -1;
-#ifdef CONFIG_FDT
     uint32_t mem_reg_property[] = { 0, 0, cpu_to_be32(ramsize) };
     char *filename;
     int fdt_size;
@@ -111,11 +110,11 @@ static int bamboo_load_device_tree(hwaddr addr,
     qemu_devtree_setprop_cell(fdt, "/cpus/cpu@0", "timebase-frequency",
                               tb_freq);
 
-    ret = rom_add_blob_fixed(BINARY_DEVICE_TREE_FILE, fdt, fdt_size, addr);
+    rom_add_blob_fixed(BINARY_DEVICE_TREE_FILE, fdt, fdt_size, addr);
     g_free(fdt);
+    return 0;
 
 out:
-#endif
 
     return ret;
 }
@@ -166,6 +165,7 @@ static void bamboo_init(QEMUMachineInitArgs *args)
     const char *initrd_filename = args->initrd_filename;
     unsigned int pci_irq_nrs[4] = { 28, 27, 26, 25 };
     MemoryRegion *address_space_mem = get_system_memory();
+    MemoryRegion *isa = g_new(MemoryRegion, 1);
     MemoryRegion *ram_memories
         = g_malloc(PPC440EP_SDRAM_NR_BANKS * sizeof(*ram_memories));
     hwaddr ram_bases[PPC440EP_SDRAM_NR_BANKS];
@@ -227,7 +227,9 @@ static void bamboo_init(QEMUMachineInitArgs *args)
         exit(1);
     }
 
-    isa_mmio_init(PPC440EP_PCI_IO, PPC440EP_PCI_IOLEN);
+    memory_region_init_alias(isa, NULL, "isa_mmio",
+                             get_system_io(), 0, PPC440EP_PCI_IOLEN);
+    memory_region_add_subregion(get_system_memory(), PPC440EP_PCI_IO, isa);
 
     if (serial_hds[0] != NULL) {
         serial_mm_init(address_space_mem, 0xef600300, 0, pic[0],
@@ -245,7 +247,7 @@ static void bamboo_init(QEMUMachineInitArgs *args)
         for (i = 0; i < nb_nics; i++) {
             /* There are no PCI NICs on the Bamboo board, but there are
              * PCI slots, so we can pick whatever default model we want. */
-            pci_nic_init_nofail(&nd_table[i], "e1000", NULL);
+            pci_nic_init_nofail(&nd_table[i], pcibus, "e1000", NULL);
         }
     }
 
@@ -295,7 +297,6 @@ static QEMUMachine bamboo_machine = {
     .name = "bamboo",
     .desc = "bamboo",
     .init = bamboo_init,
-    DEFAULT_MACHINE_OPTIONS,
 };
 
 static void bamboo_machine_init(void)

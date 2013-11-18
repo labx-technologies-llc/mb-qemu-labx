@@ -73,7 +73,9 @@ static void clipper_init(QEMUMachineInitArgs *args)
     pci_bus = typhoon_init(ram_size, &isa_bus, &rtc_irq, cpus,
                            clipper_pci_map_irq);
 
-    rtc_init(isa_bus, 1980, rtc_irq);
+    /* Since we have an SRM-compatible PALcode, use the SRM epoch.  */
+    rtc_init(isa_bus, 1900, rtc_irq);
+
     pit_init(isa_bus, 0x40, 0, NULL);
     isa_create_simple(isa_bus, "i8042");
 
@@ -89,7 +91,7 @@ static void clipper_init(QEMUMachineInitArgs *args)
 
     /* Network setup.  e1000 is good enough, failing Tulip support.  */
     for (i = 0; i < nb_nics; i++) {
-        pci_nic_init_nofail(&nd_table[i], "e1000", NULL);
+        pci_nic_init_nofail(&nd_table[i], pci_bus, "e1000", NULL);
     }
 
     /* IDE disk setup.  */
@@ -171,7 +173,6 @@ static QEMUMachine clipper_machine = {
     .init = clipper_init,
     .max_cpus = 4,
     .is_default = 1,
-    DEFAULT_MACHINE_OPTIONS,
 };
 
 static void clipper_machine_init(void)

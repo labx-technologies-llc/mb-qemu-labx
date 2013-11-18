@@ -98,6 +98,7 @@ typedef struct XenIOState {
 
     Notifier exit;
     Notifier suspend;
+    Notifier wakeup;
 } XenIOState;
 
 /* Xen specific function for piix pci */
@@ -154,30 +155,31 @@ qemu_irq *xen_interrupt_controller_init(void)
 
 /* Memory Ops */
 
-static void xen_ram_init(ram_addr_t ram_size)
+static void xen_ram_init(ram_addr_t ram_size, MemoryRegion **ram_memory_p)
 {
     MemoryRegion *sysmem = get_system_memory();
     ram_addr_t below_4g_mem_size, above_4g_mem_size = 0;
     ram_addr_t block_len;
 
     block_len = ram_size;
-    if (ram_size >= QEMU_BELOW_4G_RAM_END) {
+    if (ram_size >= HVM_BELOW_4G_RAM_END) {
         /* Xen does not allocate the memory continuously, and keep a hole at
-         * QEMU_BELOW_4G_RAM_END of QEMU_BELOW_4G_MMIO_LENGTH
+         * HVM_BELOW_4G_MMIO_START of HVM_BELOW_4G_MMIO_LENGTH
          */
-        block_len += QEMU_BELOW_4G_MMIO_LENGTH;
+        block_len += HVM_BELOW_4G_MMIO_LENGTH;
     }
-    memory_region_init_ram(&ram_memory, "xen.ram", block_len);
+    memory_region_init_ram(&ram_memory, NULL, "xen.ram", block_len);
+    *ram_memory_p = &ram_memory;
     vmstate_register_ram_global(&ram_memory);
 
-    if (ram_size >= QEMU_BELOW_4G_RAM_END) {
-        above_4g_mem_size = ram_size - QEMU_BELOW_4G_RAM_END;
-        below_4g_mem_size = QEMU_BELOW_4G_RAM_END;
+    if (ram_size >= HVM_BELOW_4G_RAM_END) {
+        above_4g_mem_size = ram_size - HVM_BELOW_4G_RAM_END;
+        below_4g_mem_size = HVM_BELOW_4G_RAM_END;
     } else {
         below_4g_mem_size = ram_size;
     }
 
-    memory_region_init_alias(&ram_640k, "xen.ram.640k",
+    memory_region_init_alias(&ram_640k, NULL, "xen.ram.640k",
                              &ram_memory, 0, 0xa0000);
     memory_region_add_subregion(sysmem, 0, &ram_640k);
     /* Skip of the VGA IO memory space, it will be registered later by the VGA
@@ -186,11 +188,11 @@ static void xen_ram_init(ram_addr_t ram_size)
      * The area between 0xc0000 and 0x100000 will be used by SeaBIOS to load
      * the Options ROM, so it is registered here as RAM.
      */
-    memory_region_init_alias(&ram_lo, "xen.ram.lo",
+    memory_region_init_alias(&ram_lo, NULL, "xen.ram.lo",
                              &ram_memory, 0xc0000, below_4g_mem_size - 0xc0000);
     memory_region_add_subregion(sysmem, 0xc0000, &ram_lo);
     if (above_4g_mem_size > 0) {
-        memory_region_init_alias(&ram_hi, "xen.ram.hi",
+        memory_region_init_alias(&ram_hi, NULL, "xen.ram.hi",
                                  &ram_memory, 0x100000000ULL,
                                  above_4g_mem_size);
         memory_region_add_subregion(sysmem, 0x100000000ULL, &ram_hi);
@@ -389,7 +391,7 @@ static int xen_remove_from_physmap(XenIOState *state,
     if (state->log_for_dirtybit == physmap) {
         state->log_for_dirtybit = NULL;
     }
-    free(physmap);
+    g_free(physmap);
 
     return 0;
 }
@@ -418,7 +420,7 @@ static void xen_set_memory(struct MemoryListener *listener,
 {
     XenIOState *state = container_of(listener, XenIOState, memory_listener);
     hwaddr start_addr = section->offset_within_address_space;
-    ram_addr_t size = section->size;
+    ram_addr_t size = int128_get64(section->size);
     bool log_dirty = memory_region_is_logging(section->mr);
     hvmmem_type_t mem_type;
 
@@ -459,6 +461,7 @@ static void xen_set_memory(struct MemoryListener *listener,
 static void xen_region_add(MemoryListener *listener,
                            MemoryRegionSection *section)
 {
+    memory_region_ref(section->mr);
     xen_set_memory(listener, section, true);
 }
 
@@ -466,6 +469,7 @@ static void xen_region_del(MemoryListener *listener,
                            MemoryRegionSection *section)
 {
     xen_set_memory(listener, section, false);
+    memory_region_unref(section->mr);
 }
 
 static void xen_sync_dirty_bitmap(XenIOState *state,
@@ -522,7 +526,7 @@ static void xen_log_start(MemoryListener *listener,
     XenIOState *state = container_of(listener, XenIOState, memory_listener);
 
     xen_sync_dirty_bitmap(state, section->offset_within_address_space,
-                          section->size);
+                          int128_get64(section->size));
 }
 
 static void xen_log_stop(MemoryListener *listener, MemoryRegionSection *section)
@@ -539,7 +543,7 @@ static void xen_log_sync(MemoryListener *listener, MemoryRegionSection *section)
     XenIOState *state = container_of(listener, XenIOState, memory_listener);
 
     xen_sync_dirty_bitmap(state, section->offset_within_address_space,
-                          section->size);
+                          int128_get64(section->size));
 }
 
 static void xen_log_global_start(MemoryListener *listener)
@@ -604,19 +608,19 @@ static ioreq_t *cpu_get_ioreq(XenIOState *state)
 
     port = xc_evtchn_pending(state->xce_handle);
     if (port == state->bufioreq_local_port) {
-        qemu_mod_timer(state->buffered_io_timer,
-                BUFFER_IO_MAX_DELAY + qemu_get_clock_ms(rt_clock));
+        timer_mod(state->buffered_io_timer,
+                BUFFER_IO_MAX_DELAY + qemu_clock_get_ms(QEMU_CLOCK_REALTIME));
         return NULL;
     }
 
     if (port != -1) {
-        for (i = 0; i < smp_cpus; i++) {
+        for (i = 0; i < max_cpus; i++) {
             if (state->ioreq_local_port[i] == port) {
                 break;
             }
         }
 
-        if (i == smp_cpus) {
+        if (i == max_cpus) {
             hw_error("Fatal error while trying to get io event!\n");
         }
 
@@ -826,10 +830,10 @@ static void handle_buffered_io(void *opaque)
     XenIOState *state = opaque;
 
     if (handle_buffered_iopage(state)) {
-        qemu_mod_timer(state->buffered_io_timer,
-                BUFFER_IO_MAX_DELAY + qemu_get_clock_ms(rt_clock));
+        timer_mod(state->buffered_io_timer,
+                BUFFER_IO_MAX_DELAY + qemu_clock_get_ms(QEMU_CLOCK_REALTIME));
     } else {
-        qemu_del_timer(state->buffered_io_timer);
+        timer_del(state->buffered_io_timer);
         xc_evtchn_unmask(state->xce_handle, state->bufioreq_local_port);
     }
 }
@@ -945,7 +949,7 @@ static void xenstore_record_dm_state(struct xs_handle *xs, const char *state)
         exit(1);
     }
 
-    snprintf(path, sizeof (path), "/local/domain/0/device-model/%u/state", xen_domid);
+    snprintf(path, sizeof (path), "device-model/%u/state", xen_domid);
     if (!xs_write(xs, XBT_NULL, path, state, strlen(state))) {
         fprintf(stderr, "error recording dm state\n");
         exit(1);
@@ -960,7 +964,7 @@ static void xen_main_loop_prepare(XenIOState *state)
         evtchn_fd = xc_evtchn_fd(state->xce_handle);
     }
 
-    state->buffered_io_timer = qemu_new_timer_ms(rt_clock, handle_buffered_io,
+    state->buffered_io_timer = timer_new_ms(QEMU_CLOCK_REALTIME, handle_buffered_io,
                                                  state);
 
     if (evtchn_fd != -1) {
@@ -1030,7 +1034,7 @@ static void xen_read_physmap(XenIOState *state)
                 xen_domid, entries[i]);
         value = xs_read(state->xenstore, 0, path, &len);
         if (value == NULL) {
-            free(physmap);
+            g_free(physmap);
             continue;
         }
         physmap->start_addr = strtoull(value, NULL, 16);
@@ -1041,7 +1045,7 @@ static void xen_read_physmap(XenIOState *state)
                 xen_domid, entries[i]);
         value = xs_read(state->xenstore, 0, path, &len);
         if (value == NULL) {
-            free(physmap);
+            g_free(physmap);
             continue;
         }
         physmap->size = strtoull(value, NULL, 16);
@@ -1057,7 +1061,12 @@ static void xen_read_physmap(XenIOState *state)
     free(entries);
 }
 
-int xen_hvm_init(void)
+static void xen_wakeup_notifier(Notifier *notifier, void *data)
+{
+    xc_set_hvm_param(xen_xc, xen_domid, HVM_PARAM_ACPI_S_STATE, 0);
+}
+
+int xen_hvm_init(MemoryRegion **ram_memory)
 {
     int i, rc;
     unsigned long ioreq_pfn;
@@ -1069,12 +1078,14 @@ int xen_hvm_init(void)
     state->xce_handle = xen_xc_evtchn_open(NULL, 0);
     if (state->xce_handle == XC_HANDLER_INITIAL_VALUE) {
         perror("xen: event channel open");
+        g_free(state);
         return -errno;
     }
 
     state->xenstore = xs_daemon_open();
     if (state->xenstore == NULL) {
         perror("xen: xenstore open");
+        g_free(state);
         return -errno;
     }
 
@@ -1083,6 +1094,9 @@ int xen_hvm_init(void)
 
     state->suspend.notify = xen_suspend_notifier;
     qemu_register_suspend_notifier(&state->suspend);
+
+    state->wakeup.notify = xen_wakeup_notifier;
+    qemu_register_wakeup_notifier(&state->wakeup);
 
     xc_get_hvm_param(xen_xc, xen_domid, HVM_PARAM_IOREQ_PFN, &ioreq_pfn);
     DPRINTF("shared page at pfn %lx\n", ioreq_pfn);
@@ -1101,10 +1115,10 @@ int xen_hvm_init(void)
         hw_error("map buffered IO page returned error %d", errno);
     }
 
-    state->ioreq_local_port = g_malloc0(smp_cpus * sizeof (evtchn_port_t));
+    state->ioreq_local_port = g_malloc0(max_cpus * sizeof (evtchn_port_t));
 
     /* FIXME: how about if we overflow the page here? */
-    for (i = 0; i < smp_cpus; i++) {
+    for (i = 0; i < max_cpus; i++) {
         rc = xc_evtchn_bind_interdomain(state->xce_handle, xen_domid,
                                         xen_vcpu_eport(state->shared_page, i));
         if (rc == -1) {
@@ -1130,7 +1144,7 @@ int xen_hvm_init(void)
 
     /* Init RAM management */
     xen_map_cache_init(xen_phys_offset_to_gaddr, state);
-    xen_ram_init(ram_size);
+    xen_ram_init(ram_size, ram_memory);
 
     qemu_add_vm_change_state_handler(xen_hvm_change_state_handler, state);
 

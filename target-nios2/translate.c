@@ -63,8 +63,10 @@ static TCGv cpu_R[NUM_CORE_REGS];
 
 /* generate intermediate code for basic block 'tb'.  */
 static void gen_intermediate_code_internal(
-    CPUNios2State *env, TranslationBlock *tb, int search_pc)
+    Nios2CPU *cpu, TranslationBlock *tb, int search_pc)
 {
+    CPUState *cs = CPU(cpu);
+    CPUNios2State *env = &cpu->env;
     DisasContext dc1, *dc = &dc1;
     int num_insns;
     int max_insns;
@@ -83,7 +85,7 @@ static void gen_intermediate_code_internal(
     /* Dump the CPU state to the log */
     if (qemu_loglevel_mask(CPU_LOG_TB_IN_ASM)) {
         qemu_log("--------------\n");
-        log_cpu_state(env, 0);
+        log_cpu_state(CPU(env), 0);
     }
 
     /* Set up instruction counts */
@@ -127,7 +129,7 @@ static void gen_intermediate_code_internal(
          * Also stop translation when a page boundary is reached.  This
          * ensures prefetch aborts occur at the right place.  */
     } while (!dc->is_jmp && tcg_ctx.gen_opc_ptr < gen_opc_end &&
-             !env->singlestep_enabled &&
+             !cs->singlestep_enabled &&
              !singlestep &&
              dc->pc < next_page_start &&
              num_insns < max_insns);
@@ -183,19 +185,21 @@ static void gen_intermediate_code_internal(
 #endif
 }
 
-void gen_intermediate_code(CPUNios2State *env, TranslationBlock *tb)
+void gen_intermediate_code (CPUNios2State *env, struct TranslationBlock *tb)
 {
-    gen_intermediate_code_internal(env, tb, 0);
+    gen_intermediate_code_internal(nios2_env_get_cpu(env), tb, false);
 }
 
-void gen_intermediate_code_pc(CPUNios2State *env, TranslationBlock *tb)
+void gen_intermediate_code_pc (CPUNios2State *env, struct TranslationBlock *tb)
 {
-    gen_intermediate_code_internal(env, tb, 1);
+    gen_intermediate_code_internal(nios2_env_get_cpu(env), tb, true);
 }
 
-void cpu_dump_state(CPUNios2State *env, FILE *f, fprintf_function cpu_fprintf,
-                    int flags)
+void nios2_cpu_dump_state(CPUState *cs, FILE *f, fprintf_function cpu_fprintf,
+                          int flags)
 {
+    Nios2CPU *cpu = NIOS2_CPU(cs);
+    CPUNios2State *env = &cpu->env;
     int i;
 
     if (!env || !f) {
@@ -230,7 +234,7 @@ Nios2CPU *cpu_nios2_init(const char *cpu_model)
     cpu->env.fast_tlb_miss_addr = FAST_TLB_MISS_ADDRESS;
 
     cpu_reset(CPU(cpu));
-    qemu_init_vcpu(&cpu->env);
+    qemu_init_vcpu(CPU(cpu));
 
     cpu_env = tcg_global_reg_new_ptr(TCG_AREG0, "env");
 
@@ -240,10 +244,7 @@ Nios2CPU *cpu_nios2_init(const char *cpu_model)
                                       regnames[i]);
     }
 
-#define GEN_HELPER 2
-#include "helper.h"
-
-  return cpu;
+    return cpu;
 }
 
 void restore_state_to_opc(CPUNios2State *env, TranslationBlock *tb, int pc_pos)

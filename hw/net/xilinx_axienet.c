@@ -575,7 +575,7 @@ static void enet_write(void *opaque, hwaddr addr,
             break;
 
         case R_MC:
-             value &= ((1 < 7) - 1);
+             value &= ((1 << 7) - 1);
 
              /* Enable the MII.  */
              if (value & MC_EN) {
@@ -990,8 +990,10 @@ static void xilinx_enet_init(Object *obj)
                              (Object **) &s->tx_control_dev, &errp);
     assert_no_error(errp);
 
-    object_initialize(&s->rx_data_dev, TYPE_XILINX_AXI_ENET_DATA_STREAM);
-    object_initialize(&s->rx_control_dev, TYPE_XILINX_AXI_ENET_CONTROL_STREAM);
+    object_initialize(&s->rx_data_dev, sizeof(s->rx_data_dev),
+                      TYPE_XILINX_AXI_ENET_DATA_STREAM);
+    object_initialize(&s->rx_control_dev, sizeof(s->rx_control_dev),
+                      TYPE_XILINX_AXI_ENET_CONTROL_STREAM);
     object_property_add_child(OBJECT(s), "axistream-connected-target",
                               (Object *)&s->rx_data_dev, &errp);
     assert_no_error(errp);
@@ -1001,7 +1003,7 @@ static void xilinx_enet_init(Object *obj)
 
     sysbus_init_irq(sbd, &s->irq);
 
-    memory_region_init_io(&s->iomem, &enet_ops, s, "enet", 0x40000);
+    memory_region_init_io(&s->iomem, OBJECT(s), &enet_ops, s, "enet", 0x40000);
     sysbus_init_mmio(sbd, &s->iomem);
 }
 

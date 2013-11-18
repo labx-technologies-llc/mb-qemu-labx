@@ -42,19 +42,6 @@
 #include <signal.h>
 #include "glib-compat.h"
 
-#if defined(__GLIBC__)
-# include <pty.h>
-#elif defined CONFIG_BSD
-# include <termios.h>
-# if defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__DragonFly__)
-#  include <libutil.h>
-# else
-#  include <util.h>
-# endif
-#elif defined CONFIG_SOLARIS
-# include <stropts.h>
-#endif
-
 #ifdef _WIN32
 #include "sysemu/os-win32.h"
 #endif
@@ -204,6 +191,9 @@ int64_t strtosz_suffix(const char *nptr, char **end, const char default_suffix);
 int64_t strtosz_suffix_unit(const char *nptr, char **end,
                             const char default_suffix, int64_t unit);
 
+/* used to print char* safely */
+#define STR_OR_NULL(str) ((str) ? (str) : "null")
+
 /* path.c */
 void init_paths(const char *prefix);
 const char *path(const char *pathname);
@@ -235,6 +225,8 @@ ssize_t qemu_recv_full(int fd, void *buf, size_t count, int flags)
 
 #ifndef _WIN32
 int qemu_pipe(int pipefd[2]);
+/* like openpty() but also makes it raw; return master fd */
+int qemu_openpty_raw(int *aslave, char *pty_name);
 #endif
 
 #ifdef _WIN32
@@ -290,8 +282,10 @@ bool tcg_enabled(void);
 void cpu_exec_init_all(void);
 
 /* CPU save/load.  */
+#ifdef CPU_SAVE_VERSION
 void cpu_save(QEMUFile *f, void *opaque);
 int cpu_load(QEMUFile *f, void *opaque, int version_id);
+#endif
 
 /* Unblock cpu */
 void qemu_cpu_kick_self(void);
@@ -302,15 +296,8 @@ struct qemu_work_item {
     void (*func)(void *data);
     void *data;
     int done;
+    bool free;
 };
-
-#ifdef CONFIG_USER_ONLY
-static inline void qemu_init_vcpu(void *env)
-{
-}
-#else
-void qemu_init_vcpu(void *env);
-#endif
 
 
 /**

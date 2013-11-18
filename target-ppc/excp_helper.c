@@ -611,9 +611,19 @@ static inline void powerpc_excp(PowerPCCPU *cpu, int excp_model, int excp)
         tlb_flush(env, 1);
     }
 
+#ifdef TARGET_PPC64
+    if (excp_model == POWERPC_EXCP_POWER7) {
+        if (env->spr[SPR_LPCR] & LPCR_ILE) {
+            new_msr |= (target_ulong)1 << MSR_LE;
+        }
+    } else if (msr_ile) {
+        new_msr |= (target_ulong)1 << MSR_LE;
+    }
+#else
     if (msr_ile) {
         new_msr |= (target_ulong)1 << MSR_LE;
     }
+#endif
 
     /* Jump to handler */
     vector = env->excp_vectors[excp];
@@ -986,16 +996,19 @@ void helper_msgsnd(target_ulong rb)
 {
     int irq = dbell2irq(rb);
     int pir = rb & DBELL_PIRTAG_MASK;
-    CPUPPCState *cenv;
+    CPUState *cs;
 
     if (irq < 0) {
         return;
     }
 
-    for (cenv = first_cpu; cenv != NULL; cenv = cenv->next_cpu) {
+    CPU_FOREACH(cs) {
+        PowerPCCPU *cpu = POWERPC_CPU(cs);
+        CPUPPCState *cenv = &cpu->env;
+
         if ((rb & DBELL_BRDCAST) || (cenv->spr[SPR_BOOKE_PIR] == pir)) {
             cenv->pending_interrupts |= 1 << irq;
-            cpu_interrupt(CPU(ppc_env_get_cpu(cenv)), CPU_INTERRUPT_HARD);
+            cpu_interrupt(cs, CPU_INTERRUPT_HARD);
         }
     }
 }

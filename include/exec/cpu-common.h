@@ -3,7 +3,9 @@
 
 /* CPU interfaces that are target independent.  */
 
+#ifndef CONFIG_USER_ONLY
 #include "exec/hwaddr.h"
+#endif
 
 #ifndef NEED_CPU_H
 #include "exec/poison.h"
@@ -50,8 +52,7 @@ typedef uint32_t CPUReadMemoryFunc(void *opaque, hwaddr addr);
 
 void qemu_ram_remap(ram_addr_t addr, ram_addr_t length);
 /* This should not be used by devices.  */
-int qemu_ram_addr_from_host(void *ptr, ram_addr_t *ram_addr);
-ram_addr_t qemu_ram_addr_from_host_nofail(void *ptr);
+MemoryRegion *qemu_ram_addr_from_host(void *ptr, ram_addr_t *ram_addr);
 void qemu_ram_set_idstr(ram_addr_t addr, const char *name, DeviceState *dev);
 
 void cpu_physical_memory_rw(hwaddr addr, uint8_t *buf,
@@ -112,6 +113,11 @@ void cpu_physical_memory_write_rom(hwaddr addr,
 
 extern struct MemoryRegion io_mem_rom;
 extern struct MemoryRegion io_mem_notdirty;
+
+typedef void (RAMBlockIterFunc)(void *host_addr,
+    ram_addr_t offset, ram_addr_t length, void *opaque);
+
+void qemu_ram_foreach_block(RAMBlockIterFunc func, void *opaque);
 
 #endif
 

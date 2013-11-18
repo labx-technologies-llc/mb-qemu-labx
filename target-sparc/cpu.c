@@ -30,11 +30,6 @@ static void sparc_cpu_reset(CPUState *s)
     SPARCCPUClass *scc = SPARC_CPU_GET_CLASS(cpu);
     CPUSPARCState *env = &cpu->env;
 
-    if (qemu_loglevel_mask(CPU_LOG_RESET)) {
-        qemu_log("CPU Reset (CPU %d)\n", s->cpu_index);
-        log_cpu_state(env, 0);
-    }
-
     scc->parent_reset(s);
 
     memset(env, 0, offsetof(CPUSPARCState, breakpoints));
@@ -89,7 +84,6 @@ static int cpu_sparc_register(CPUSPARCState *env, const char *cpu_model)
         env->def->features |= CPU_FEATURE_FLOAT128;
     }
 #endif
-    env->cpu_model_str = cpu_model;
     env->version = def->iu_version;
     env->fsr = def->fpu_version;
     env->nwindows = def->nwindows;
@@ -614,7 +608,7 @@ static int cpu_sparc_find_by_name(sparc_def_t *cpu_def, const char *cpu_model)
     return 0;
 
  error:
-    free(s);
+    g_free(s);
     return -1;
 }
 
@@ -660,9 +654,11 @@ static void cpu_print_cc(FILE *f, fprintf_function cpu_fprintf,
 #define REGS_PER_LINE 8
 #endif
 
-void cpu_dump_state(CPUSPARCState *env, FILE *f, fprintf_function cpu_fprintf,
-                    int flags)
+void sparc_cpu_dump_state(CPUState *cs, FILE *f, fprintf_function cpu_fprintf,
+                          int flags)
 {
+    SPARCCPU *cpu = SPARC_CPU(cs);
+    CPUSPARCState *env = &cpu->env;
     int i, x;
 
     cpu_fprintf(f, "pc: " TARGET_FMT_lx "  npc: " TARGET_FMT_lx "\n", env->pc,
@@ -726,12 +722,27 @@ void cpu_dump_state(CPUSPARCState *env, FILE *f, fprintf_function cpu_fprintf,
     cpu_fprintf(f, "\n");
 }
 
+static void sparc_cpu_set_pc(CPUState *cs, vaddr value)
+{
+    SPARCCPU *cpu = SPARC_CPU(cs);
+
+    cpu->env.pc = value;
+    cpu->env.npc = value + 4;
+}
+
+static void sparc_cpu_synchronize_from_tb(CPUState *cs, TranslationBlock *tb)
+{
+    SPARCCPU *cpu = SPARC_CPU(cs);
+
+    cpu->env.pc = tb->pc;
+    cpu->env.npc = tb->cs_base;
+}
+
 static void sparc_cpu_realizefn(DeviceState *dev, Error **errp)
 {
-    SPARCCPU *cpu = SPARC_CPU(dev);
     SPARCCPUClass *scc = SPARC_CPU_GET_CLASS(dev);
 
-    qemu_init_vcpu(&cpu->env);
+    qemu_init_vcpu(CPU(dev));
 
     scc->parent_realize(dev, errp);
 }
@@ -771,6 +782,24 @@ static void sparc_cpu_class_init(ObjectClass *oc, void *data)
     cc->reset = sparc_cpu_reset;
 
     cc->do_interrupt = sparc_cpu_do_interrupt;
+    cc->dump_state = sparc_cpu_dump_state;
+#if !defined(TARGET_SPARC64) && !defined(CONFIG_USER_ONLY)
+    cc->memory_rw_debug = sparc_cpu_memory_rw_debug;
+#endif
+    cc->set_pc = sparc_cpu_set_pc;
+    cc->synchronize_from_tb = sparc_cpu_synchronize_from_tb;
+    cc->gdb_read_register = sparc_cpu_gdb_read_register;
+    cc->gdb_write_register = sparc_cpu_gdb_write_register;
+#ifndef CONFIG_USER_ONLY
+    cc->do_unassigned_access = sparc_cpu_unassigned_access;
+    cc->get_phys_page_debug = sparc_cpu_get_phys_page_debug;
+#endif
+
+#if defined(TARGET_SPARC64) && !defined(TARGET_ABI32)
+    cc->gdb_num_core_regs = 86;
+#else
+    cc->gdb_num_core_regs = 72;
+#endif
 }
 
 static const TypeInfo sparc_cpu_type_info = {

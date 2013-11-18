@@ -29,6 +29,7 @@
 #define BLK_MIG_FLAG_DEVICE_BLOCK       0x01
 #define BLK_MIG_FLAG_EOS                0x02
 #define BLK_MIG_FLAG_PROGRESS           0x04
+#define BLK_MIG_FLAG_ZERO_BLOCK         0x08
 
 #define MAX_IS_ALLOCATED_SEARCH 65536
 
@@ -80,6 +81,7 @@ typedef struct BlkMigState {
     int shared_base;
     QSIMPLEQ_HEAD(bmds_list, BlkMigDevState) bmds_list;
     int64_t total_sector_sum;
+    bool zero_blocks;
 
     /* Protected by lock.  */
     QSIMPLEQ_HEAD(blk_list, BlkMigBlock) blk_list;
@@ -114,15 +116,29 @@ static void blk_mig_unlock(void)
 static void blk_send(QEMUFile *f, BlkMigBlock * blk)
 {
     int len;
+    uint64_t flags = BLK_MIG_FLAG_DEVICE_BLOCK;
+
+    if (block_mig_state.zero_blocks &&
+        buffer_is_zero(blk->buf, BLOCK_SIZE)) {
+        flags |= BLK_MIG_FLAG_ZERO_BLOCK;
+    }
 
     /* sector number and flags */
     qemu_put_be64(f, (blk->sector << BDRV_SECTOR_BITS)
-                     | BLK_MIG_FLAG_DEVICE_BLOCK);
+                     | flags);
 
     /* device name */
     len = strlen(blk->bmds->bs->device_name);
     qemu_put_byte(f, len);
     qemu_put_buffer(f, (uint8_t *)blk->bmds->bs->device_name, len);
+
+    /* if a block is zero we need to flush here since the network
+     * bandwidth is now a lot higher than the storage device bandwidth.
+     * thus if we queue zero blocks we slow down the migration */
+    if (flags & BLK_MIG_FLAG_ZERO_BLOCK) {
+        qemu_fflush(f);
+        return;
+    }
 
     qemu_put_buffer(f, blk->buf, BLOCK_SIZE);
 }
@@ -320,8 +336,8 @@ static void init_blk_migration_it(void *opaque, BlockDriverState *bs)
         bmds->completed_sectors = 0;
         bmds->shared_base = block_mig_state.shared_base;
         alloc_aio_bitmap(bmds);
-        drive_get_ref(drive_get_by_blockdev(bs));
         bdrv_set_in_use(bs, 1);
+        bdrv_ref(bs);
 
         block_mig_state.total_sector_sum += sectors;
 
@@ -344,6 +360,7 @@ static void init_blk_migration(QEMUFile *f)
     block_mig_state.total_sector_sum = 0;
     block_mig_state.prev_progress = -1;
     block_mig_state.bulk_completed = 0;
+    block_mig_state.zero_blocks = migrate_zero_blocks();
 
     bdrv_iterate(init_blk_migration_it, NULL);
 }
@@ -558,7 +575,7 @@ static void blk_mig_cleanup(void)
     while ((bmds = QSIMPLEQ_FIRST(&block_mig_state.bmds_list)) != NULL) {
         QSIMPLEQ_REMOVE_HEAD(&block_mig_state.bmds_list, entry);
         bdrv_set_in_use(bmds->bs, 0);
-        drive_put_ref(drive_get_by_blockdev(bmds->bs));
+        bdrv_unref(bmds->bs);
         g_free(bmds->aio_bitmap);
         g_free(bmds);
     }
@@ -762,12 +779,15 @@ static int block_load(QEMUFile *f, void *opaque, int version_id)
                 nr_sectors = BDRV_SECTORS_PER_DIRTY_CHUNK;
             }
 
-            buf = g_malloc(BLOCK_SIZE);
+            if (flags & BLK_MIG_FLAG_ZERO_BLOCK) {
+                ret = bdrv_write_zeroes(bs, addr, nr_sectors);
+            } else {
+                buf = g_malloc(BLOCK_SIZE);
+                qemu_get_buffer(f, buf, BLOCK_SIZE);
+                ret = bdrv_write(bs, addr, buf, nr_sectors);
+                g_free(buf);
+            }
 
-            qemu_get_buffer(f, buf, BLOCK_SIZE);
-            ret = bdrv_write(bs, addr, buf, nr_sectors);
-
-            g_free(buf);
             if (ret < 0) {
                 return ret;
             }

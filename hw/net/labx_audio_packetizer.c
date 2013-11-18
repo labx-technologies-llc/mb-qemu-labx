@@ -25,6 +25,10 @@
 #define min_bits qemu_fls
 #define RAM_INDEX(addr, size) (((addr)>>2)&((1<<min_bits((size)-1))-1))
 
+#define TYPE_PACKETIZER "labx.audio-packetizer"
+#define PACKETIZER(obj) \
+    OBJECT_CHECK(Packetizer, (obj), TYPE_PACKETIZER)
+
 typedef struct ClockDomainInfo {
     uint32_t tsInterval;
     uint32_t domainEnabled;
@@ -308,7 +312,7 @@ static const MemoryRegionOps microcode_ram_ops = {
 
 static int labx_audio_packetizer_init(SysBusDevice *dev)
 {
-    Packetizer *p = FROM_SYSBUS(typeof(*p), dev);
+    Packetizer *p = PACKETIZER(dev);
 
     /* Initialize defaults */
     p->tsOffset = 0x00000000;
@@ -323,16 +327,16 @@ static int labx_audio_packetizer_init(SysBusDevice *dev)
     sysbus_init_irq(dev, &p->irq);
 
     /* Set up memory regions */
-    memory_region_init_io(&p->mmio_packetizer,   &packetizer_regs_ops,   p,
+    memory_region_init_io(&p->mmio_packetizer,   OBJECT(p), &packetizer_regs_ops,   p,
                           "labx.audio-packetizer-regs",
                           0x100 * 4);
-    memory_region_init_io(&p->mmio_clock_domain, &clock_domain_regs_ops, p,
+    memory_region_init_io(&p->mmio_clock_domain, OBJECT(p), &clock_domain_regs_ops, p,
                           "labx.audio-packetizer-cd-regs",
                           2 * 4 * p->clockDomains);
-    memory_region_init_io(&p->mmio_template,     &template_ram_ops,      p,
+    memory_region_init_io(&p->mmio_template,     OBJECT(p), &template_ram_ops,      p,
                           "labx.audio-packetizer-template",
                           4 * p->templateWords);
-    memory_region_init_io(&p->mmio_microcode,    &microcode_ram_ops,     p,
+    memory_region_init_io(&p->mmio_microcode,    OBJECT(p), &microcode_ram_ops,     p,
                           "labx.audio-packetizer-microcode",
                           4 * p->microcodeWords);
 
@@ -382,7 +386,7 @@ static void labx_audio_packetizer_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo labx_audio_packetizer_info = {
-    .name          = "labx.audio-packetizer",
+    .name          = TYPE_PACKETIZER,
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(Packetizer),
     .class_init    = labx_audio_packetizer_class_init,
@@ -390,20 +394,18 @@ static const TypeInfo labx_audio_packetizer_info = {
 
 static const TypeInfo labx_audio_packetizer_info2 = {
     .name          = "xlnx.labx-audio-packetizer",
-    .parent        = TYPE_SYS_BUS_DEVICE,
+    .parent        = TYPE_PACKETIZER,
     .instance_size = sizeof(Packetizer),
-    .class_init    = labx_audio_packetizer_class_init,
 };
 
 static void labrinth_avb_packetizer_class_init(ObjectClass *klass, void *data)
 {
-    // TODO: Tack on the TDM mux registers. For now just init the packetizer
-    labx_audio_packetizer_class_init(klass, data);
+    // TODO: Tack on the TDM mux registers
 }
 
 static const TypeInfo labrinth_avb_packetizer_info = {
     .name          = "xlnx.labrinth-avb-packetizer",
-    .parent        = TYPE_SYS_BUS_DEVICE,
+    .parent        = TYPE_PACKETIZER,
     .instance_size = sizeof(Packetizer),
     .class_init    = labrinth_avb_packetizer_class_init,
 };

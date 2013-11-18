@@ -73,7 +73,7 @@ Select CPU model (@code{-cpu help} for list and additional feature selection)
 ETEXI
 
 DEF("smp", HAS_ARG, QEMU_OPTION_smp,
-    "-smp n[,maxcpus=cpus][,cores=cores][,threads=threads][,sockets=sockets]\n"
+    "-smp [cpus=]n[,maxcpus=cpus][,cores=cores][,threads=threads][,sockets=sockets]\n"
     "                set the number of CPUs to 'n' [default=1]\n"
     "                maxcpus= maximum number of total cpus, including\n"
     "                offline CPUs for hotplug, etc\n"
@@ -82,7 +82,7 @@ DEF("smp", HAS_ARG, QEMU_OPTION_smp,
     "                sockets= number of discrete sockets in the system\n",
         QEMU_ARCH_ALL)
 STEXI
-@item -smp @var{n}[,cores=@var{cores}][,threads=@var{threads}][,sockets=@var{sockets}][,maxcpus=@var{maxcpus}]
+@item -smp [cpus=]@var{n}[,cores=@var{cores}][,threads=@var{threads}][,sockets=@var{sockets}][,maxcpus=@var{maxcpus}]
 @findex -smp
 Simulate an SMP system with @var{n} CPUs. On the PC target, up to 255
 CPUs are supported. On Sparc32 target, Linux limits the number of usable CPUs
@@ -409,7 +409,11 @@ DEF("drive", HAS_ARG, QEMU_OPTION_drive,
     "       [,cache=writethrough|writeback|none|directsync|unsafe][,format=f]\n"
     "       [,serial=s][,addr=A][,id=name][,aio=threads|native]\n"
     "       [,readonly=on|off][,copy-on-read=on|off]\n"
-    "       [[,bps=b]|[[,bps_rd=r][,bps_wr=w]]][[,iops=i]|[[,iops_rd=r][,iops_wr=w]]\n"
+    "       [[,bps=b]|[[,bps_rd=r][,bps_wr=w]]]\n"
+    "       [[,iops=i]|[[,iops_rd=r][,iops_wr=w]]]\n"
+    "       [[,bps_max=bm]|[[,bps_rd_max=rm][,bps_wr_max=wm]]]\n"
+    "       [[,iops_max=im]|[[,iops_rd_max=irm][,iops_wr_max=iwm]]]\n"
+    "       [[,iops_size=is]]\n"
     "                use 'file' as a drive image\n", QEMU_ARCH_ALL)
 STEXI
 @item -drive @var{option}[,@var{option}[,@var{option}[,...]]]
@@ -842,8 +846,10 @@ STEXI
 Normally, QEMU uses SDL to display the VGA output. With this option,
 you can totally disable graphical output so that QEMU is a simple
 command line application. The emulated serial port is redirected on
-the console. Therefore, you can still use QEMU to debug a Linux kernel
-with a serial console.
+the console and muxed with the monitor (unless redirected elsewhere
+explicitly). Therefore, you can still use QEMU to debug a Linux kernel
+with a serial console.  Use @key{C-a h} for help on switching between
+the console and monitor.
 ETEXI
 
 DEF("curses", 0, QEMU_OPTION_curses,
@@ -917,8 +923,8 @@ DEF("spice", HAS_ARG, QEMU_OPTION_spice,
     "       [,jpeg-wan-compression=[auto|never|always]]\n"
     "       [,zlib-glz-wan-compression=[auto|never|always]]\n"
     "       [,streaming-video=[off|all|filter]][,disable-copy-paste]\n"
-    "       [,agent-mouse=[on|off]][,playback-compression=[on|off]]\n"
-    "       [,seamless-migration=[on|off]]\n"
+    "       [,disable-agent-file-xfer][,agent-mouse=[on|off]]\n"
+    "       [,playback-compression=[on|off]][,seamless-migration=[on|off]]\n"
     "   enable spice\n"
     "   at least one of {port, tls-port} is mandatory\n",
     QEMU_ARCH_ALL)
@@ -960,6 +966,9 @@ Allow client connects without authentication.
 
 @item disable-copy-paste
 Disable copy paste between the client and the guest.
+
+@item disable-agent-file-xfer
+Disable spice-vdagent based file-xfer between the client and the guest.
 
 @item tls-port=<nr>
 Set the TCP port spice is listening on for encrypted channels.
@@ -1268,9 +1277,8 @@ DEF("no-fd-bootchk", 0, QEMU_OPTION_no_fd_bootchk,
 STEXI
 @item -no-fd-bootchk
 @findex -no-fd-bootchk
-Disable boot signature checking for floppy disks in Bochs BIOS. It may
+Disable boot signature checking for floppy disks in BIOS. May
 be needed to boot from old floppy disks.
-TODO: check reference to Bochs BIOS.
 ETEXI
 
 DEF("no-acpi", 0, QEMU_OPTION_no_acpi,
@@ -1779,7 +1787,7 @@ DEF("chardev", HAS_ARG, QEMU_OPTION_chardev,
     "-chardev msmouse,id=id[,mux=on|off]\n"
     "-chardev vc,id=id[[,width=width][,height=height]][[,cols=cols][,rows=rows]]\n"
     "         [,mux=on|off]\n"
-    "-chardev memory,id=id[,size=size]\n"
+    "-chardev ringbuf,id=id[,size=size]\n"
     "-chardev file,id=id,path=path[,mux=on|off]\n"
     "-chardev pipe,id=id,path=path[,mux=on|off]\n"
 #ifdef _WIN32
@@ -1817,7 +1825,7 @@ Backend is one of:
 @option{udp},
 @option{msmouse},
 @option{vc},
-@option{memory},
+@option{ringbuf},
 @option{file},
 @option{pipe},
 @option{console},
@@ -1926,7 +1934,7 @@ the console, in pixels.
 @option{cols} and @option{rows} specify that the console be sized to fit a text
 console with the given dimensions.
 
-@item -chardev memory ,id=@var{id} [,size=@var{size}]
+@item -chardev ringbuf ,id=@var{id} [,size=@var{size}]
 
 Create a ring buffer with fixed size @option{size}.
 @var{size} must be a power of two, and defaults to @code{64K}).
@@ -2483,14 +2491,15 @@ same as if you had specified @code{-serial tcp} except the unix domain socket
 @item mon:@var{dev_string}
 This is a special option to allow the monitor to be multiplexed onto
 another serial port.  The monitor is accessed with key sequence of
-@key{Control-a} and then pressing @key{c}. See monitor access
-@ref{pcsys_keys} in the -nographic section for more keys.
+@key{Control-a} and then pressing @key{c}.
 @var{dev_string} should be any one of the serial devices specified
 above.  An example to multiplex the monitor onto a telnet server
 listening on port 4444 would be:
 @table @code
 @item -serial mon:telnet::4444,server,nowait
 @end table
+When the monitor is multiplexed to stdio in this way, Ctrl+C will not terminate
+QEMU any more but will be passed to the guest instead.
 
 @item braille
 Braille device.  This will use BrlAPI to display the braille output on a real
@@ -2540,9 +2549,9 @@ Like -monitor but opens in 'control' mode.
 ETEXI
 
 DEF("mon", HAS_ARG, QEMU_OPTION_mon, \
-    "-mon chardev=[name][,mode=readline|control][,default]\n", QEMU_ARCH_ALL)
+    "-mon [chardev=]name[,mode=readline|control][,default]\n", QEMU_ARCH_ALL)
 STEXI
-@item -mon chardev=[name][,mode=readline|control][,default]
+@item -mon [chardev=]name[,mode=readline|control][,default]
 @findex -mon
 Setup monitor on chardev @var{name}.
 ETEXI
@@ -3094,6 +3103,17 @@ Create an new object of type @var{typename} setting properties
 in the order they are specified.  Note that the 'id'
 property must be set.  These objects are placed in the
 '/objects' path.
+ETEXI
+
+DEF("msg", HAS_ARG, QEMU_OPTION_msg,
+    "-msg timestamp[=on|off]\n"
+    "                change the format of messages\n"
+    "                on|off controls leading timestamps (default:on)\n",
+    QEMU_ARCH_ALL)
+STEXI
+@item -msg timestamp[=on|off]
+@findex -msg
+prepend a timestamp to each log message.(default:on)
 ETEXI
 
 HXCOMM This is the last statement. Insert new options before this line!

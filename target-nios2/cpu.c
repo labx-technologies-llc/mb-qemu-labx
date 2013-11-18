@@ -22,19 +22,27 @@
 #include "qemu-common.h"
 
 
-/* CPUClass::reset() */
-static void nios2_cpu_reset(CPUState *s)
+static void nios2_cpu_set_pc(CPUState *cs, vaddr value)
 {
-    Nios2CPU *cpu = NIOS2_CPU(s);
+    Nios2CPU *cpu = NIOS2_CPU(cs);
+    CPUNios2State *env = &cpu->env;
+
+    env->regs[R_PC] = value;
+}
+
+/* CPUClass::reset() */
+static void nios2_cpu_reset(CPUState *cs)
+{
+    Nios2CPU *cpu = NIOS2_CPU(cs);
     Nios2CPUClass *mcc = NIOS2_CPU_GET_CLASS(cpu);
     CPUNios2State *env = &cpu->env;
 
     if (qemu_loglevel_mask(CPU_LOG_RESET)) {
-        qemu_log("CPU Reset (CPU %d)\n", s->cpu_index);
-        log_cpu_state(env, 0);
+        qemu_log("CPU Reset (CPU %d)\n", cs->cpu_index);
+        log_cpu_state(cs, 0);
     }
 
-    mcc->parent_reset(s);
+    mcc->parent_reset(cs);
 
     tlb_flush(env, 1);
 
@@ -67,6 +75,11 @@ static void nios2_cpu_class_init(ObjectClass *oc, void *data)
     mcc->parent_reset = cc->reset;
     cc->reset = nios2_cpu_reset;
     cc->do_interrupt = nios2_cpu_do_interrupt;
+    cc->dump_state = nios2_cpu_dump_state;
+    cc->set_pc = nios2_cpu_set_pc;
+#ifndef CONFIG_USER_ONLY
+    cc->get_phys_page_debug = nios2_cpu_get_phys_page_debug;
+#endif
 }
 
 static const TypeInfo nios2_cpu_type_info = {

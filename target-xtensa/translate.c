@@ -238,8 +238,6 @@ void xtensa_translate_init(void)
                     uregnames[i].name);
         }
     }
-#define GEN_HELPER 2
-#include "helper.h"
 }
 
 static inline bool option_bits_enabled(DisasContext *dc, uint64_t opt)
@@ -305,14 +303,19 @@ static void gen_left_shift_sar(DisasContext *dc, TCGv_i32 sa)
     tcg_temp_free(tmp);
 }
 
-static void gen_advance_ccount(DisasContext *dc)
+static void gen_advance_ccount_cond(DisasContext *dc)
 {
     if (dc->ccount_delta > 0) {
         TCGv_i32 tmp = tcg_const_i32(dc->ccount_delta);
-        dc->ccount_delta = 0;
         gen_helper_advance_ccount(cpu_env, tmp);
         tcg_temp_free(tmp);
     }
+}
+
+static void gen_advance_ccount(DisasContext *dc)
+{
+    gen_advance_ccount_cond(dc);
+    dc->ccount_delta = 0;
 }
 
 static void reset_used_window(DisasContext *dc)
@@ -395,7 +398,7 @@ static void gen_jump_slot(DisasContext *dc, TCGv dest, int slot)
     } else {
         if (slot >= 0) {
             tcg_gen_goto_tb(slot);
-            tcg_gen_exit_tb((tcg_target_long)dc->tb + slot);
+            tcg_gen_exit_tb((uintptr_t)dc->tb + slot);
         } else {
             tcg_gen_exit_tb(0);
         }
@@ -491,7 +494,7 @@ static void gen_brcondi(DisasContext *dc, TCGCond cond,
     tcg_temp_free(tmp);
 }
 
-static void gen_check_sr(DisasContext *dc, uint32_t sr, unsigned access)
+static bool gen_check_sr(DisasContext *dc, uint32_t sr, unsigned access)
 {
     if (!xtensa_option_bits_enabled(dc->config, sregnames[sr].opt_bits)) {
         if (sregnames[sr].name) {
@@ -500,6 +503,7 @@ static void gen_check_sr(DisasContext *dc, uint32_t sr, unsigned access)
             qemu_log("SR %d is not implemented\n", sr);
         }
         gen_exception_cause(dc, ILLEGAL_INSTRUCTION_CAUSE);
+        return false;
     } else if (!(sregnames[sr].access & access)) {
         static const char * const access_text[] = {
             [SR_R] = "rsr",
@@ -510,7 +514,9 @@ static void gen_check_sr(DisasContext *dc, uint32_t sr, unsigned access)
         qemu_log("SR %s is not available for %s\n", sregnames[sr].name,
                 access_text[access]);
         gen_exception_cause(dc, ILLEGAL_INSTRUCTION_CAUSE);
+        return false;
     }
+    return true;
 }
 
 static void gen_rsr_ccount(DisasContext *dc, TCGv_i32 d, uint32_t sr)
@@ -826,15 +832,27 @@ static void gen_window_check1(DisasContext *dc, unsigned r1)
     }
     if (option_enabled(dc, XTENSA_OPTION_WINDOWED_REGISTER) &&
             r1 / 4 > dc->used_window) {
-        TCGv_i32 pc = tcg_const_i32(dc->pc);
-        TCGv_i32 w = tcg_const_i32(r1 / 4);
+        int label = gen_new_label();
+        TCGv_i32 ws = tcg_temp_new_i32();
 
         dc->used_window = r1 / 4;
-        gen_advance_ccount(dc);
-        gen_helper_window_check(cpu_env, pc, w);
+        tcg_gen_deposit_i32(ws, cpu_SR[WINDOW_START], cpu_SR[WINDOW_START],
+                dc->config->nareg / 4, dc->config->nareg / 4);
+        tcg_gen_shr_i32(ws, ws, cpu_SR[WINDOW_BASE]);
+        tcg_gen_andi_i32(ws, ws, (2 << (r1 / 4)) - 2);
+        tcg_gen_brcondi_i32(TCG_COND_EQ, ws, 0, label);
+        {
+            TCGv_i32 pc = tcg_const_i32(dc->pc);
+            TCGv_i32 w = tcg_const_i32(r1 / 4);
 
-        tcg_temp_free(w);
-        tcg_temp_free(pc);
+            gen_advance_ccount_cond(dc);
+            gen_helper_window_check(cpu_env, pc, w);
+
+            tcg_temp_free(w);
+            tcg_temp_free(pc);
+        }
+        gen_set_label(label);
+        tcg_temp_free(ws);
     }
 }
 
@@ -1482,9 +1500,9 @@ static void disas_xtensa_insn(CPUXtensaState *env, DisasContext *dc)
                 break;
 
             case 6: /*XSR*/
-                {
+                if (gen_check_sr(dc, RSR_SR, SR_X)) {
                     TCGv_i32 tmp = tcg_temp_new_i32();
-                    gen_check_sr(dc, RSR_SR, SR_X);
+
                     if (RSR_SR >= 64) {
                         gen_check_privilege(dc);
                     }
@@ -1707,21 +1725,23 @@ static void disas_xtensa_insn(CPUXtensaState *env, DisasContext *dc)
         case 3: /*RST3*/
             switch (OP2) {
             case 0: /*RSR*/
-                gen_check_sr(dc, RSR_SR, SR_R);
-                if (RSR_SR >= 64) {
-                    gen_check_privilege(dc);
+                if (gen_check_sr(dc, RSR_SR, SR_R)) {
+                    if (RSR_SR >= 64) {
+                        gen_check_privilege(dc);
+                    }
+                    gen_window_check1(dc, RRR_T);
+                    gen_rsr(dc, cpu_R[RRR_T], RSR_SR);
                 }
-                gen_window_check1(dc, RRR_T);
-                gen_rsr(dc, cpu_R[RRR_T], RSR_SR);
                 break;
 
             case 1: /*WSR*/
-                gen_check_sr(dc, RSR_SR, SR_W);
-                if (RSR_SR >= 64) {
-                    gen_check_privilege(dc);
+                if (gen_check_sr(dc, RSR_SR, SR_W)) {
+                    if (RSR_SR >= 64) {
+                        gen_check_privilege(dc);
+                    }
+                    gen_window_check1(dc, RRR_T);
+                    gen_wsr(dc, RSR_SR, cpu_R[RRR_T]);
                 }
-                gen_window_check1(dc, RRR_T);
-                gen_wsr(dc, RSR_SR, cpu_R[RRR_T]);
                 break;
 
             case 2: /*SEXTu*/
@@ -2875,9 +2895,12 @@ static void gen_ibreak_check(CPUXtensaState *env, DisasContext *dc)
     }
 }
 
-static void gen_intermediate_code_internal(
-        CPUXtensaState *env, TranslationBlock *tb, int search_pc)
+static inline
+void gen_intermediate_code_internal(XtensaCPU *cpu,
+                                    TranslationBlock *tb, bool search_pc)
 {
+    CPUState *cs = CPU(cpu);
+    CPUXtensaState *env = &cpu->env;
     DisasContext dc;
     int insn_count = 0;
     int j, lj = -1;
@@ -2892,7 +2915,7 @@ static void gen_intermediate_code_internal(
     }
 
     dc.config = env->config;
-    dc.singlestep_enabled = env->singlestep_enabled;
+    dc.singlestep_enabled = cs->singlestep_enabled;
     dc.tb = tb;
     dc.pc = pc_start;
     dc.ring = tb->flags & XTENSA_TBFLAG_RING_MASK;
@@ -2915,8 +2938,7 @@ static void gen_intermediate_code_internal(
 
     gen_tb_start();
 
-    if (env->singlestep_enabled && env->exception_taken) {
-        env->exception_taken = 0;
+    if (tb->flags & XTENSA_TBFLAG_EXCEPTION) {
         tcg_gen_movi_i32(cpu_pc, dc.pc);
         gen_exception(&dc, EXCP_DEBUG);
     }
@@ -2968,7 +2990,7 @@ static void gen_intermediate_code_internal(
         if (dc.icount) {
             tcg_gen_mov_i32(cpu_SR[ICOUNT], dc.next_icount);
         }
-        if (env->singlestep_enabled) {
+        if (cs->singlestep_enabled) {
             tcg_gen_movi_i32(cpu_pc, dc.pc);
             gen_exception(&dc, EXCP_DEBUG);
             break;
@@ -2994,6 +3016,14 @@ static void gen_intermediate_code_internal(
     gen_tb_end(tb, insn_count);
     *tcg_ctx.gen_opc_ptr = INDEX_op_end;
 
+#ifdef DEBUG_DISAS
+    if (qemu_loglevel_mask(CPU_LOG_TB_IN_ASM)) {
+        qemu_log("----------------\n");
+        qemu_log("IN: %s\n", lookup_symbol(pc_start));
+        log_target_disas(env, pc_start, dc.pc - pc_start, 0);
+        qemu_log("\n");
+    }
+#endif
     if (search_pc) {
         j = tcg_ctx.gen_opc_ptr - tcg_ctx.gen_opc_buf;
         memset(tcg_ctx.gen_opc_instr_start + lj + 1, 0,
@@ -3006,17 +3036,19 @@ static void gen_intermediate_code_internal(
 
 void gen_intermediate_code(CPUXtensaState *env, TranslationBlock *tb)
 {
-    gen_intermediate_code_internal(env, tb, 0);
+    gen_intermediate_code_internal(xtensa_env_get_cpu(env), tb, false);
 }
 
 void gen_intermediate_code_pc(CPUXtensaState *env, TranslationBlock *tb)
 {
-    gen_intermediate_code_internal(env, tb, 1);
+    gen_intermediate_code_internal(xtensa_env_get_cpu(env), tb, true);
 }
 
-void cpu_dump_state(CPUXtensaState *env, FILE *f, fprintf_function cpu_fprintf,
-        int flags)
+void xtensa_cpu_dump_state(CPUState *cs, FILE *f,
+                           fprintf_function cpu_fprintf, int flags)
 {
+    XtensaCPU *cpu = XTENSA_CPU(cs);
+    CPUXtensaState *env = &cpu->env;
     int i, j;
 
     cpu_fprintf(f, "PC=%08x\n\n", env->pc);

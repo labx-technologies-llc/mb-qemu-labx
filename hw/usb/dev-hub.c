@@ -33,7 +33,6 @@ typedef struct USBHubPort {
     USBPort port;
     uint16_t wPortStatus;
     uint16_t wPortChange;
-    uint16_t wPortChange_reported;
 } USBHubPort;
 
 typedef struct USBHubState {
@@ -468,13 +467,11 @@ static void usb_hub_handle_data(USBDevice *dev, USBPacket *p)
             status = 0;
             for(i = 0; i < NUM_PORTS; i++) {
                 port = &s->ports[i];
-                if (port->wPortChange &&
-                    port->wPortChange_reported != port->wPortChange) {
+                if (port->wPortChange)
                     status |= (1 << (i + 1));
-                }
-                port->wPortChange_reported = port->wPortChange;
             }
             if (status != 0) {
+                trace_usb_hub_status_report(s->dev.addr, status);
                 for(i = 0; i < n; i++) {
                     buf[i] = status >> (8 * i);
                 }
@@ -574,6 +571,7 @@ static void usb_hub_class_initfn(ObjectClass *klass, void *data)
     uc->handle_control = usb_hub_handle_control;
     uc->handle_data    = usb_hub_handle_data;
     uc->handle_destroy = usb_hub_handle_destroy;
+    set_bit(DEVICE_CATEGORY_BRIDGE, dc->categories);
     dc->fw_name = "hub";
     dc->vmsd = &vmstate_usb_hub;
 }

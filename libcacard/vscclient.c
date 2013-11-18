@@ -618,18 +618,22 @@ connect_to_qemu(
     if (ret != 0) {
         /* Error */
         fprintf(stderr, "getaddrinfo failed\n");
-        return -1;
+        goto cleanup_socket;
     }
 
     if (connect(sock, server->ai_addr, server->ai_addrlen) < 0) {
         /* Error */
         fprintf(stderr, "Could not connect\n");
-        return -1;
+        goto cleanup_socket;
     }
     if (verbose) {
         printf("Connected (sizeof Header=%zd)!\n", sizeof(VSCMsgHeader));
     }
     return sock;
+
+cleanup_socket:
+    closesocket(sock);
+    return -1;
 }
 
 int
@@ -641,7 +645,6 @@ main(
     GIOChannel *channel_stdin;
     char *qemu_host;
     char *qemu_port;
-    VSCMsgHeader mhHeader;
 
     VCardEmulOptions *command_line_options = NULL;
 
@@ -750,7 +753,7 @@ main(
         .magic = VSCARD_MAGIC,
         .capabilities = {0}
     };
-    send_msg(VSC_Init, mhHeader.reader_id, &init, sizeof(init));
+    send_msg(VSC_Init, 0, &init, sizeof(init));
 
     g_main_loop_run(loop);
     g_main_loop_unref(loop);
@@ -759,5 +762,6 @@ main(
     g_io_channel_unref(channel_socket);
     g_byte_array_unref(socket_to_send);
 
+    closesocket(sock);
     return 0;
 }

@@ -164,11 +164,17 @@ void hmp_info_migrate(Monitor *mon, const QDict *qdict)
             monitor_printf(mon, "downtime: %" PRIu64 " milliseconds\n",
                            info->downtime);
         }
+        if (info->has_setup_time) {
+            monitor_printf(mon, "setup: %" PRIu64 " milliseconds\n",
+                           info->setup_time);
+        }
     }
 
     if (info->has_ram) {
         monitor_printf(mon, "transferred ram: %" PRIu64 " kbytes\n",
                        info->ram->transferred >> 10);
+        monitor_printf(mon, "throughput: %0.2f mbps\n",
+                       info->ram->mbps);
         monitor_printf(mon, "remaining ram: %" PRIu64 " kbytes\n",
                        info->ram->remaining >> 10);
         monitor_printf(mon, "total ram: %" PRIu64 " kbytes\n",
@@ -289,62 +295,92 @@ void hmp_info_block(Monitor *mon, const QDict *qdict)
         if (device && strcmp(device, info->value->device)) {
             continue;
         }
-        monitor_printf(mon, "%s: removable=%d",
-                       info->value->device, info->value->removable);
 
-        if (info->value->removable) {
-            monitor_printf(mon, " locked=%d", info->value->locked);
-            monitor_printf(mon, " tray-open=%d", info->value->tray_open);
+        if (info != block_list) {
+            monitor_printf(mon, "\n");
         }
 
-        if (info->value->has_io_status) {
-            monitor_printf(mon, " io-status=%s",
+        monitor_printf(mon, "%s", info->value->device);
+        if (info->value->has_inserted) {
+            monitor_printf(mon, ": %s (%s%s%s)\n",
+                           info->value->inserted->file,
+                           info->value->inserted->drv,
+                           info->value->inserted->ro ? ", read-only" : "",
+                           info->value->inserted->encrypted ? ", encrypted" : "");
+        } else {
+            monitor_printf(mon, ": [not inserted]\n");
+        }
+
+        if (info->value->has_io_status && info->value->io_status != BLOCK_DEVICE_IO_STATUS_OK) {
+            monitor_printf(mon, "    I/O status:       %s\n",
                            BlockDeviceIoStatus_lookup[info->value->io_status]);
         }
 
-        if (info->value->has_inserted) {
-            monitor_printf(mon, " file=");
-            monitor_print_filename(mon, info->value->inserted->file);
+        if (info->value->removable) {
+            monitor_printf(mon, "    Removable device: %slocked, tray %s\n",
+                           info->value->locked ? "" : "not ",
+                           info->value->tray_open ? "open" : "closed");
+        }
 
-            if (info->value->inserted->has_backing_file) {
-                monitor_printf(mon, " backing_file=");
-                monitor_print_filename(mon, info->value->inserted->backing_file);
-                monitor_printf(mon, " backing_file_depth=%" PRId64,
-                    info->value->inserted->backing_file_depth);
-            }
-            monitor_printf(mon, " ro=%d drv=%s encrypted=%d",
-                           info->value->inserted->ro,
-                           info->value->inserted->drv,
-                           info->value->inserted->encrypted);
 
-            monitor_printf(mon, " bps=%" PRId64 " bps_rd=%" PRId64
-                            " bps_wr=%" PRId64 " iops=%" PRId64
-                            " iops_rd=%" PRId64 " iops_wr=%" PRId64,
+        if (!info->value->has_inserted) {
+            continue;
+        }
+
+        if (info->value->inserted->has_backing_file) {
+            monitor_printf(mon,
+                           "    Backing file:     %s "
+                           "(chain depth: %" PRId64 ")\n",
+                           info->value->inserted->backing_file,
+                           info->value->inserted->backing_file_depth);
+        }
+
+        if (info->value->inserted->bps
+            || info->value->inserted->bps_rd
+            || info->value->inserted->bps_wr
+            || info->value->inserted->iops
+            || info->value->inserted->iops_rd
+            || info->value->inserted->iops_wr)
+        {
+            monitor_printf(mon, "    I/O throttling:   bps=%" PRId64
+                            " bps_rd=%" PRId64  " bps_wr=%" PRId64
+                            " bps_max=%" PRId64
+                            " bps_rd_max=%" PRId64
+                            " bps_wr_max=%" PRId64
+                            " iops=%" PRId64 " iops_rd=%" PRId64
+                            " iops_wr=%" PRId64
+                            " iops_max=%" PRId64
+                            " iops_rd_max=%" PRId64
+                            " iops_wr_max=%" PRId64
+                            " iops_size=%" PRId64 "\n",
                             info->value->inserted->bps,
                             info->value->inserted->bps_rd,
                             info->value->inserted->bps_wr,
+                            info->value->inserted->bps_max,
+                            info->value->inserted->bps_rd_max,
+                            info->value->inserted->bps_wr_max,
                             info->value->inserted->iops,
                             info->value->inserted->iops_rd,
-                            info->value->inserted->iops_wr);
-
-            if (verbose) {
-                monitor_printf(mon, " images:\n");
-                image_info = info->value->inserted->image;
-                while (1) {
-                        bdrv_image_info_dump((fprintf_function)monitor_printf,
-                                             mon, image_info);
-                    if (image_info->has_backing_image) {
-                        image_info = image_info->backing_image;
-                    } else {
-                        break;
-                    }
-                }
-            }
-        } else {
-            monitor_printf(mon, " [not inserted]");
+                            info->value->inserted->iops_wr,
+                            info->value->inserted->iops_max,
+                            info->value->inserted->iops_rd_max,
+                            info->value->inserted->iops_wr_max,
+                            info->value->inserted->iops_size);
         }
 
-        monitor_printf(mon, "\n");
+        if (verbose) {
+            monitor_printf(mon, "\nImages:\n");
+            image_info = info->value->inserted->image;
+            while (1) {
+                    bdrv_image_info_dump((fprintf_function)monitor_printf,
+                                         mon, image_info);
+                if (image_info->has_backing_image) {
+                    image_info = image_info->backing_image;
+                } else {
+                    break;
+                }
+            }
+        }
     }
 
     qapi_free_BlockInfoList(block_list);
@@ -506,7 +542,7 @@ static void hmp_info_pci_device(Monitor *mon, const PciDeviceInfo *dev)
     if (dev->class_info.has_desc) {
         monitor_printf(mon, "%s", dev->class_info.desc);
     } else {
-        monitor_printf(mon, "Class %04" PRId64, dev->class_info.class);
+        monitor_printf(mon, "Class %04" PRId64, dev->class_info.q_class);
     }
 
     monitor_printf(mon, ": PCI device %04" PRIx64 ":%04" PRIx64 "\n",
@@ -889,6 +925,34 @@ void hmp_drive_mirror(Monitor *mon, const QDict *qdict)
     hmp_handle_error(mon, &errp);
 }
 
+void hmp_drive_backup(Monitor *mon, const QDict *qdict)
+{
+    const char *device = qdict_get_str(qdict, "device");
+    const char *filename = qdict_get_str(qdict, "target");
+    const char *format = qdict_get_try_str(qdict, "format");
+    int reuse = qdict_get_try_bool(qdict, "reuse", 0);
+    int full = qdict_get_try_bool(qdict, "full", 0);
+    enum NewImageMode mode;
+    Error *errp = NULL;
+
+    if (!filename) {
+        error_set(&errp, QERR_MISSING_PARAMETER, "target");
+        hmp_handle_error(mon, &errp);
+        return;
+    }
+
+    if (reuse) {
+        mode = NEW_IMAGE_MODE_EXISTING;
+    } else {
+        mode = NEW_IMAGE_MODE_ABSOLUTE_PATHS;
+    }
+
+    qmp_drive_backup(device, filename, !!format, format,
+                     full ? MIRROR_SYNC_MODE_FULL : MIRROR_SYNC_MODE_TOP,
+                     true, mode, false, 0, false, 0, false, 0, &errp);
+    hmp_handle_error(mon, &errp);
+}
+
 void hmp_snapshot_blkdev(Monitor *mon, const QDict *qdict)
 {
     const char *device = qdict_get_str(qdict, "device");
@@ -909,6 +973,28 @@ void hmp_snapshot_blkdev(Monitor *mon, const QDict *qdict)
     mode = reuse ? NEW_IMAGE_MODE_EXISTING : NEW_IMAGE_MODE_ABSOLUTE_PATHS;
     qmp_blockdev_snapshot_sync(device, filename, !!format, format,
                                true, mode, &errp);
+    hmp_handle_error(mon, &errp);
+}
+
+void hmp_snapshot_blkdev_internal(Monitor *mon, const QDict *qdict)
+{
+    const char *device = qdict_get_str(qdict, "device");
+    const char *name = qdict_get_str(qdict, "name");
+    Error *errp = NULL;
+
+    qmp_blockdev_snapshot_internal_sync(device, name, &errp);
+    hmp_handle_error(mon, &errp);
+}
+
+void hmp_snapshot_delete_blkdev_internal(Monitor *mon, const QDict *qdict)
+{
+    const char *device = qdict_get_str(qdict, "device");
+    const char *name = qdict_get_str(qdict, "name");
+    const char *id = qdict_get_try_str(qdict, "id");
+    Error *errp = NULL;
+
+    qmp_blockdev_snapshot_delete_internal_sync(device, !!id, id,
+                                               true, name, &errp);
     hmp_handle_error(mon, &errp);
 }
 
@@ -1048,7 +1134,21 @@ void hmp_block_set_io_throttle(Monitor *mon, const QDict *qdict)
                               qdict_get_int(qdict, "bps_wr"),
                               qdict_get_int(qdict, "iops"),
                               qdict_get_int(qdict, "iops_rd"),
-                              qdict_get_int(qdict, "iops_wr"), &err);
+                              qdict_get_int(qdict, "iops_wr"),
+                              false, /* no burst max via HMP */
+                              0,
+                              false,
+                              0,
+                              false,
+                              0,
+                              false,
+                              0,
+                              false,
+                              0,
+                              false,
+                              0,
+                              false, /* No default I/O size */
+                              0, &err);
     hmp_handle_error(mon, &err);
 }
 
@@ -1061,7 +1161,7 @@ void hmp_block_stream(Monitor *mon, const QDict *qdict)
 
     qmp_block_stream(device, base != NULL, base,
                      qdict_haskey(qdict, "speed"), speed,
-                     BLOCKDEV_ON_ERROR_REPORT, true, &error);
+                     true, BLOCKDEV_ON_ERROR_REPORT, &error);
 
     hmp_handle_error(mon, &error);
 }
@@ -1145,13 +1245,13 @@ static void hmp_migrate_status_cb(void *opaque)
             monitor_flush(status->mon);
         }
 
-        qemu_mod_timer(status->timer, qemu_get_clock_ms(rt_clock) + 1000);
+        timer_mod(status->timer, qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + 1000);
     } else {
         if (status->is_block_migration) {
             monitor_printf(status->mon, "\n");
         }
         monitor_resume(status->mon);
-        qemu_del_timer(status->timer);
+        timer_del(status->timer);
         g_free(status);
     }
 
@@ -1185,9 +1285,9 @@ void hmp_migrate(Monitor *mon, const QDict *qdict)
         status = g_malloc0(sizeof(*status));
         status->mon = mon;
         status->is_block_migration = blk || inc;
-        status->timer = qemu_new_timer_ms(rt_clock, hmp_migrate_status_cb,
+        status->timer = timer_new_ms(QEMU_CLOCK_REALTIME, hmp_migrate_status_cb,
                                           status);
-        qemu_mod_timer(status->timer, qemu_get_clock_ms(rt_clock));
+        timer_mod(status->timer, qemu_clock_get_ms(QEMU_CLOCK_REALTIME));
     }
 }
 

@@ -26,6 +26,7 @@
 #include "hw/ptimer.h"
 #include "sysemu/char.h"
 #include "sysemu/sysemu.h"
+#include "sysemu/qtest.h"
 #include "hw/boards.h"
 #include "hw/loader.h"
 #include "elf.h"
@@ -147,13 +148,13 @@ static void leon3_generic_hw_init(QEMUMachineInitArgs *args)
         exit(1);
     }
 
-    memory_region_init_ram(ram, "leon3.ram", ram_size);
+    memory_region_init_ram(ram, NULL, "leon3.ram", ram_size);
     vmstate_register_ram_global(ram);
     memory_region_add_subregion(address_space_mem, 0x40000000, ram);
 
     /* Allocate BIOS */
     prom_size = 8 * 1024 * 1024; /* 8Mb */
-    memory_region_init_ram(prom, "Leon3.bios", prom_size);
+    memory_region_init_ram(prom, NULL, "Leon3.bios", prom_size);
     vmstate_register_ram_global(prom);
     memory_region_set_readonly(prom, true);
     memory_region_add_subregion(address_space_mem, 0x00000000, prom);
@@ -178,7 +179,7 @@ static void leon3_generic_hw_init(QEMUMachineInitArgs *args)
             fprintf(stderr, "qemu: could not load prom '%s'\n", filename);
             exit(1);
         }
-    } else if (kernel_filename == NULL) {
+    } else if (kernel_filename == NULL && !qtest_enabled()) {
         fprintf(stderr, "Can't read bios image %s\n", filename);
         exit(1);
     }
@@ -216,7 +217,6 @@ static QEMUMachine leon3_generic_machine = {
     .name     = "leon3_generic",
     .desc     = "Leon-3 generic",
     .init     = leon3_generic_hw_init,
-    DEFAULT_MACHINE_OPTIONS,
 };
 
 static void leon3_machine_init(void)

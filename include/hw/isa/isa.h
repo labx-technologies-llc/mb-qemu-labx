@@ -22,17 +22,22 @@
 
 typedef struct ISADeviceClass {
     DeviceClass parent_class;
-    int (*init)(ISADevice *dev);
 } ISADeviceClass;
 
 struct ISABus {
-    BusState qbus;
+    /*< private >*/
+    BusState parent_obj;
+    /*< public >*/
+
     MemoryRegion *address_space_io;
     qemu_irq *irqs;
 };
 
 struct ISADevice {
-    DeviceState qdev;
+    /*< private >*/
+    DeviceState parent_obj;
+    /*< public >*/
+
     uint32_t isairq[2];
     int nirqs;
     int ioport_id;
@@ -73,7 +78,7 @@ void isa_register_ioport(ISADevice *dev, MemoryRegion *io, uint16_t start);
  * @dev: the ISADevice against which these are registered; may be NULL.
  * @start: the base I/O port against which the portio->offset is applied.
  * @portio: the ports, sorted by offset.
- * @opaque: passed into the old_portio callbacks.
+ * @opaque: passed into the portio callbacks.
  * @name: passed into memory_region_init_io.
  */
 void isa_register_portio_list(ISADevice *dev, uint16_t start,
@@ -86,9 +91,6 @@ static inline ISABus *isa_bus_from_device(ISADevice *d)
 }
 
 extern hwaddr isa_mem_base;
-
-void isa_mmio_setup(MemoryRegion *mr, hwaddr size);
-void isa_mmio_init(hwaddr base, hwaddr size);
 
 /* dma.c */
 int DMA_get_channel_mode (int nchan);

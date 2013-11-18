@@ -21,6 +21,7 @@
 #include "sysemu/blockdev.h"
 #include "hw/sysbus.h"
 #include "exec/address-spaces.h"
+#include "sysemu/qtest.h"
 
 /* Device addresses */
 #define MST_FPGA_PHYS	0x08000000
@@ -113,7 +114,7 @@ static void mainstone_common_init(MemoryRegion *address_space_mem,
 
     /* Setup CPU & memory */
     mpu = pxa270_init(address_space_mem, mainstone_binfo.ram_size, cpu_model);
-    memory_region_init_ram(rom, "mainstone.rom", MAINSTONE_ROM);
+    memory_region_init_ram(rom, NULL, "mainstone.rom", MAINSTONE_ROM);
     vmstate_register_ram_global(rom);
     memory_region_set_readonly(rom, true);
     memory_region_add_subregion(address_space_mem, 0, rom);
@@ -127,6 +128,9 @@ static void mainstone_common_init(MemoryRegion *address_space_mem,
     for (i = 0; i < 2; i ++) {
         dinfo = drive_get(IF_PFLASH, 0, i);
         if (!dinfo) {
+            if (qtest_enabled()) {
+                break;
+            }
             fprintf(stderr, "Two flash images must be given with the "
                     "'pflash' parameter\n");
             exit(1);
@@ -147,7 +151,6 @@ static void mainstone_common_init(MemoryRegion *address_space_mem,
                     qdev_get_gpio_in(mpu->gpio, 0));
 
     /* setup keypad */
-    printf("map addr %p\n", &map);
     pxa27x_register_keypad(mpu->kp, map, 0xe0);
 
     /* MMC/SD host */
@@ -179,7 +182,6 @@ static QEMUMachine mainstone2_machine = {
     .name = "mainstone",
     .desc = "Mainstone II (PXA27x)",
     .init = mainstone_init,
-    DEFAULT_MACHINE_OPTIONS,
 };
 
 static void mainstone_machine_init(void)

@@ -24,6 +24,7 @@
  * GNU GPL, version 2 or (at your option) any later version.
  */
 #include "hw/hw.h"
+#include "qapi/visitor.h"
 #include "hw/i386/pc.h"
 #include "hw/pci/pci.h"
 #include "qemu/timer.h"
@@ -205,7 +206,7 @@ static void pm_powerdown_req(Notifier *n, void *opaque)
 void ich9_pm_init(PCIDevice *lpc_pci, ICH9LPCPMRegs *pm,
                   qemu_irq sci_irq)
 {
-    memory_region_init(&pm->io, "ich9-pm", ICH9_PMIO_SIZE);
+    memory_region_init(&pm->io, OBJECT(lpc_pci), "ich9-pm", ICH9_PMIO_SIZE);
     memory_region_set_enabled(&pm->io, false);
     memory_region_add_subregion(pci_address_space_io(lpc_pci),
                                 0, &pm->io);
@@ -215,16 +216,39 @@ void ich9_pm_init(PCIDevice *lpc_pci, ICH9LPCPMRegs *pm,
     acpi_pm1_cnt_init(&pm->acpi_regs, &pm->io, 2);
 
     acpi_gpe_init(&pm->acpi_regs, ICH9_PMIO_GPE0_LEN);
-    memory_region_init_io(&pm->io_gpe, &ich9_gpe_ops, pm, "apci-gpe0",
-                          ICH9_PMIO_GPE0_LEN);
+    memory_region_init_io(&pm->io_gpe, OBJECT(lpc_pci), &ich9_gpe_ops, pm,
+                          "apci-gpe0", ICH9_PMIO_GPE0_LEN);
     memory_region_add_subregion(&pm->io, ICH9_PMIO_GPE0_STS, &pm->io_gpe);
 
-    memory_region_init_io(&pm->io_smi, &ich9_smi_ops, pm, "apci-smi",
-                          8);
+    memory_region_init_io(&pm->io_smi, OBJECT(lpc_pci), &ich9_smi_ops, pm,
+                          "apci-smi", 8);
     memory_region_add_subregion(&pm->io, ICH9_PMIO_SMI_EN, &pm->io_smi);
 
     pm->irq = sci_irq;
     qemu_register_reset(pm_reset, pm);
     pm->powerdown_notifier.notify = pm_powerdown_req;
     qemu_register_powerdown_notifier(&pm->powerdown_notifier);
+}
+
+static void ich9_pm_get_gpe0_blk(Object *obj, Visitor *v,
+                                 void *opaque, const char *name,
+                                 Error **errp)
+{
+    ICH9LPCPMRegs *pm = opaque;
+    uint32_t value = pm->pm_io_base + ICH9_PMIO_GPE0_STS;
+
+    visit_type_uint32(v, &value, name, errp);
+}
+
+void ich9_pm_add_properties(Object *obj, ICH9LPCPMRegs *pm, Error **errp)
+{
+    static const uint32_t gpe0_len = ICH9_PMIO_GPE0_LEN;
+
+    object_property_add_uint32_ptr(obj, ACPI_PM_PROP_PM_IO_BASE,
+                                   &pm->pm_io_base, errp);
+    object_property_add(obj, ACPI_PM_PROP_GPE0_BLK, "uint32",
+                        ich9_pm_get_gpe0_blk,
+                        NULL, NULL, pm, NULL);
+    object_property_add_uint32_ptr(obj, ACPI_PM_PROP_GPE0_BLK_LEN,
+                                   &gpe0_len, errp);
 }

@@ -81,12 +81,12 @@ petalogix_s3adsp1800_init(QEMUMachineInitArgs *args)
     env = &cpu->env;
 
     /* Attach emulated BRAM through the LMB.  */
-    memory_region_init_ram(phys_lmb_bram,
+    memory_region_init_ram(phys_lmb_bram, NULL,
                            "petalogix_s3adsp1800.lmb_bram", LMB_BRAM_SIZE);
     vmstate_register_ram_global(phys_lmb_bram);
     memory_region_add_subregion(sysmem, 0x00000000, phys_lmb_bram);
 
-    memory_region_init_ram(phys_ram, "petalogix_s3adsp1800.ram", ram_size);
+    memory_region_init_ram(phys_ram, NULL, "petalogix_s3adsp1800.ram", ram_size);
     vmstate_register_ram_global(phys_ram);
     memory_region_add_subregion(sysmem, ddr_base, phys_ram);
 
@@ -101,7 +101,7 @@ petalogix_s3adsp1800_init(QEMUMachineInitArgs *args)
            0x87000000);
 
     cpu_irq = microblaze_pic_init_cpu(env);
-    dev = xilinx_intc_create(INTC_BASEADDR, cpu_irq[0], 2);
+    dev = xilinx_intc_create(INTC_BASEADDR, cpu_irq[0], 0xA);
     for (i = 0; i < 32; i++) {
         irq[i] = qdev_get_gpio_in(dev, i);
     }
@@ -112,7 +112,9 @@ petalogix_s3adsp1800_init(QEMUMachineInitArgs *args)
     xilinx_ethlite_create(&nd_table[0], ETHLITE_BASEADDR, irq[1], 0, 0);
 
     microblaze_load_kernel(cpu, ddr_base, ram_size,
-                    BINARY_DEVICE_TREE_FILE, machine_cpu_reset, NULL);
+                           args->initrd_filename,
+                           BINARY_DEVICE_TREE_FILE,
+                           machine_cpu_reset, NULL);
 }
 
 static QEMUMachine petalogix_s3adsp1800_machine = {
@@ -120,7 +122,6 @@ static QEMUMachine petalogix_s3adsp1800_machine = {
     .desc = "PetaLogix linux refdesign for xilinx Spartan 3ADSP1800",
     .init = petalogix_s3adsp1800_init,
     .is_default = 1,
-    DEFAULT_MACHINE_OPTIONS,
 };
 
 static void petalogix_s3adsp1800_machine_init(void)

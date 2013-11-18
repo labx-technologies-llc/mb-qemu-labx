@@ -2413,7 +2413,7 @@ static inline void gen_goto_tb(DisasContext *s, int tb_num, target_ulong eip)
         /* jump to same page: we can use a direct jump */
         tcg_gen_goto_tb(tb_num);
         gen_jmp_im(eip);
-        tcg_gen_exit_tb((tcg_target_long)tb + tb_num);
+        tcg_gen_exit_tb((uintptr_t)tb + tb_num);
     } else {
         /* jump to another page: currently not optimized */
         gen_jmp_im(eip);
@@ -6434,12 +6434,18 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
                 }
                 break;
             case 0x1d: /* fucomi */
+                if (!(s->cpuid_features & CPUID_CMOV)) {
+                    goto illegal_op;
+                }
                 gen_update_cc_op(s);
                 gen_helper_fmov_FT0_STN(cpu_env, tcg_const_i32(opreg));
                 gen_helper_fucomi_ST0_FT0(cpu_env);
                 set_cc_op(s, CC_OP_EFLAGS);
                 break;
             case 0x1e: /* fcomi */
+                if (!(s->cpuid_features & CPUID_CMOV)) {
+                    goto illegal_op;
+                }
                 gen_update_cc_op(s);
                 gen_helper_fmov_FT0_STN(cpu_env, tcg_const_i32(opreg));
                 gen_helper_fcomi_ST0_FT0(cpu_env);
@@ -6495,6 +6501,9 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
                 }
                 break;
             case 0x3d: /* fucomip */
+                if (!(s->cpuid_features & CPUID_CMOV)) {
+                    goto illegal_op;
+                }
                 gen_update_cc_op(s);
                 gen_helper_fmov_FT0_STN(cpu_env, tcg_const_i32(opreg));
                 gen_helper_fucomi_ST0_FT0(cpu_env);
@@ -6502,6 +6511,9 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
                 set_cc_op(s, CC_OP_EFLAGS);
                 break;
             case 0x3e: /* fcomip */
+                if (!(s->cpuid_features & CPUID_CMOV)) {
+                    goto illegal_op;
+                }
                 gen_update_cc_op(s);
                 gen_helper_fmov_FT0_STN(cpu_env, tcg_const_i32(opreg));
                 gen_helper_fcomi_ST0_FT0(cpu_env);
@@ -6518,6 +6530,10 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
                         (JCC_BE << 1),
                         (JCC_P << 1),
                     };
+
+                    if (!(s->cpuid_features & CPUID_CMOV)) {
+                        goto illegal_op;
+                    }
                     op1 = fcmov_cc[op & 3] | (((op >> 3) & 1) ^ 1);
                     l1 = gen_new_label();
                     gen_jcc1_noeob(s, op1, l1);
@@ -6889,6 +6905,9 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
         gen_ldst_modrm(env, s, modrm, OT_BYTE, OR_TMP0, 1);
         break;
     case 0x140 ... 0x14f: /* cmov Gv, Ev */
+        if (!(s->cpuid_features & CPUID_CMOV)) {
+            goto illegal_op;
+        }
         ot = dflag + OT_WORD;
         modrm = cpu_ldub_code(env, s->pc++);
         reg = ((modrm >> 3) & 7) | rex_r;
@@ -8242,19 +8261,17 @@ void optimize_flags_init(void)
     cpu_regs[R_EDI] = tcg_global_mem_new_i32(TCG_AREG0,
                                              offsetof(CPUX86State, regs[R_EDI]), "edi");
 #endif
-
-    /* register helpers */
-#define GEN_HELPER 2
-#include "helper.h"
 }
 
 /* generate intermediate code in gen_opc_buf and gen_opparam_buf for
    basic block 'tb'. If search_pc is TRUE, also generate PC
    information for each intermediate instruction. */
-static inline void gen_intermediate_code_internal(CPUX86State *env,
+static inline void gen_intermediate_code_internal(X86CPU *cpu,
                                                   TranslationBlock *tb,
-                                                  int search_pc)
+                                                  bool search_pc)
 {
+    CPUState *cs = CPU(cpu);
+    CPUX86State *env = &cpu->env;
     DisasContext dc1, *dc = &dc1;
     target_ulong pc_ptr;
     uint16_t *gen_opc_end;
@@ -8280,7 +8297,7 @@ static inline void gen_intermediate_code_internal(CPUX86State *env,
     dc->cpl = (flags >> HF_CPL_SHIFT) & 3;
     dc->iopl = (flags >> IOPL_SHIFT) & 3;
     dc->tf = (flags >> TF_SHIFT) & 1;
-    dc->singlestep_enabled = env->singlestep_enabled;
+    dc->singlestep_enabled = cs->singlestep_enabled;
     dc->cc_op = CC_OP_DYNAMIC;
     dc->cc_op_dirty = false;
     dc->cs_base = cs_base;
@@ -8301,7 +8318,7 @@ static inline void gen_intermediate_code_internal(CPUX86State *env,
     dc->code64 = (flags >> HF_CS64_SHIFT) & 1;
 #endif
     dc->flags = flags;
-    dc->jmp_opt = !(dc->tf || env->singlestep_enabled ||
+    dc->jmp_opt = !(dc->tf || cs->singlestep_enabled ||
                     (flags & HF_INHIBIT_IRQ_MASK)
 #ifndef CONFIG_SOFTMMU
                     || (flags & HF_SOFTMMU_MASK)
@@ -8428,12 +8445,12 @@ static inline void gen_intermediate_code_internal(CPUX86State *env,
 
 void gen_intermediate_code(CPUX86State *env, TranslationBlock *tb)
 {
-    gen_intermediate_code_internal(env, tb, 0);
+    gen_intermediate_code_internal(x86_env_get_cpu(env), tb, false);
 }
 
 void gen_intermediate_code_pc(CPUX86State *env, TranslationBlock *tb)
 {
-    gen_intermediate_code_internal(env, tb, 1);
+    gen_intermediate_code_internal(x86_env_get_cpu(env), tb, true);
 }
 
 void restore_state_to_opc(CPUX86State *env, TranslationBlock *tb, int pc_pos)

@@ -158,28 +158,26 @@ void tlb_reset_dirty_range(CPUTLBEntry *tlb_entry, uintptr_t start,
     }
 }
 
-static inline void tlb_update_dirty(CPUTLBEntry *tlb_entry)
+static inline ram_addr_t qemu_ram_addr_from_host_nofail(void *ptr)
 {
     ram_addr_t ram_addr;
-    void *p;
 
-    if (tlb_is_dirty_ram(tlb_entry)) {
-        p = (void *)(uintptr_t)((tlb_entry->addr_write & TARGET_PAGE_MASK)
-            + tlb_entry->addend);
-        ram_addr = qemu_ram_addr_from_host_nofail(p);
-        if (!cpu_physical_memory_is_dirty(ram_addr)) {
-            tlb_entry->addr_write |= TLB_NOTDIRTY;
-        }
+    if (qemu_ram_addr_from_host(ptr, &ram_addr) == NULL) {
+        fprintf(stderr, "Bad ram pointer %p\n", ptr);
+        abort();
     }
+    return ram_addr;
 }
 
 void cpu_tlb_reset_dirty_all(ram_addr_t start1, ram_addr_t length)
 {
+    CPUState *cpu;
     CPUArchState *env;
 
-    for (env = first_cpu; env != NULL; env = env->next_cpu) {
+    CPU_FOREACH(cpu) {
         int mmu_idx;
 
+        env = cpu->env_ptr;
         for (mmu_idx = 0; mmu_idx < NB_MMU_MODES; mmu_idx++) {
             unsigned int i;
 
@@ -256,14 +254,14 @@ void tlb_set_page(CPUArchState *env, target_ulong vaddr,
     }
 
     sz = size;
-    section = address_space_translate(&address_space_memory, paddr, &xlat, &sz,
-                                      false);
+    section = address_space_translate_for_iotlb(&address_space_memory, paddr,
+                                                &xlat, &sz);
     assert(sz >= TARGET_PAGE_SIZE);
 
 #if defined(DEBUG_TLB)
     printf("tlb_set_page: vaddr=" TARGET_FMT_lx " paddr=0x" TARGET_FMT_plx
-           " prot=%x idx=%d pd=0x%08lx\n",
-           vaddr, paddr, prot, mmu_idx, pd);
+           " prot=%x idx=%d\n",
+           vaddr, paddr, prot, mmu_idx);
 #endif
 
     address = vaddr;
@@ -331,12 +329,15 @@ tb_page_addr_t get_page_addr_code(CPUArchState *env1, target_ulong addr)
     pd = env1->iotlb[mmu_idx][page_index] & ~TARGET_PAGE_MASK;
     mr = iotlb_to_region(pd);
     if (memory_region_is_unassigned(mr)) {
-#if defined(TARGET_ALPHA) || defined(TARGET_MIPS) || defined(TARGET_SPARC)
-        cpu_unassigned_access(env1, addr, 0, 1, 0, 4);
-#else
-        cpu_abort(env1, "Trying to execute code outside RAM or ROM at 0x"
-                  TARGET_FMT_lx "\n", addr);
-#endif
+        CPUState *cpu = ENV_GET_CPU(env1);
+        CPUClass *cc = CPU_GET_CLASS(cpu);
+
+        if (cc->do_unassigned_access) {
+            cc->do_unassigned_access(cpu, addr, false, true, 0, 4);
+        } else {
+            cpu_abort(env1, "Trying to execute code outside RAM or ROM at 0x"
+                      TARGET_FMT_lx "\n", addr);
+        }
     }
     p = (void *)((uintptr_t)addr + env1->tlb_table[mmu_idx][page_index].addend);
     return qemu_ram_addr_from_host_nofail(p);

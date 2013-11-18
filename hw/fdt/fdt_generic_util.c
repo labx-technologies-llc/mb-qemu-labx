@@ -58,7 +58,7 @@ FDTMachineInfo *fdt_generic_create_machine(void *fdt, qemu_irq *cpu_irq)
     /* parse the device tree */
     if (!qemu_devtree_get_root_node(fdt, node_path)) {
         simple_bus_fdt_init(node_path, fdti, NULL);
-        while (qemu_co_queue_enter_next(fdti->cq));
+        while (qemu_co_enter_next(fdti->cq));
     } else {
         fprintf(stderr, "FDT: ERROR: cannot get root node from device tree %s\n"
             , node_path);
@@ -322,7 +322,7 @@ static DeviceState *fdt_create_qdev_from_compat(char *compat, char **dev_type)
 static inline const char *trim_vendor(const char *s)
 {
     /* FIXME: be more intelligent */
-    const char *ret = memchr(s, ',', sizeof(s));
+    const char *ret = memchr(s, ',', strlen(s));
     return ret ? ret + 1 : s;
 }
 

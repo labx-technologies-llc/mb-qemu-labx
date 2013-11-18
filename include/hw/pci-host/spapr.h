@@ -43,22 +43,22 @@ typedef struct sPAPRPHBState {
 
     MemoryRegion memspace, iospace;
     hwaddr mem_win_addr, mem_win_size, io_win_addr, io_win_size;
-    hwaddr msi_win_addr;
-    MemoryRegion memwindow, iowindow, msiwindow;
+    MemoryRegion memwindow, iowindow;
 
     uint32_t dma_liobn;
     uint64_t dma_window_start;
     uint64_t dma_window_size;
-    DMAContext *dma;
+    sPAPRTCETable *tcet;
+    AddressSpace iommu_as;
 
-    struct {
+    struct spapr_pci_lsi {
         uint32_t irq;
     } lsi_table[PCI_NUM_PINS];
 
-    struct {
+    struct spapr_pci_msi {
         uint32_t config_addr;
         uint32_t irq;
-        int nvec;
+        uint32_t nvec;
     } msi_table[SPAPR_MSIX_MAX_DEVS];
 
     QLIST_ENTRY(sPAPRPHBState) list;
@@ -72,7 +72,8 @@ typedef struct sPAPRPHBState {
 #define SPAPR_PCI_MMIO_WIN_SIZE      0x20000000
 #define SPAPR_PCI_IO_WIN_OFF         0x80000000
 #define SPAPR_PCI_IO_WIN_SIZE        0x10000
-#define SPAPR_PCI_MSI_WIN_OFF        0x90000000
+
+#define SPAPR_PCI_MSI_WINDOW         0x40000000000ULL
 
 #define SPAPR_PCI_MEM_WIN_BUS_OFFSET 0x80000000ULL
 
@@ -86,6 +87,8 @@ PCIHostState *spapr_create_phb(sPAPREnvironment *spapr, int index);
 int spapr_populate_pci_dt(sPAPRPHBState *phb,
                           uint32_t xics_phandle,
                           void *fdt);
+
+void spapr_pci_msi_init(sPAPREnvironment *spapr, hwaddr addr);
 
 void spapr_pci_rtas_init(void);
 

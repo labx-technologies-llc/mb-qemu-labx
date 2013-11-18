@@ -22,6 +22,8 @@
  * THE SOFTWARE.
  */
 
+#include "tcg-be-null.h"
+
 #ifndef NDEBUG
 static const char * const tcg_target_reg_names[TCG_TARGET_NB_REGS] = {
     "%g0",
@@ -252,7 +254,7 @@ static inline int check_fit_i32(uint32_t val, unsigned int bits)
 }
 
 static void patch_reloc(uint8_t *code_ptr, int type,
-                        tcg_target_long value, tcg_target_long addend)
+                        intptr_t value, intptr_t addend)
 {
     uint32_t insn;
     value += addend;
@@ -264,7 +266,7 @@ static void patch_reloc(uint8_t *code_ptr, int type,
         *(uint32_t *)code_ptr = value;
         break;
     case R_SPARC_WDISP16:
-        value -= (long)code_ptr;
+        value -= (intptr_t)code_ptr;
         if (!check_fit_tl(value >> 2, 16)) {
             tcg_abort();
         }
@@ -274,7 +276,7 @@ static void patch_reloc(uint8_t *code_ptr, int type,
         *(uint32_t *)code_ptr = insn;
         break;
     case R_SPARC_WDISP19:
-        value -= (long)code_ptr;
+        value -= (intptr_t)code_ptr;
         if (!check_fit_tl(value >> 2, 19)) {
             tcg_abort();
         }
@@ -436,13 +438,13 @@ static inline void tcg_out_ldst(TCGContext *s, int ret, int addr,
 }
 
 static inline void tcg_out_ld(TCGContext *s, TCGType type, TCGReg ret,
-                              TCGReg arg1, tcg_target_long arg2)
+                              TCGReg arg1, intptr_t arg2)
 {
     tcg_out_ldst(s, ret, arg1, arg2, (type == TCG_TYPE_I32 ? LDUW : LDX));
 }
 
 static inline void tcg_out_st(TCGContext *s, TCGType type, TCGReg arg,
-                              TCGReg arg1, tcg_target_long arg2)
+                              TCGReg arg1, intptr_t arg2)
 {
     tcg_out_ldst(s, arg, arg1, arg2, (type == TCG_TYPE_I32 ? STW : STX));
 }
@@ -830,8 +832,6 @@ static void tcg_target_qemu_prologue(TCGContext *s)
 }
 
 #if defined(CONFIG_SOFTMMU)
-
-#include "exec/softmmu_defs.h"
 
 /* helper signature: helper_ld_mmu(CPUState *env, target_ulong addr,
    int mmu_idx) */
@@ -1647,28 +1647,11 @@ static void tcg_target_init(TCGContext *s)
 #endif
 
 typedef struct {
-    uint32_t len __attribute__((aligned((sizeof(void *)))));
-    uint32_t id;
-    uint8_t version;
-    char augmentation[1];
-    uint8_t code_align;
-    uint8_t data_align;
-    uint8_t return_column;
-} DebugFrameCIE;
-
-typedef struct {
-    uint32_t len __attribute__((aligned((sizeof(void *)))));
-    uint32_t cie_offset;
-    tcg_target_long func_start __attribute__((packed));
-    tcg_target_long func_len __attribute__((packed));
-    uint8_t def_cfa[TCG_TARGET_REG_BITS == 64 ? 4 : 2];
-    uint8_t win_save;
-    uint8_t ret_save[3];
-} DebugFrameFDE;
-
-typedef struct {
     DebugFrameCIE cie;
-    DebugFrameFDE fde;
+    DebugFrameFDEHeader fde;
+    uint8_t fde_def_cfa[TCG_TARGET_REG_BITS == 64 ? 4 : 2];
+    uint8_t fde_win_save;
+    uint8_t fde_ret_save[3];
 } DebugFrame;
 
 static DebugFrame debug_frame = {
@@ -1679,8 +1662,10 @@ static DebugFrame debug_frame = {
     .cie.data_align = -sizeof(void *) & 0x7f,
     .cie.return_column = 15,            /* o7 */
 
-    .fde.len = sizeof(DebugFrameFDE)-4, /* length after .len member */
-    .fde.def_cfa = {
+    /* Total FDE size does not include the "len" member.  */
+    .fde.len = sizeof(DebugFrame) - offsetof(DebugFrame, fde.cie_offset),
+
+    .fde_def_cfa = {
 #if TCG_TARGET_REG_BITS == 64
         12, 30,                         /* DW_CFA_def_cfa i6, 2047 */
         (2047 & 0x7f) | 0x80, (2047 >> 7)
@@ -1688,8 +1673,8 @@ static DebugFrame debug_frame = {
         13, 30                          /* DW_CFA_def_cfa_register i6 */
 #endif
     },
-    .fde.win_save = 0x2d,               /* DW_CFA_GNU_window_save */
-    .fde.ret_save = { 9, 15, 31 },      /* DW_CFA_register o7, i7 */
+    .fde_win_save = 0x2d,               /* DW_CFA_GNU_window_save */
+    .fde_ret_save = { 9, 15, 31 },      /* DW_CFA_register o7, i7 */
 };
 
 void tcg_register_jit(void *buf, size_t buf_size)

@@ -22,23 +22,8 @@
 #ifndef CONFIG_USER_ONLY
 #include "hw/xen/xen.h"
 
-typedef struct PhysPageEntry PhysPageEntry;
-
-struct PhysPageEntry {
-    uint16_t is_leaf : 1;
-     /* index into phys_sections (is_leaf) or phys_map_nodes (!is_leaf) */
-    uint16_t ptr : 15;
-};
 
 typedef struct AddressSpaceDispatch AddressSpaceDispatch;
-
-struct AddressSpaceDispatch {
-    /* This is a multi-level map on the physical address space.
-     * The bottom level has pointers to MemoryRegionSections.
-     */
-    PhysPageEntry phys_map;
-    MemoryListener listener;
-};
 
 void address_space_init_dispatch(AddressSpace *as);
 void address_space_destroy_dispatch(AddressSpace *as);
@@ -133,8 +118,6 @@ static inline void cpu_physical_memory_mask_dirty_range(ram_addr_t start,
 
 void cpu_physical_memory_reset_dirty(ram_addr_t start, ram_addr_t end,
                                      int dirty_flags);
-
-extern const IORangeOps memory_region_iorange_ops;
 
 #endif
 

@@ -23,7 +23,16 @@
 #if !defined(CONFIG_USER_ONLY)
 #include "hw/loader.h"
 #endif
+#include "hw/arm/arm.h"
 #include "sysemu/sysemu.h"
+#include "sysemu/kvm.h"
+
+static void arm_cpu_set_pc(CPUState *cs, vaddr value)
+{
+    ARMCPU *cpu = ARM_CPU(cs);
+
+    cpu->env.regs[15] = value;
+}
 
 static void cp_reg_reset(gpointer key, gpointer value, gpointer opaque)
 {
@@ -63,11 +72,6 @@ static void arm_cpu_reset(CPUState *s)
     ARMCPUClass *acc = ARM_CPU_GET_CLASS(cpu);
     CPUARMState *env = &cpu->env;
 
-    if (qemu_loglevel_mask(CPU_LOG_RESET)) {
-        qemu_log("CPU Reset (CPU %d)\n", s->cpu_index);
-        log_cpu_state(env, 0);
-    }
-
     acc->parent_reset(s);
 
     memset(env, 0, offsetof(CPUARMState, breakpoints));
@@ -78,6 +82,11 @@ static void arm_cpu_reset(CPUState *s)
 
     if (arm_feature(env, ARM_FEATURE_IWMMXT)) {
         env->iwmmxt.cregs[ARM_IWMMXT_wCID] = 0x69051000 | 'Q';
+    }
+
+    if (arm_feature(env, ARM_FEATURE_AARCH64)) {
+        /* 64 bit CPUs always start in 64 bit mode */
+        env->aarch64 = 1;
     }
 
 #if defined(CONFIG_USER_ONLY)
@@ -104,7 +113,7 @@ static void arm_cpu_reset(CPUState *s)
                modified flash and reset itself.  However images
                loaded via -kernel have not been copied yet, so load the
                values directly from there.  */
-            env->regs[13] = ldl_p(rom);
+            env->regs[13] = ldl_p(rom) & 0xFFFFFFFC;
             pc = ldl_p(rom + 4);
             env->thumb = pc & 1;
             env->regs[15] = pc & ~1;
@@ -127,6 +136,55 @@ static void arm_cpu_reset(CPUState *s)
     tb_flush(env);
 }
 
+#ifndef CONFIG_USER_ONLY
+static void arm_cpu_set_irq(void *opaque, int irq, int level)
+{
+    ARMCPU *cpu = opaque;
+    CPUState *cs = CPU(cpu);
+
+    switch (irq) {
+    case ARM_CPU_IRQ:
+        if (level) {
+            cpu_interrupt(cs, CPU_INTERRUPT_HARD);
+        } else {
+            cpu_reset_interrupt(cs, CPU_INTERRUPT_HARD);
+        }
+        break;
+    case ARM_CPU_FIQ:
+        if (level) {
+            cpu_interrupt(cs, CPU_INTERRUPT_FIQ);
+        } else {
+            cpu_reset_interrupt(cs, CPU_INTERRUPT_FIQ);
+        }
+        break;
+    default:
+        hw_error("arm_cpu_set_irq: Bad interrupt line %d\n", irq);
+    }
+}
+
+static void arm_cpu_kvm_set_irq(void *opaque, int irq, int level)
+{
+#ifdef CONFIG_KVM
+    ARMCPU *cpu = opaque;
+    CPUState *cs = CPU(cpu);
+    int kvm_irq = KVM_ARM_IRQ_TYPE_CPU << KVM_ARM_IRQ_TYPE_SHIFT;
+
+    switch (irq) {
+    case ARM_CPU_IRQ:
+        kvm_irq |= KVM_ARM_IRQ_CPU_IRQ;
+        break;
+    case ARM_CPU_FIQ:
+        kvm_irq |= KVM_ARM_IRQ_CPU_FIQ;
+        break;
+    default:
+        hw_error("arm_cpu_kvm_set_irq: Bad interrupt line %d\n", irq);
+    }
+    kvm_irq |= cs->cpu_index << KVM_ARM_IRQ_VCPU_SHIFT;
+    kvm_set_irq(kvm_state, kvm_irq, level ? 1 : 0);
+#endif
+}
+#endif
+
 static inline void set_feature(CPUARMState *env, int feature)
 {
     env->features |= 1ULL << feature;
@@ -143,6 +201,22 @@ static void arm_cpu_initfn(Object *obj)
     cpu->cp_regs = g_hash_table_new_full(g_int_hash, g_int_equal,
                                          g_free, g_free);
 
+#ifndef CONFIG_USER_ONLY
+    /* Our inbound IRQ and FIQ lines */
+    if (kvm_enabled()) {
+        qdev_init_gpio_in(DEVICE(cpu), arm_cpu_kvm_set_irq, 2);
+    } else {
+        qdev_init_gpio_in(DEVICE(cpu), arm_cpu_set_irq, 2);
+    }
+
+    cpu->gt_timer[GTIMER_PHYS] = timer_new(QEMU_CLOCK_VIRTUAL, GTIMER_SCALE,
+                                                arm_gt_ptimer_cb, cpu);
+    cpu->gt_timer[GTIMER_VIRT] = timer_new(QEMU_CLOCK_VIRTUAL, GTIMER_SCALE,
+                                                arm_gt_vtimer_cb, cpu);
+    qdev_init_gpio_out(DEVICE(cpu), cpu->gt_timer_outputs,
+                       ARRAY_SIZE(cpu->gt_timer_outputs));
+#endif
+
     if (tcg_enabled() && !inited) {
         inited = true;
         arm_translate_init();
@@ -157,11 +231,17 @@ static void arm_cpu_finalizefn(Object *obj)
 
 static void arm_cpu_realizefn(DeviceState *dev, Error **errp)
 {
+    CPUState *cs = CPU(dev);
     ARMCPU *cpu = ARM_CPU(dev);
     ARMCPUClass *acc = ARM_CPU_GET_CLASS(dev);
     CPUARMState *env = &cpu->env;
 
     /* Some features automatically imply others: */
+    if (arm_feature(env, ARM_FEATURE_V8)) {
+        set_feature(env, ARM_FEATURE_V7);
+        set_feature(env, ARM_FEATURE_ARM_DIV);
+        set_feature(env, ARM_FEATURE_LPAE);
+    }
     if (arm_feature(env, ARM_FEATURE_V7)) {
         set_feature(env, ARM_FEATURE_VAPA);
         set_feature(env, ARM_FEATURE_THUMB2);
@@ -198,19 +278,20 @@ static void arm_cpu_realizefn(DeviceState *dev, Error **errp)
         set_feature(env, ARM_FEATURE_VFP);
     }
     if (arm_feature(env, ARM_FEATURE_LPAE)) {
+        set_feature(env, ARM_FEATURE_V7MP);
         set_feature(env, ARM_FEATURE_PXN);
     }
 
     register_cp_regs_for_features(cpu);
     arm_cpu_register_gdb_regs_for_features(cpu);
 
-    cpu_reset(CPU(cpu));
-    qemu_init_vcpu(env);
+    init_cpreg_list(cpu);
+
+    cpu_reset(cs);
+    qemu_init_vcpu(cs);
 
     acc->parent_realize(dev, errp);
 }
-
-/* CPU models */
 
 static ObjectClass *arm_cpu_class_by_name(const char *cpu_model)
 {
@@ -230,6 +311,9 @@ static ObjectClass *arm_cpu_class_by_name(const char *cpu_model)
     }
     return oc;
 }
+
+/* CPU models. These are not needed for the AArch64 linux-user build. */
+#if !defined(CONFIG_USER_ONLY) || !defined(TARGET_AARCH64)
 
 static void arm926_initfn(Object *obj)
 {
@@ -571,7 +655,6 @@ static void cortex_a15_initfn(Object *obj)
     set_feature(&cpu->env, ARM_FEATURE_NEON);
     set_feature(&cpu->env, ARM_FEATURE_THUMB2EE);
     set_feature(&cpu->env, ARM_FEATURE_ARM_DIV);
-    set_feature(&cpu->env, ARM_FEATURE_V7MP);
     set_feature(&cpu->env, ARM_FEATURE_GENERIC_TIMER);
     set_feature(&cpu->env, ARM_FEATURE_DUMMY_C15_REGS);
     set_feature(&cpu->env, ARM_FEATURE_LPAE);
@@ -745,18 +828,25 @@ static void pxa270c5_initfn(Object *obj)
     cpu->reset_sctlr = 0x00000078;
 }
 
+#ifdef CONFIG_USER_ONLY
 static void arm_any_initfn(Object *obj)
 {
     ARMCPU *cpu = ARM_CPU(obj);
-    set_feature(&cpu->env, ARM_FEATURE_V7);
+    set_feature(&cpu->env, ARM_FEATURE_V8);
     set_feature(&cpu->env, ARM_FEATURE_VFP4);
     set_feature(&cpu->env, ARM_FEATURE_VFP_FP16);
     set_feature(&cpu->env, ARM_FEATURE_NEON);
     set_feature(&cpu->env, ARM_FEATURE_THUMB2EE);
     set_feature(&cpu->env, ARM_FEATURE_ARM_DIV);
     set_feature(&cpu->env, ARM_FEATURE_V7MP);
+#ifdef TARGET_AARCH64
+    set_feature(&cpu->env, ARM_FEATURE_AARCH64);
+#endif
     cpu->midr = 0xffffffff;
 }
+#endif
+
+#endif /* !defined(CONFIG_USER_ONLY) || !defined(TARGET_AARCH64) */
 
 typedef struct ARMCPUInfo {
     const char *name;
@@ -765,6 +855,7 @@ typedef struct ARMCPUInfo {
 } ARMCPUInfo;
 
 static const ARMCPUInfo arm_cpus[] = {
+#if !defined(CONFIG_USER_ONLY) || !defined(TARGET_AARCH64)
     { .name = "arm926",      .initfn = arm926_initfn },
     { .name = "arm946",      .initfn = arm946_initfn },
     { .name = "arm1026",     .initfn = arm1026_initfn },
@@ -797,7 +888,10 @@ static const ARMCPUInfo arm_cpus[] = {
     { .name = "pxa270-b1",   .initfn = pxa270b1_initfn },
     { .name = "pxa270-c0",   .initfn = pxa270c0_initfn },
     { .name = "pxa270-c5",   .initfn = pxa270c5_initfn },
+#ifdef CONFIG_USER_ONLY
     { .name = "any",         .initfn = arm_any_initfn },
+#endif
+#endif
 };
 
 static void arm_cpu_class_init(ObjectClass *oc, void *data)
@@ -814,7 +908,16 @@ static void arm_cpu_class_init(ObjectClass *oc, void *data)
 
     cc->class_by_name = arm_cpu_class_by_name;
     cc->do_interrupt = arm_cpu_do_interrupt;
-    cpu_class_set_vmsd(cc, &vmstate_arm_cpu);
+    cc->dump_state = arm_cpu_dump_state;
+    cc->set_pc = arm_cpu_set_pc;
+    cc->gdb_read_register = arm_cpu_gdb_read_register;
+    cc->gdb_write_register = arm_cpu_gdb_write_register;
+#ifndef CONFIG_USER_ONLY
+    cc->get_phys_page_debug = arm_cpu_get_phys_page_debug;
+    cc->vmsd = &vmstate_arm_cpu;
+#endif
+    cc->gdb_num_core_regs = 26;
+    cc->gdb_core_xml_file = "arm-core.xml";
 }
 
 static void cpu_register(const ARMCPUInfo *info)

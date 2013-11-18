@@ -11,7 +11,7 @@ ETEXI
 
     {
         .name       = "help|?",
-        .args_type  = "name:s?",
+        .args_type  = "name:S?",
         .params     = "[cmd]",
         .help       = "show the help",
         .mhandler.cmd = do_help_cmd,
@@ -822,7 +822,7 @@ The values that can be specified here depend on the machine type, but are
 the same that can be specified in the @code{-boot} command line option.
 ETEXI
 
-#if defined(TARGET_I386)
+#if defined(TARGET_I386) || defined(TARGET_S390X)
     {
         .name       = "nmi",
         .args_type  = "",
@@ -834,7 +834,7 @@ ETEXI
 STEXI
 @item nmi @var{cpu}
 @findex nmi
-Inject an NMI on the given CPU (x86 only).
+Inject an NMI (x86) or RESTART (s390x) on the given CPU.
 
 ETEXI
 
@@ -991,7 +991,6 @@ server will ask the spice/vnc client to automatically reconnect using the
 new parameters (if specified) once the vm migration finished successfully.
 ETEXI
 
-#if defined(CONFIG_HAVE_CORE_DUMP)
     {
         .name       = "dump-guest-memory",
         .args_type  = "paging:-p,filename:F,begin:i?,length:i?",
@@ -1015,7 +1014,6 @@ gdb.
     length: the memory size, in bytes. It's optional, and should be specified
             with begin together.
 ETEXI
-#endif
 
     {
         .name       = "snapshot_blkdev",
@@ -1025,8 +1023,7 @@ ETEXI
                       "of device. If a new image file is specified, the\n\t\t\t"
                       "new image file will become the new root image.\n\t\t\t"
                       "If format is specified, the snapshot file will\n\t\t\t"
-                      "be created in that format. Otherwise the\n\t\t\t"
-                      "snapshot will be internal! (currently unsupported).\n\t\t\t"
+                      "be created in that format.\n\t\t\t"
                       "The default format is qcow2.  The -n flag requests QEMU\n\t\t\t"
                       "to reuse the image found in new-image-file, instead of\n\t\t\t"
                       "recreating it from scratch.",
@@ -1037,6 +1034,40 @@ STEXI
 @item snapshot_blkdev
 @findex snapshot_blkdev
 Snapshot device, using snapshot file as target if provided
+ETEXI
+
+    {
+        .name       = "snapshot_blkdev_internal",
+        .args_type  = "device:B,name:s",
+        .params     = "device name",
+        .help       = "take an internal snapshot of device.\n\t\t\t"
+                      "The format of the image used by device must\n\t\t\t"
+                      "support it, such as qcow2.\n\t\t\t",
+        .mhandler.cmd = hmp_snapshot_blkdev_internal,
+    },
+
+STEXI
+@item snapshot_blkdev_internal
+@findex snapshot_blkdev_internal
+Take an internal snapshot on device if it support
+ETEXI
+
+    {
+        .name       = "snapshot_delete_blkdev_internal",
+        .args_type  = "device:B,name:s,id:s?",
+        .params     = "device name [id]",
+        .help       = "delete an internal snapshot of device.\n\t\t\t"
+                      "If id is specified, qemu will try delete\n\t\t\t"
+                      "the snapshot matching both id and name.\n\t\t\t"
+                      "The format of the image used by device must\n\t\t\t"
+                      "support it, such as qcow2.\n\t\t\t",
+        .mhandler.cmd = hmp_snapshot_delete_blkdev_internal,
+    },
+
+STEXI
+@item snapshot_delete_blkdev_internal
+@findex snapshot_delete_blkdev_internal
+Delete an internal snapshot on device if it support
 ETEXI
 
     {
@@ -1061,6 +1092,26 @@ using the specified target.
 ETEXI
 
     {
+        .name       = "drive_backup",
+        .args_type  = "reuse:-n,full:-f,device:B,target:s,format:s?",
+        .params     = "[-n] [-f] device target [format]",
+        .help       = "initiates a point-in-time\n\t\t\t"
+                      "copy for a device. The device's contents are\n\t\t\t"
+                      "copied to the new image file, excluding data that\n\t\t\t"
+                      "is written after the command is started.\n\t\t\t"
+                      "The -n flag requests QEMU to reuse the image found\n\t\t\t"
+                      "in new-image-file, instead of recreating it from scratch.\n\t\t\t"
+                      "The -f flag requests QEMU to copy the whole disk,\n\t\t\t"
+                      "so that the result does not need a backing file.\n\t\t\t",
+        .mhandler.cmd = hmp_drive_backup,
+    },
+STEXI
+@item drive_backup
+@findex drive_backup
+Start a point-in-time copy of a block device to a specificed target.
+ETEXI
+
+    {
         .name       = "drive_add",
         .args_type  = "pci_addr:s,opts:s",
         .params     = "[[<domain>:]<bus>:]<slot>\n"
@@ -1079,7 +1130,7 @@ STEXI
 Add drive to PCI storage controller.
 ETEXI
 
-#if defined(TARGET_I386)
+#if defined(CONFIG_PCI_HOTPLUG_OLD)
     {
         .name       = "pci_add",
         .args_type  = "pci_addr:s,type:s,opts:s?",
@@ -1095,7 +1146,7 @@ STEXI
 Hot-add PCI device.
 ETEXI
 
-#if defined(TARGET_I386)
+#if defined(CONFIG_PCI_HOTPLUG_OLD)
     {
         .name       = "pci_del",
         .args_type  = "pci_addr:s",

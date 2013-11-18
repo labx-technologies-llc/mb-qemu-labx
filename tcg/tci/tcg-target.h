@@ -44,6 +44,14 @@
 
 #define TCG_TARGET_INTERPRETER 1
 
+#if UINTPTR_MAX == UINT32_MAX
+# define TCG_TARGET_REG_BITS 32
+#elif UINTPTR_MAX == UINT64_MAX
+# define TCG_TARGET_REG_BITS 64
+#else
+# error Unknown pointer size for tci target
+#endif
+
 #ifdef CONFIG_DEBUG_TCG
 /* Enable debug output. */
 #define CONFIG_DEBUG_TCG_INTERPRETER
@@ -59,9 +67,8 @@
 
 #define TCG_TARGET_HAS_bswap16_i32      1
 #define TCG_TARGET_HAS_bswap32_i32      1
-/* Not more than one of the next two defines must be 1. */
 #define TCG_TARGET_HAS_div_i32          1
-#define TCG_TARGET_HAS_div2_i32         0
+#define TCG_TARGET_HAS_rem_i32          1
 #define TCG_TARGET_HAS_ext8s_i32        1
 #define TCG_TARGET_HAS_ext16s_i32       1
 #define TCG_TARGET_HAS_ext8u_i32        1
@@ -77,15 +84,16 @@
 #define TCG_TARGET_HAS_rot_i32          1
 #define TCG_TARGET_HAS_movcond_i32      0
 #define TCG_TARGET_HAS_muls2_i32        0
+#define TCG_TARGET_HAS_muluh_i32        0
+#define TCG_TARGET_HAS_mulsh_i32        0
 
 #if TCG_TARGET_REG_BITS == 64
 #define TCG_TARGET_HAS_bswap16_i64      1
 #define TCG_TARGET_HAS_bswap32_i64      1
 #define TCG_TARGET_HAS_bswap64_i64      1
 #define TCG_TARGET_HAS_deposit_i64      1
-/* Not more than one of the next two defines must be 1. */
 #define TCG_TARGET_HAS_div_i64          0
-#define TCG_TARGET_HAS_div2_i64         0
+#define TCG_TARGET_HAS_rem_i64          0
 #define TCG_TARGET_HAS_ext8s_i64        1
 #define TCG_TARGET_HAS_ext16s_i64       1
 #define TCG_TARGET_HAS_ext32s_i64       1
@@ -102,14 +110,17 @@
 #define TCG_TARGET_HAS_rot_i64          1
 #define TCG_TARGET_HAS_movcond_i64      0
 #define TCG_TARGET_HAS_muls2_i64        0
-
 #define TCG_TARGET_HAS_add2_i32         0
 #define TCG_TARGET_HAS_sub2_i32         0
 #define TCG_TARGET_HAS_mulu2_i32        0
 #define TCG_TARGET_HAS_add2_i64         0
 #define TCG_TARGET_HAS_sub2_i64         0
 #define TCG_TARGET_HAS_mulu2_i64        0
+#define TCG_TARGET_HAS_muluh_i64        0
+#define TCG_TARGET_HAS_mulsh_i64        0
 #endif /* TCG_TARGET_REG_BITS == 64 */
+
+#define TCG_TARGET_HAS_new_ldst         0
 
 /* Number of registers available.
    For 32 bit hosts, we need more than 8 registers (call arguments). */
@@ -168,11 +179,10 @@ typedef enum {
 
 void tci_disas(uint8_t opc);
 
-tcg_target_ulong tcg_qemu_tb_exec(CPUArchState *env, uint8_t *tb_ptr);
+uintptr_t tcg_qemu_tb_exec(CPUArchState *env, uint8_t *tb_ptr);
 #define tcg_qemu_tb_exec tcg_qemu_tb_exec
 
-static inline void flush_icache_range(tcg_target_ulong start,
-                                      tcg_target_ulong stop)
+static inline void flush_icache_range(uintptr_t start, uintptr_t stop)
 {
 }
 

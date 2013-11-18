@@ -21,7 +21,7 @@
 #include "cpu.h"
 #include "exec/gdbstub.h"
 
-#include "helpers.h"
+#include "helper.h"
 
 #define SIGNBIT (1u << 31)
 
@@ -110,7 +110,6 @@ M68kCPU *cpu_m68k_init(const char *cpu_model)
     }
     cpu = M68K_CPU(object_new(object_class_get_name(oc)));
     env = &cpu->env;
-    env->cpu_model_str = cpu_model;
 
     register_m68k_insns(env);
 
@@ -121,10 +120,11 @@ M68kCPU *cpu_m68k_init(const char *cpu_model)
 
 void m68k_cpu_init_gdb(M68kCPU *cpu)
 {
+    CPUState *cs = CPU(cpu);
     CPUM68KState *env = &cpu->env;
 
     if (m68k_feature(env, M68K_FEATURE_CF_FPU)) {
-        gdb_register_coprocessor(env, fpu_gdb_get_reg, fpu_gdb_set_reg,
+        gdb_register_coprocessor(cs, fpu_gdb_get_reg, fpu_gdb_set_reg,
                                  11, "cf-fp.xml", 18);
     }
     /* TODO: Add [E]MAC registers.  */
@@ -290,7 +290,7 @@ int cpu_m68k_handle_mmu_fault (CPUM68KState *env, target_ulong address, int rw,
 /* MMU */
 
 /* TODO: This will need fixing once the MMU is implemented.  */
-hwaddr cpu_get_phys_page_debug(CPUM68KState *env, target_ulong addr)
+hwaddr m68k_cpu_get_phys_page_debug(CPUState *cs, vaddr addr)
 {
     return addr;
 }

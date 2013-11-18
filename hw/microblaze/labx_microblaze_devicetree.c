@@ -175,12 +175,12 @@ static void labx_microblaze_init(QEMUMachineInitArgs *args)
 
     /* Attach emulated BRAM through the LMB. LMB size is not specified in the
        device-tree but there must be one to hold the vector table. */
-    memory_region_init_ram(phys_lmb_bram, "labx_microblaze.lmb_bram",
+    memory_region_init_ram(phys_lmb_bram, NULL, "labx_microblaze.lmb_bram",
                            LMB_BRAM_SIZE);
     vmstate_register_ram_global(phys_lmb_bram);
     memory_region_add_subregion(address_space_mem, 0x00000000, phys_lmb_bram);
 
-    memory_region_init_ram(phys_ram, "labx_microblaze.ram", ram_size);
+    memory_region_init_ram(phys_ram, NULL, "labx_microblaze.ram", ram_size);
     vmstate_register_ram_global(phys_ram);
     memory_region_add_subregion(address_space_mem, ddr_base, phys_ram);
 

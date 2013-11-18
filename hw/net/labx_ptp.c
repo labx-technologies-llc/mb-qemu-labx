@@ -30,6 +30,10 @@
 #define PTP_RAM_BYTES        (PTP_MAX_PACKETS*PTP_MAX_PACKET_BYTES)
 #define PTP_HOST_RAM_WORDS   (PTP_RAM_BYTES/4)
 
+#define TYPE_LABX_PTP "labx.ptp"
+#define LABX_PTP(obj) \
+    OBJECT_CHECK(LabXPTP, (obj), TYPE_LABX_PTP)
+
 typedef struct LabXPTP {
     SysBusDevice busdev;
     qemu_irq irq;
@@ -237,18 +241,18 @@ static const MemoryRegionOps rx_ram_ops = {
 
 static int labx_ptp_init(SysBusDevice *dev)
 {
-    LabXPTP *p = FROM_SYSBUS(typeof(*p), dev);
+    LabXPTP *p = LABX_PTP(dev);
 
     /* Initialize defaults */
     p->txRam = g_malloc0(PTP_RAM_BYTES);
     p->rxRam = g_malloc0(PTP_RAM_BYTES);
 
     /* Set up memory regions */
-    memory_region_init_io(&p->mmio_ptp, &ptp_regs_ops, p, "labx.ptp-regs",
+    memory_region_init_io(&p->mmio_ptp, OBJECT(p), &ptp_regs_ops, p, "labx.ptp-regs",
                           0x100 * 4);
-    memory_region_init_io(&p->mmio_tx,  &tx_ram_ops,   p, "labx.ptp-tx",
+    memory_region_init_io(&p->mmio_tx,  OBJECT(p), &tx_ram_ops,   p, "labx.ptp-tx",
                           PTP_RAM_BYTES);
-    memory_region_init_io(&p->mmio_rx,  &rx_ram_ops,   p, "labx.ptp-rx",
+    memory_region_init_io(&p->mmio_rx,  OBJECT(p), &rx_ram_ops,   p, "labx.ptp-rx",
                           PTP_RAM_BYTES);
 
     sysbus_init_mmio(dev, &p->mmio_ptp);
@@ -279,7 +283,7 @@ static void labx_ptp_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo labx_ptp_info = {
-    .name          = "labx.labx_ptp",
+    .name          = TYPE_LABX_PTP,
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(LabXPTP),
     .class_init    = labx_ptp_class_init,
@@ -287,9 +291,8 @@ static const TypeInfo labx_ptp_info = {
 
 static const TypeInfo labx_ptp_info2 = {
     .name          = "xlnx.labx-ptp",
-    .parent        = TYPE_SYS_BUS_DEVICE,
+    .parent        = TYPE_LABX_PTP,
     .instance_size = sizeof(LabXPTP),
-    .class_init    = labx_ptp_class_init,
 };
 
 static void labx_ptp_register(void)

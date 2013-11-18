@@ -287,14 +287,14 @@ static void labx_nios2_init(QEMUMachineInitArgs *args)
 
     /* Attach emulated BRAM through the LMB. LMB size is not specified
        in the device-tree but there must be one to hold the vector table. */
-    memory_region_init_ram(phys_lmb_bram, "nios2.lmb_bram", LMB_BRAM_SIZE);
+    memory_region_init_ram(phys_lmb_bram, NULL, "nios2.lmb_bram", LMB_BRAM_SIZE);
     vmstate_register_ram_global(phys_lmb_bram);
     memory_region_add_subregion(address_space_mem, 0x00000000, phys_lmb_bram);
 
-    memory_region_init_ram(phys_ram, "nios2.ram", ram_size);
+    memory_region_init_ram(phys_ram, NULL, "nios2.ram", ram_size);
     vmstate_register_ram_global(phys_ram);
     memory_region_add_subregion(address_space_mem, ddr_base, phys_ram);
-    memory_region_init_alias(phys_ram_alias, "nios2.ram.mirror",
+    memory_region_init_alias(phys_ram_alias, NULL, "nios2.ram.mirror",
                              phys_ram, 0, ram_size);
     memory_region_add_subregion(address_space_mem, ddr_base + 0xc0000000,
                                 phys_ram_alias);

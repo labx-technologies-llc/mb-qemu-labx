@@ -125,7 +125,7 @@ typedef abi_int         target_pid_t;
 static const char *get_elf_platform(void)
 {
     static char elf_platform[] = "i386";
-    int family = (thread_env->cpuid_version >> 8) & 0xff;
+    int family = object_property_get_int(OBJECT(thread_cpu), "family", NULL);
     if (family > 6)
         family = 6;
     if (family >= 3)
@@ -137,7 +137,9 @@ static const char *get_elf_platform(void)
 
 static uint32_t get_elf_hwcap(void)
 {
-    return thread_env->features[FEAT_1_EDX];
+    X86CPU *cpu = X86_CPU(thread_cpu);
+
+    return cpu->env.features[FEAT_1_EDX];
 }
 
 #ifdef TARGET_X86_64
@@ -267,16 +269,26 @@ static void elf_core_copy_regs(target_elf_gregset_t *regs, const CPUX86State *en
 
 #define ELF_START_MMAP 0x80000000
 
-#define elf_check_arch(x) ( (x) == EM_ARM )
+#define elf_check_arch(x) ((x) == ELF_MACHINE)
 
+#define ELF_ARCH        ELF_MACHINE
+
+#ifdef TARGET_AARCH64
+#define ELF_CLASS       ELFCLASS64
+#else
 #define ELF_CLASS       ELFCLASS32
-#define ELF_ARCH        EM_ARM
+#endif
 
 static inline void init_thread(struct target_pt_regs *regs,
                                struct image_info *infop)
 {
     abi_long stack = infop->start_stack;
     memset(regs, 0, sizeof(*regs));
+
+#ifdef TARGET_AARCH64
+    regs->pc = infop->entry & ~0x3ULL;
+    regs->sp = stack;
+#else
     regs->ARM_cpsr = 0x10;
     if (infop->entry & 1)
         regs->ARM_cpsr |= CPSR_T;
@@ -290,6 +302,7 @@ static inline void init_thread(struct target_pt_regs *regs,
     /* For uClinux PIC binaries.  */
     /* XXX: Linux does this only on ARM with no MMU (do we care ?) */
     regs->ARM_r10 = infop->start_data;
+#endif
 }
 
 #define ELF_NREG    18
@@ -404,7 +417,7 @@ static int validate_guest_space(unsigned long guest_base,
 
 static uint32_t get_elf_hwcap(void)
 {
-    CPUARMState *e = thread_env;
+    ARMCPU *cpu = ARM_CPU(thread_cpu);
     uint32_t hwcaps = 0;
 
     hwcaps |= ARM_HWCAP_ARM_SWP;
@@ -415,7 +428,7 @@ static uint32_t get_elf_hwcap(void)
 
     /* probe for the extra features */
 #define GET_FEATURE(feat, hwcap) \
-    do {if (arm_feature(e, feat)) { hwcaps |= hwcap; } } while (0)
+    do { if (arm_feature(&cpu->env, feat)) { hwcaps |= hwcap; } } while (0)
     GET_FEATURE(ARM_FEATURE_VFP, ARM_HWCAP_ARM_VFP);
     GET_FEATURE(ARM_FEATURE_IWMMXT, ARM_HWCAP_ARM_IWMMXT);
     GET_FEATURE(ARM_FEATURE_THUMB2EE, ARM_HWCAP_ARM_THUMBEE);
@@ -619,13 +632,13 @@ enum {
 
 static uint32_t get_elf_hwcap(void)
 {
-    CPUPPCState *e = thread_env;
+    PowerPCCPU *cpu = POWERPC_CPU(thread_cpu);
     uint32_t features = 0;
 
     /* We don't have to be terribly complete here; the high points are
        Altivec/FP/SPE support.  Anything else is just a bonus.  */
 #define GET_FEATURE(flag, feature)                                      \
-    do {if (e->insns_flags & flag) features |= feature; } while(0)
+    do { if (cpu->env.insns_flags & flag) { features |= feature; } } while (0)
     GET_FEATURE(PPC_64B, QEMU_PPC_FEATURE_64);
     GET_FEATURE(PPC_FLOAT, QEMU_PPC_FEATURE_HAS_FPU);
     GET_FEATURE(PPC_ALTIVEC, QEMU_PPC_FEATURE_HAS_ALTIVEC);
@@ -2657,7 +2670,7 @@ static int fill_note_info(struct elf_note_info *info,
                           long signr, const CPUArchState *env)
 {
 #define NUMNOTES 3
-    CPUArchState *cpu = NULL;
+    CPUState *cpu = NULL;
     TaskState *ts = (TaskState *)env->opaque;
     int i;
 
@@ -2695,10 +2708,11 @@ static int fill_note_info(struct elf_note_info *info,
 
     /* read and fill status of all threads */
     cpu_list_lock();
-    for (cpu = first_cpu; cpu != NULL; cpu = cpu->next_cpu) {
-        if (cpu == thread_env)
+    CPU_FOREACH(cpu) {
+        if (cpu == thread_cpu) {
             continue;
-        fill_thread_info(info, cpu);
+        }
+        fill_thread_info(info, (CPUArchState *)cpu->env_ptr);
     }
     cpu_list_unlock();
 

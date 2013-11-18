@@ -22,6 +22,7 @@
  */
 
 #include "sysemu/sysemu.h"
+#include "sysemu/qtest.h"
 #include "hw/sysbus.h"
 #include "net/net.h"
 #include "hw/arm/arm.h"
@@ -96,7 +97,7 @@ static void lan9215_init(uint32_t base, qemu_irq irq)
 static Exynos4210State *exynos4_boards_init_common(QEMUMachineInitArgs *args,
                                                    Exynos4BoardType board_type)
 {
-    if (smp_cpus != EXYNOS4210_NCPUS) {
+    if (smp_cpus != EXYNOS4210_NCPUS && !qtest_enabled()) {
         fprintf(stderr, "%s board supports only %d CPU cores. Ignoring smp_cpus"
                 " value.\n",
                 exynos4_machines[board_type].name,
@@ -131,7 +132,7 @@ static void nuri_init(QEMUMachineInitArgs *args)
 {
     exynos4_boards_init_common(args, EXYNOS4_BOARD_NURI);
 
-    arm_load_kernel(arm_env_get_cpu(first_cpu), &exynos4_board_binfo);
+    arm_load_kernel(ARM_CPU(first_cpu), &exynos4_board_binfo);
 }
 
 static void smdkc210_init(QEMUMachineInitArgs *args)
@@ -141,7 +142,7 @@ static void smdkc210_init(QEMUMachineInitArgs *args)
 
     lan9215_init(SMDK_LAN9118_BASE_ADDR,
             qemu_irq_invert(s->irq_table[exynos4210_get_irq(37, 1)]));
-    arm_load_kernel(arm_env_get_cpu(first_cpu), &exynos4_board_binfo);
+    arm_load_kernel(ARM_CPU(first_cpu), &exynos4_board_binfo);
 }
 
 static QEMUMachine exynos4_machines[EXYNOS4_NUM_OF_BOARDS] = {
@@ -150,14 +151,12 @@ static QEMUMachine exynos4_machines[EXYNOS4_NUM_OF_BOARDS] = {
         .desc = "Samsung NURI board (Exynos4210)",
         .init = nuri_init,
         .max_cpus = EXYNOS4210_NCPUS,
-        DEFAULT_MACHINE_OPTIONS,
     },
     [EXYNOS4_BOARD_SMDKC210] = {
         .name = "smdkc210",
         .desc = "Samsung SMDKC210 board (Exynos4210)",
         .init = smdkc210_init,
         .max_cpus = EXYNOS4210_NCPUS,
-        DEFAULT_MACHINE_OPTIONS,
     },
 };
 

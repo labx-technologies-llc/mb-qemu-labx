@@ -210,6 +210,9 @@ void cpu_nios2_close(CPUNios2State *s);
 void nios2_cpu_do_interrupt(CPUState *cs);
 int cpu_nios2_signal_handler(int host_signum, void *pinfo, void *puc);
 void dump_mmu(FILE *f, fprintf_function cpu_fprintf, CPUNios2State *env);
+void nios2_cpu_dump_state(CPUState *cpu, FILE *f, fprintf_function cpu_fprintf,
+                          int flags);
+hwaddr nios2_cpu_get_phys_page_debug(CPUState *cpu, vaddr addr);
 
 #define TARGET_PHYS_ADDR_SPACE_BITS 32
 #define TARGET_VIRT_ADDR_SPACE_BITS 32
@@ -280,11 +283,6 @@ static inline void cpu_get_tb_cpu_state(CPUNios2State *env, target_ulong *pc,
     *cs_base = 0;
     *flags = (env->regs[CR_STATUS] & (CR_STATUS_EH | CR_STATUS_U));
 }
-
-#if !defined(CONFIG_USER_ONLY)
-void cpu_unassigned_access(CPUNios2State *env1, hwaddr addr,
-                           int is_write, int is_exec, int is_asi, int size);
-#endif
 
 static inline bool cpu_has_work(CPUState *cpu)
 {

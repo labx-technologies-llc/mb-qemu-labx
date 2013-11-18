@@ -56,6 +56,10 @@
 #define CONTROL_RTS      0x0800
 #define CONTROL_IEOP     0x1000
 
+#define TYPE_ALTERA_UART "ALTR.uart"
+#define ALTERA_UART(obj) \
+    OBJECT_CHECK(AlteraUART, (obj), TYPE_ALTERA_UART)
+
 typedef struct AlteraUART {
     SysBusDevice busdev;
     MemoryRegion mmio;
@@ -171,14 +175,14 @@ static const MemoryRegionOps uart_ops = {
 
 static int altera_uart_init(SysBusDevice *dev)
 {
-    AlteraUART *s = FROM_SYSBUS(typeof(*s), dev);
+    AlteraUART *s = ALTERA_UART(dev);
 
     s->regs[R_STATUS] = STATUS_TMT | STATUS_TRDY; /* Always ready to tx */
 
     sysbus_init_irq(dev, &s->irq);
 
-    memory_region_init_io(&s->mmio, &uart_ops, s,
-                          "ALTR.uart", R_MAX * sizeof(uint32_t));
+    memory_region_init_io(&s->mmio, OBJECT(s), &uart_ops, s,
+                          TYPE_ALTERA_UART, R_MAX * sizeof(uint32_t));
     sysbus_init_mmio(dev, &s->mmio);
 
     s->chr = qemu_char_get_next_serial();
@@ -203,7 +207,7 @@ static void altera_uart_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo altera_uart_info = {
-    .name          = "ALTR.uart",
+    .name          = TYPE_ALTERA_UART,
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(AlteraUART),
     .class_init    = altera_uart_class_init,

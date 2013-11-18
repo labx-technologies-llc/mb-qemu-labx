@@ -4,8 +4,11 @@
 /* A load of opaque types so that device init declarations don't have to
    pull in all the real definitions.  */
 typedef struct QEMUTimer QEMUTimer;
+typedef struct QEMUTimerListGroup QEMUTimerListGroup;
 typedef struct QEMUFile QEMUFile;
 typedef struct QEMUBH QEMUBH;
+
+typedef struct AioContext AioContext;
 
 struct Monitor;
 typedef struct Monitor Monitor;
@@ -21,6 +24,8 @@ typedef struct BusClass BusClass;
 typedef struct AddressSpace AddressSpace;
 typedef struct MemoryRegion MemoryRegion;
 typedef struct MemoryRegionSection MemoryRegionSection;
+
+typedef struct MemoryMappingList MemoryMappingList;
 
 typedef struct NICInfo NICInfo;
 typedef struct HCIInfo HCIInfo;
@@ -62,5 +67,7 @@ typedef struct VirtIODevice VirtIODevice;
 typedef struct QEMUSGList QEMUSGList;
 typedef struct SHPCDevice SHPCDevice;
 typedef struct FWCfgState FWCfgState;
+typedef struct PcGuestInfo PcGuestInfo;
+typedef struct Range Range;
 
 #endif /* QEMU_TYPEDEFS_H */

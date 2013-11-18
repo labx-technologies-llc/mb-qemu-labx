@@ -38,6 +38,10 @@
 #define CONTROL_START 0x0004
 #define CONTROL_STOP  0x0008
 
+#define TYPE_ALTERA_TIMER "ALTR.timer"
+#define ALTERA_TIMER(obj) \
+    OBJECT_CHECK(AlteraTimer, (obj), TYPE_ALTERA_TIMER)
+
 typedef struct AlteraTimer {
     SysBusDevice  busdev;
     MemoryRegion  mmio;
@@ -162,7 +166,7 @@ static void timer_hit(void *opaque)
 
 static int altera_timer_init(SysBusDevice *dev)
 {
-    AlteraTimer *t = FROM_SYSBUS(typeof(*t), dev);
+    AlteraTimer *t = ALTERA_TIMER(dev);
 
     assert(t->freq_hz != 0);
 
@@ -172,8 +176,8 @@ static int altera_timer_init(SysBusDevice *dev)
     t->ptimer = ptimer_init(t->bh);
     ptimer_set_freq(t->ptimer, t->freq_hz);
 
-    memory_region_init_io(&t->mmio, &timer_ops, t, "ALTR.timer",
-                          R_MAX * sizeof(uint32_t));
+    memory_region_init_io(&t->mmio, OBJECT(t), &timer_ops, t,
+                          TYPE_ALTERA_TIMER, R_MAX * sizeof(uint32_t));
     sysbus_init_mmio(dev, &t->mmio);
     return 0;
 }
@@ -193,7 +197,7 @@ static void altera_timer_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo altera_timer_info = {
-    .name          = "ALTR.timer",
+    .name          = TYPE_ALTERA_TIMER,
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(AlteraTimer),
     .class_init    = altera_timer_class_init,

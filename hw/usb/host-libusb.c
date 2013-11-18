@@ -137,6 +137,7 @@ static QTAILQ_HEAD(, USBHostDevice) hostdevs =
 static void usb_host_auto_check(void *unused);
 static void usb_host_release_interfaces(USBHostDevice *s);
 static void usb_host_nodev(USBHostDevice *s);
+static void usb_host_detach_kernel(USBHostDevice *s);
 static void usb_host_attach_kernel(USBHostDevice *s);
 
 /* ------------------------------------------------------------------------ */
@@ -241,7 +242,11 @@ static int usb_host_get_port(libusb_device *dev, char *port, size_t len)
     size_t off;
     int rc, i;
 
+#if LIBUSBX_API_VERSION >= 0x01000102
+    rc = libusb_get_port_numbers(dev, path, 7);
+#else
     rc = libusb_get_port_path(ctx, dev, path, 7);
+#endif
     if (rc < 0) {
         return 0;
     }
@@ -783,10 +788,13 @@ static int usb_host_open(USBHostDevice *s, libusb_device *dev)
         goto fail;
     }
 
-    libusb_get_device_descriptor(dev, &s->ddesc);
     s->dev     = dev;
     s->bus_num = bus_num;
     s->addr    = addr;
+
+    usb_host_detach_kernel(s);
+
+    libusb_get_device_descriptor(dev, &s->ddesc);
     usb_host_get_port(s->dev, s->port, sizeof(s->port));
 
     usb_ep_init(udev);
@@ -891,6 +899,7 @@ static int usb_host_initfn(USBDevice *udev)
     USBHostDevice *s = USB_HOST_DEVICE(udev);
 
     loglevel = s->loglevel;
+    udev->flags |= (1 << USB_DEV_FLAG_IS_HOST);
     udev->auto_attach = 0;
     QTAILQ_INIT(&s->requests);
     QTAILQ_INIT(&s->isorings);
@@ -987,15 +996,14 @@ static int usb_host_claim_interfaces(USBHostDevice *s, int configuration)
     udev->ninterfaces   = 0;
     udev->configuration = 0;
 
-    if (configuration == 0) {
-        /* address state - ignore */
-        return USB_RET_SUCCESS;
-    }
-
     usb_host_detach_kernel(s);
 
     rc = libusb_get_active_config_descriptor(s->dev, &conf);
     if (rc != 0) {
+        if (rc == LIBUSB_ERROR_NOT_FOUND) {
+            /* address state - ignore */
+            return USB_RET_SUCCESS;
+        }
         return USB_RET_STALL;
     }
 
@@ -1047,7 +1055,6 @@ static void usb_host_set_config(USBHostDevice *s, int config, USBPacket *p)
     trace_usb_host_set_config(s->bus_num, s->addr, config);
 
     usb_host_release_interfaces(s);
-    usb_host_detach_kernel(s);
     rc = libusb_set_configuration(s->dh, config);
     if (rc != 0) {
         usb_host_libusb_error("libusb_set_configuration", rc);
@@ -1251,16 +1258,14 @@ static void usb_host_flush_ep_queue(USBDevice *dev, USBEndpoint *ep)
 static void usb_host_handle_reset(USBDevice *udev)
 {
     USBHostDevice *s = USB_HOST_DEVICE(udev);
+    int rc;
 
     trace_usb_host_reset(s->bus_num, s->addr);
 
-    if (udev->configuration == 0) {
-        return;
+    rc = libusb_reset_device(s->dh);
+    if (rc != 0) {
+        usb_host_nodev(s);
     }
-    usb_host_release_interfaces(s);
-    libusb_reset_device(s->dh);
-    usb_host_claim_interfaces(s, 0);
-    usb_host_ep_update(s);
 }
 
 /*
@@ -1346,6 +1351,7 @@ static void usb_host_class_initfn(ObjectClass *klass, void *data)
     uc->flush_ep_queue = usb_host_flush_ep_queue;
     dc->vmsd = &vmstate_usb_host;
     dc->props = usb_host_dev_properties;
+    set_bit(DEVICE_CATEGORY_BRIDGE, dc->categories);
 }
 
 static TypeInfo usb_host_dev_info = {
@@ -1456,7 +1462,7 @@ static void usb_host_auto_check(void *unused)
         if (unconnected == 0) {
             /* nothing to watch */
             if (usb_auto_timer) {
-                qemu_del_timer(usb_auto_timer);
+                timer_del(usb_auto_timer);
                 trace_usb_host_auto_scan_disabled();
             }
             return;
@@ -1468,13 +1474,13 @@ static void usb_host_auto_check(void *unused)
         usb_vmstate = qemu_add_vm_change_state_handler(usb_host_vm_state, NULL);
     }
     if (!usb_auto_timer) {
-        usb_auto_timer = qemu_new_timer_ms(rt_clock, usb_host_auto_check, NULL);
+        usb_auto_timer = timer_new_ms(QEMU_CLOCK_REALTIME, usb_host_auto_check, NULL);
         if (!usb_auto_timer) {
             return;
         }
         trace_usb_host_auto_scan_enabled();
     }
-    qemu_mod_timer(usb_auto_timer, qemu_get_clock_ms(rt_clock) + 2000);
+    timer_mod(usb_auto_timer, qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + 2000);
 }
 
 void usb_host_info(Monitor *mon, const QDict *qdict)

@@ -26,6 +26,10 @@
 #define min_bits qemu_fls
 #define RAM_INDEX(addr, size) (((addr)>>2)&((1<<min_bits((size)-1))-1))
 
+#define TYPE_DEPACKETIZER "labx.audio-depacketizer"
+#define DEPACKETIZER(obj) \
+    OBJECT_CHECK(Depacketizer, (obj), TYPE_DEPACKETIZER)
+
 typedef struct ClockDomainInfo {
     uint32_t tsInterval;
 } ClockDomainInfo;
@@ -331,7 +335,7 @@ static const MemoryRegionOps microcode_ram_ops = {
 
 static int labx_audio_depacketizer_init(SysBusDevice *dev)
 {
-    Depacketizer *p = FROM_SYSBUS(typeof(*p), dev);
+    Depacketizer *p = DEPACKETIZER(dev);
 
     /* Initialize defaults */
     p->microcodeRam = g_malloc0(p->microcodeWords*4);
@@ -342,13 +346,13 @@ static int labx_audio_depacketizer_init(SysBusDevice *dev)
     sysbus_init_irq(dev, &p->irq);
 
     /* Set up memory regions */
-    memory_region_init_io(&p->mmio_depacketizer, &depacketizer_regs_ops, p,
+    memory_region_init_io(&p->mmio_depacketizer, OBJECT(p), &depacketizer_regs_ops, p,
                           "labx.audio-depacketizer-regs",
                           0x100 * 4);
-    memory_region_init_io(&p->mmio_clock_domain, &clock_domain_regs_ops, p,
+    memory_region_init_io(&p->mmio_clock_domain, OBJECT(p), &clock_domain_regs_ops, p,
                           "labx.audio-depacketizer-cd-regs",
                           0x10 * 4 * p->clockDomains);
-    memory_region_init_io(&p->mmio_microcode,    &microcode_ram_ops,     p,
+    memory_region_init_io(&p->mmio_microcode,    OBJECT(p), &microcode_ram_ops,     p,
                           "labx.audio-depacketizer-microcode",
                           4 * p->microcodeWords);
 
@@ -394,7 +398,7 @@ static void labx_audio_depacketizer_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo labx_audio_depacketizer_info = {
-    .name          = "labx.audio-depacketizer",
+    .name          = TYPE_DEPACKETIZER,
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(Depacketizer),
     .class_init    = labx_audio_depacketizer_class_init,
@@ -402,9 +406,8 @@ static const TypeInfo labx_audio_depacketizer_info = {
 
 static const TypeInfo labx_audio_depacketizer_info2 = {
     .name          = "xlnx.labx-audio-depacketizer",
-    .parent        = TYPE_SYS_BUS_DEVICE,
+    .parent        = TYPE_DEPACKETIZER,
     .instance_size = sizeof(Depacketizer),
-    .class_init    = labx_audio_depacketizer_class_init,
 };
 
 static void labx_audio_depacketizer_register(void)

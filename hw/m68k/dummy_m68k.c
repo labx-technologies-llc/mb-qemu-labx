@@ -40,7 +40,7 @@ static void dummy_m68k_init(QEMUMachineInitArgs *args)
     env->vbr = 0;
 
     /* RAM at address zero */
-    memory_region_init_ram(ram, "dummy_m68k.ram", ram_size);
+    memory_region_init_ram(ram, NULL, "dummy_m68k.ram", ram_size);
     vmstate_register_ram_global(ram);
     memory_region_add_subregion(address_space_mem, 0, ram);
 
@@ -73,7 +73,6 @@ static QEMUMachine dummy_m68k_machine = {
     .name = "dummy",
     .desc = "Dummy board",
     .init = dummy_m68k_init,
-    DEFAULT_MACHINE_OPTIONS,
 };
 
 static void dummy_m68k_machine_init(void)

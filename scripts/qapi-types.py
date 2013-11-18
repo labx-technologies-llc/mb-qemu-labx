@@ -51,18 +51,17 @@ def generate_fwd_enum_struct(name, members):
     return mcgen('''
 typedef struct %(name)sList
 {
-    %(name)s value;
+    union {
+        %(name)s value;
+        uint64_t padding;
+    };
     struct %(name)sList *next;
 } %(name)sList;
 ''',
                  name=name)
 
-def generate_struct(structname, fieldname, members):
-    ret = mcgen('''
-struct %(name)s
-{
-''',
-          name=structname)
+def generate_struct_fields(members):
+    ret = ''
 
     for argname, argentry, optional, structured in parse_args(members):
         if optional:
@@ -72,13 +71,33 @@ struct %(name)s
                          c_name=c_var(argname))
         if structured:
             push_indent()
-            ret += generate_struct("", argname, argentry)
+            ret += generate_struct({ "field": argname, "data": argentry})
             pop_indent()
         else:
             ret += mcgen('''
     %(c_type)s %(c_name)s;
 ''',
                      c_type=c_type(argentry), c_name=c_var(argname))
+
+    return ret
+
+def generate_struct(expr):
+
+    structname = expr.get('type', "")
+    fieldname = expr.get('field', "")
+    members = expr['data']
+    base = expr.get('base')
+
+    ret = mcgen('''
+struct %(name)s
+{
+''',
+          name=structname)
+
+    if base:
+        ret += generate_struct_fields({'base': base})
+
+    ret += generate_struct_fields(members)
 
     if len(fieldname):
         fieldname = " " + fieldname
@@ -150,7 +169,48 @@ typedef enum %(name)s
 
     return lookup_decl + enum_decl
 
-def generate_union(name, typeinfo):
+def generate_anon_union_qtypes(expr):
+
+    name = expr['union']
+    members = expr['data']
+
+    ret = mcgen('''
+const int %(name)s_qtypes[QTYPE_MAX] = {
+''',
+    name=name)
+
+    for key in members:
+        qapi_type = members[key]
+        if builtin_type_qtypes.has_key(qapi_type):
+            qtype = builtin_type_qtypes[qapi_type]
+        elif find_struct(qapi_type):
+            qtype = "QTYPE_QDICT"
+        elif find_union(qapi_type):
+            qtype = "QTYPE_QDICT"
+        else:
+            assert False, "Invalid anonymous union member"
+
+        ret += mcgen('''
+    [ %(qtype)s ] = %(abbrev)s_KIND_%(enum)s,
+''',
+        qtype = qtype,
+        abbrev = de_camel_case(name).upper(),
+        enum = c_fun(de_camel_case(key),False).upper())
+
+    ret += mcgen('''
+};
+''')
+    return ret
+
+
+def generate_union(expr):
+
+    name = expr['union']
+    typeinfo = expr['data']
+
+    base = expr.get('base')
+    discriminator = expr.get('discriminator')
+
     ret = mcgen('''
 struct %(name)s
 {
@@ -169,8 +229,26 @@ struct %(name)s
 
     ret += mcgen('''
     };
+''')
+
+    if base:
+        base_fields = find_struct(base)['data']
+        if discriminator:
+            base_fields = base_fields.copy()
+            del base_fields[discriminator]
+        ret += generate_struct_fields(base_fields)
+    else:
+        assert not discriminator
+
+    ret += mcgen('''
 };
 ''')
+    if discriminator == {}:
+        ret += mcgen('''
+extern const int %(name)s_qtypes[];
+''',
+            name=name)
+
 
     return ret
 
@@ -323,6 +401,8 @@ for expr in exprs:
         ret += generate_fwd_struct(expr['union'], expr['data']) + "\n"
         ret += generate_enum('%sKind' % expr['union'], expr['data'].keys())
         fdef.write(generate_enum_lookup('%sKind' % expr['union'], expr['data'].keys()))
+        if expr.get('discriminator') == {}:
+            fdef.write(generate_anon_union_qtypes(expr))
     else:
         continue
     fdecl.write(ret)
@@ -346,13 +426,13 @@ if do_builtins:
 for expr in exprs:
     ret = "\n"
     if expr.has_key('type'):
-        ret += generate_struct(expr['type'], "", expr['data']) + "\n"
+        ret += generate_struct(expr) + "\n"
         ret += generate_type_cleanup_decl(expr['type'] + "List")
         fdef.write(generate_type_cleanup(expr['type'] + "List") + "\n")
         ret += generate_type_cleanup_decl(expr['type'])
         fdef.write(generate_type_cleanup(expr['type']) + "\n")
     elif expr.has_key('union'):
-        ret += generate_union(expr['union'], expr['data'])
+        ret += generate_union(expr)
         ret += generate_type_cleanup_decl(expr['union'] + "List")
         fdef.write(generate_type_cleanup(expr['union'] + "List") + "\n")
         ret += generate_type_cleanup_decl(expr['union'])

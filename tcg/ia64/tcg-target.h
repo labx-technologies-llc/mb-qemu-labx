@@ -104,7 +104,9 @@ typedef enum {
 
 /* optional instructions */
 #define TCG_TARGET_HAS_div_i32          0
+#define TCG_TARGET_HAS_rem_i32          0
 #define TCG_TARGET_HAS_div_i64          0
+#define TCG_TARGET_HAS_rem_i64          0
 #define TCG_TARGET_HAS_andc_i32         1
 #define TCG_TARGET_HAS_andc_i64         1
 #define TCG_TARGET_HAS_bswap16_i32      1
@@ -144,6 +146,12 @@ typedef enum {
 #define TCG_TARGET_HAS_mulu2_i64        0
 #define TCG_TARGET_HAS_muls2_i32        0
 #define TCG_TARGET_HAS_muls2_i64        0
+#define TCG_TARGET_HAS_muluh_i32        0
+#define TCG_TARGET_HAS_muluh_i64        0
+#define TCG_TARGET_HAS_mulsh_i32        0
+#define TCG_TARGET_HAS_mulsh_i64        0
+
+#define TCG_TARGET_HAS_new_ldst         0
 
 #define TCG_TARGET_deposit_i32_valid(ofs, len) ((len) <= 16)
 #define TCG_TARGET_deposit_i64_valid(ofs, len) ((len) <= 16)
@@ -156,8 +164,7 @@ typedef enum {
 
 #define TCG_AREG0 TCG_REG_R7
 
-static inline void flush_icache_range(tcg_target_ulong start,
-                                      tcg_target_ulong stop)
+static inline void flush_icache_range(uintptr_t start, uintptr_t stop)
 {
     start = start & ~(32UL - 1UL);
     stop = (stop + (32UL - 1UL)) & ~(32UL - 1UL);

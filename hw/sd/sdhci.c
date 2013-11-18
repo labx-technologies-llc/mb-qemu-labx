@@ -134,8 +134,8 @@ static void sdhci_raise_insertion_irq(void *opaque)
     SDHCIState *s = (SDHCIState *)opaque;
 
     if (s->norintsts & SDHC_NIS_REMOVE) {
-        qemu_mod_timer(s->insert_timer,
-                       qemu_get_clock_ns(vm_clock) + SDHC_INSERTION_DELAY);
+        timer_mod(s->insert_timer,
+                       qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + SDHC_INSERTION_DELAY);
     } else {
         s->prnsts = 0x1ff0000;
         if (s->norintstsen & SDHC_NISEN_INSERT) {
@@ -152,8 +152,8 @@ static void sdhci_insert_eject_cb(void *opaque, int irq, int level)
 
     if ((s->norintsts & SDHC_NIS_REMOVE) && level) {
         /* Give target some time to notice card ejection */
-        qemu_mod_timer(s->insert_timer,
-                       qemu_get_clock_ns(vm_clock) + SDHC_INSERTION_DELAY);
+        timer_mod(s->insert_timer,
+                       qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + SDHC_INSERTION_DELAY);
     } else {
         if (level) {
             s->prnsts = 0x1ff0000;
@@ -186,8 +186,8 @@ static void sdhci_card_readonly_cb(void *opaque, int irq, int level)
 
 static void sdhci_reset(SDHCIState *s)
 {
-    qemu_del_timer(s->insert_timer);
-    qemu_del_timer(s->transfer_timer);
+    timer_del(s->insert_timer);
+    timer_del(s->transfer_timer);
     /* Set all registers to 0. Capabilities registers are not cleared
      * and assumed to always preserve their value, given to them during
      * initialization */
@@ -496,7 +496,7 @@ static void sdhci_sdma_transfer_multi_blocks(SDHCIState *s)
                     s->blkcnt--;
                 }
             }
-            dma_memory_write(&dma_context_memory, s->sdmasysad,
+            dma_memory_write(&address_space_memory, s->sdmasysad,
                              &s->fifo_buffer[begin], s->data_count - begin);
             s->sdmasysad += s->data_count - begin;
             if (s->data_count == block_size) {
@@ -518,7 +518,7 @@ static void sdhci_sdma_transfer_multi_blocks(SDHCIState *s)
                 s->data_count = block_size;
                 boundary_count -= block_size - begin;
             }
-            dma_memory_read(&dma_context_memory, s->sdmasysad,
+            dma_memory_read(&address_space_memory, s->sdmasysad,
                             &s->fifo_buffer[begin], s->data_count);
             s->sdmasysad += s->data_count - begin;
             if (s->data_count == block_size) {
@@ -557,10 +557,10 @@ static void sdhci_sdma_transfer_single_block(SDHCIState *s)
         for (n = 0; n < datacnt; n++) {
             s->fifo_buffer[n] = sd_read_data(s->card);
         }
-        dma_memory_write(&dma_context_memory, s->sdmasysad, s->fifo_buffer,
+        dma_memory_write(&address_space_memory, s->sdmasysad, s->fifo_buffer,
                          datacnt);
     } else {
-        dma_memory_read(&dma_context_memory, s->sdmasysad, s->fifo_buffer,
+        dma_memory_read(&address_space_memory, s->sdmasysad, s->fifo_buffer,
                         datacnt);
         for (n = 0; n < datacnt; n++) {
             sd_write_data(s->card, s->fifo_buffer[n]);
@@ -588,7 +588,7 @@ static void get_adma_description(SDHCIState *s, ADMADescr *dscr)
     hwaddr entry_addr = (hwaddr)s->admasysaddr;
     switch (SDHC_DMA_TYPE(s->hostctl)) {
     case SDHC_CTRL_ADMA2_32:
-        dma_memory_read(&dma_context_memory, entry_addr, (uint8_t *)&adma2,
+        dma_memory_read(&address_space_memory, entry_addr, (uint8_t *)&adma2,
                         sizeof(adma2));
         adma2 = le64_to_cpu(adma2);
         /* The spec does not specify endianness of descriptor table.
@@ -600,7 +600,7 @@ static void get_adma_description(SDHCIState *s, ADMADescr *dscr)
         dscr->incr = 8;
         break;
     case SDHC_CTRL_ADMA1_32:
-        dma_memory_read(&dma_context_memory, entry_addr, (uint8_t *)&adma1,
+        dma_memory_read(&address_space_memory, entry_addr, (uint8_t *)&adma1,
                         sizeof(adma1));
         adma1 = le32_to_cpu(adma1);
         dscr->addr = (hwaddr)(adma1 & 0xFFFFF000);
@@ -613,12 +613,12 @@ static void get_adma_description(SDHCIState *s, ADMADescr *dscr)
         }
         break;
     case SDHC_CTRL_ADMA2_64:
-        dma_memory_read(&dma_context_memory, entry_addr,
+        dma_memory_read(&address_space_memory, entry_addr,
                         (uint8_t *)(&dscr->attr), 1);
-        dma_memory_read(&dma_context_memory, entry_addr + 2,
+        dma_memory_read(&address_space_memory, entry_addr + 2,
                         (uint8_t *)(&dscr->length), 2);
         dscr->length = le16_to_cpu(dscr->length);
-        dma_memory_read(&dma_context_memory, entry_addr + 4,
+        dma_memory_read(&address_space_memory, entry_addr + 4,
                         (uint8_t *)(&dscr->addr), 8);
         dscr->attr = le64_to_cpu(dscr->attr);
         dscr->attr &= 0xfffffff8;
@@ -678,7 +678,7 @@ static void sdhci_do_adma(SDHCIState *s)
                         s->data_count = block_size;
                         length -= block_size - begin;
                     }
-                    dma_memory_write(&dma_context_memory, dscr.addr,
+                    dma_memory_write(&address_space_memory, dscr.addr,
                                      &s->fifo_buffer[begin],
                                      s->data_count - begin);
                     dscr.addr += s->data_count - begin;
@@ -702,7 +702,7 @@ static void sdhci_do_adma(SDHCIState *s)
                         s->data_count = block_size;
                         length -= block_size - begin;
                     }
-                    dma_memory_read(&dma_context_memory, dscr.addr,
+                    dma_memory_read(&address_space_memory, dscr.addr,
                                     &s->fifo_buffer[begin], s->data_count);
                     dscr.addr += s->data_count - begin;
                     if (s->data_count == block_size) {
@@ -764,8 +764,8 @@ static void sdhci_do_adma(SDHCIState *s)
     }
 
     /* we have unfinished business - reschedule to continue ADMA */
-    qemu_mod_timer(s->transfer_timer,
-                   qemu_get_clock_ns(vm_clock) + SDHC_TRANSFER_DELAY);
+    timer_mod(s->transfer_timer,
+                   qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + SDHC_TRANSFER_DELAY);
 }
 
 /* Perform data transfer according to controller configuration */
@@ -1165,23 +1165,26 @@ static void sdhci_initfn(Object *obj)
     DriveInfo *di;
 
     di = drive_get_next(IF_SD);
-    s->card = sd_init(di ? di->bdrv : NULL, 0);
+    s->card = sd_init(di ? di->bdrv : NULL, false);
+    if (s->card == NULL) {
+        exit(1);
+    }
     s->eject_cb = qemu_allocate_irqs(sdhci_insert_eject_cb, s, 1)[0];
     s->ro_cb = qemu_allocate_irqs(sdhci_card_readonly_cb, s, 1)[0];
     sd_set_cb(s->card, s->ro_cb, s->eject_cb);
 
-    s->insert_timer = qemu_new_timer_ns(vm_clock, sdhci_raise_insertion_irq, s);
-    s->transfer_timer = qemu_new_timer_ns(vm_clock, sdhci_do_data_transfer, s);
+    s->insert_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, sdhci_raise_insertion_irq, s);
+    s->transfer_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, sdhci_do_data_transfer, s);
 }
 
 static void sdhci_uninitfn(Object *obj)
 {
     SDHCIState *s = SDHCI(obj);
 
-    qemu_del_timer(s->insert_timer);
-    qemu_free_timer(s->insert_timer);
-    qemu_del_timer(s->transfer_timer);
-    qemu_free_timer(s->transfer_timer);
+    timer_del(s->insert_timer);
+    timer_free(s->insert_timer);
+    timer_del(s->transfer_timer);
+    timer_free(s->transfer_timer);
     qemu_free_irqs(&s->eject_cb);
     qemu_free_irqs(&s->ro_cb);
 
@@ -1245,7 +1248,7 @@ static void sdhci_realize(DeviceState *dev, Error ** errp)
     s->buf_maxsz = sdhci_get_fifolen(s);
     s->fifo_buffer = g_malloc0(s->buf_maxsz);
     sysbus_init_irq(sbd, &s->irq);
-    memory_region_init_io(&s->iomem, &sdhci_mmio_ops, s, "sdhci",
+    memory_region_init_io(&s->iomem, OBJECT(s), &sdhci_mmio_ops, s, "sdhci",
             SDHC_REGISTERS_MAP_SIZE);
     sysbus_init_mmio(sbd, &s->iomem);
 }

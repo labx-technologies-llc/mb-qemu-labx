@@ -27,6 +27,7 @@
 #include "hw/ptimer.h"
 #include "qemu/log.h"
 #include "qapi/qmp/qerror.h"
+#include "qemu/main-loop.h"
 
 #include "hw/stream.h"
 
@@ -514,8 +515,9 @@ static void axidma_write(void *opaque, hwaddr addr,
             break;
     }
     if (sid == 1 && d->notify) {
-        d->notify(d->notify_opaque);
+        StreamCanPushNotifyFn notifytmp = d->notify;
         d->notify = NULL;
+        notifytmp(d->notify_opaque);
     }
     stream_update_irq(s);
 }
@@ -577,8 +579,10 @@ static void xilinx_axidma_init(Object *obj)
                              (Object **) &s->tx_control_dev, &errp);
     assert_no_error(errp);
 
-    object_initialize(&s->rx_data_dev, TYPE_XILINX_AXI_DMA_DATA_STREAM);
-    object_initialize(&s->rx_control_dev, TYPE_XILINX_AXI_DMA_CONTROL_STREAM);
+    object_initialize(&s->rx_data_dev, sizeof(s->rx_data_dev),
+                      TYPE_XILINX_AXI_DMA_DATA_STREAM);
+    object_initialize(&s->rx_control_dev, sizeof(s->rx_control_dev),
+                      TYPE_XILINX_AXI_DMA_CONTROL_STREAM);
     object_property_add_child(OBJECT(s), "axistream-connected-target",
                               (Object *)&s->rx_data_dev, &errp);
     assert_no_error(errp);
@@ -589,7 +593,7 @@ static void xilinx_axidma_init(Object *obj)
     sysbus_init_irq(sbd, &s->streams[0].irq);
     sysbus_init_irq(sbd, &s->streams[1].irq);
 
-    memory_region_init_io(&s->iomem, &axidma_ops, s,
+    memory_region_init_io(&s->iomem, obj, &axidma_ops, s,
                           "xlnx.axi-dma", R_MAX * 4 * 2);
     sysbus_init_mmio(sbd, &s->iomem);
 }

@@ -511,10 +511,17 @@ static int usb_bt_initfn(USBDevice *dev)
     return 0;
 }
 
-USBDevice *usb_bt_init(USBBus *bus, HCIInfo *hci)
+static USBDevice *usb_bt_init(USBBus *bus, const char *cmdline)
 {
     USBDevice *dev;
     struct USBBtState *s;
+    HCIInfo *hci;
+
+    if (*cmdline) {
+        hci = hci_init(cmdline);
+    } else {
+        hci = bt_new_hci(qemu_find_bt_vlan(0));
+    }
 
     if (!hci)
         return NULL;
@@ -553,6 +560,7 @@ static void usb_bt_class_initfn(ObjectClass *klass, void *data)
     uc->handle_data    = usb_bt_handle_data;
     uc->handle_destroy = usb_bt_handle_destroy;
     dc->vmsd = &vmstate_usb_bt;
+    set_bit(DEVICE_CATEGORY_NETWORK, dc->categories);
 }
 
 static const TypeInfo bt_info = {
@@ -565,6 +573,7 @@ static const TypeInfo bt_info = {
 static void usb_bt_register_types(void)
 {
     type_register_static(&bt_info);
+    usb_legacy_register("usb-bt-dongle", "bt", usb_bt_init);
 }
 
 type_init(usb_bt_register_types)

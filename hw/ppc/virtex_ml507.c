@@ -141,44 +141,35 @@ static int xilinx_load_device_tree(hwaddr addr,
 {
     char *path;
     int fdt_size;
-#ifdef CONFIG_FDT
-    void *fdt;
+    void *fdt = NULL;
     int r;
+    const char *dtb_filename;
 
-    /* Try the local "ppc.dtb" override.  */
-    fdt = load_device_tree("ppc.dtb", &fdt_size);
-    if (!fdt) {
-        path = qemu_find_file(QEMU_FILE_TYPE_BIOS, BINARY_DEVICE_TREE_FILE);
-        if (path) {
-            fdt = load_device_tree(path, &fdt_size);
-            g_free(path);
-        }
+    dtb_filename = qemu_opt_get(qemu_get_machine_opts(), "dtb");
+    if (dtb_filename) {
+        fdt = load_device_tree(dtb_filename, &fdt_size);
         if (!fdt) {
-            return 0;
+            error_report("Error while loading device tree file '%s'",
+                dtb_filename);
+        }
+    } else {
+        /* Try the local "ppc.dtb" override.  */
+        fdt = load_device_tree("ppc.dtb", &fdt_size);
+        if (!fdt) {
+            path = qemu_find_file(QEMU_FILE_TYPE_BIOS, BINARY_DEVICE_TREE_FILE);
+            if (path) {
+                fdt = load_device_tree(path, &fdt_size);
+                g_free(path);
+            }
         }
     }
-
+    if (!fdt) {
+        return 0;
+    }
     r = qemu_devtree_setprop_string(fdt, "/chosen", "bootargs", kernel_cmdline);
     if (r < 0)
         fprintf(stderr, "couldn't set /chosen/bootargs\n");
     cpu_physical_memory_write(addr, fdt, fdt_size);
-#else
-    /* We lack libfdt so we cannot manipulate the fdt. Just pass on the blob
-       to the kernel.  */
-    fdt_size = load_image_targphys("ppc.dtb", addr, 0x10000);
-    if (fdt_size < 0) {
-        path = qemu_find_file(QEMU_FILE_TYPE_BIOS, BINARY_DEVICE_TREE_FILE);
-        if (path) {
-            fdt_size = load_image_targphys(path, addr, 0x10000);
-            g_free(path);
-        }
-    }
-
-    if (kernel_cmdline) {
-        fprintf(stderr,
-                "Warning: missing libfdt, cannot pass cmdline to kernel!\n");
-    }
-#endif
     return fdt_size;
 }
 
@@ -208,7 +199,7 @@ static void virtex_init(QEMUMachineInitArgs *args)
     env = &cpu->env;
     qemu_register_reset(main_cpu_reset, cpu);
 
-    memory_region_init_ram(phys_ram, "ram", ram_size);
+    memory_region_init_ram(phys_ram, NULL, "ram", ram_size);
     vmstate_register_ram_global(phys_ram);
     memory_region_add_subregion(address_space_mem, ram_base, phys_ram);
 
@@ -263,7 +254,6 @@ static QEMUMachine virtex_machine = {
     .name = "virtex-ml507",
     .desc = "Xilinx Virtex ML507 reference design",
     .init = virtex_init,
-    DEFAULT_MACHINE_OPTIONS,
 };
 
 static void virtex_machine_init(void)

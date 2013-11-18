@@ -123,36 +123,6 @@ int get_param_value(char *buf, int buf_size,
     return get_next_param_value(buf, buf_size, tag, &str);
 }
 
-int check_params(char *buf, int buf_size,
-                 const char * const *params, const char *str)
-{
-    const char *p;
-    int i;
-
-    p = str;
-    while (*p != '\0') {
-        p = get_opt_name(buf, buf_size, p, '=');
-        if (*p != '=') {
-            return -1;
-        }
-        p++;
-        for (i = 0; params[i] != NULL; i++) {
-            if (!strcmp(params[i], buf)) {
-                break;
-            }
-        }
-        if (params[i] == NULL) {
-            return -1;
-        }
-        p = get_opt_value(NULL, 0, p);
-        if (*p != ',') {
-            break;
-        }
-        p++;
-    }
-    return 0;
-}
-
 /*
  * Searches an option list for an option with the given name
  */
@@ -203,8 +173,8 @@ static void parse_option_number(const char *name, const char *value,
     }
 }
 
-static void parse_option_size(const char *name, const char *value,
-                              uint64_t *ret, Error **errp)
+void parse_option_size(const char *name, const char *value,
+                       uint64_t *ret, Error **errp)
 {
     char *postfix;
     double sizef;
@@ -305,6 +275,8 @@ int set_option_parameter(QEMUOptionParameter *list, const char *name,
         return -1;
     }
 
+    list->assigned = true;
+
     return 0;
 }
 
@@ -335,6 +307,8 @@ int set_option_parameter_int(QEMUOptionParameter *list, const char *name,
     default:
         return -1;
     }
+
+    list->assigned = true;
 
     return 0;
 }
@@ -427,6 +401,7 @@ QEMUOptionParameter *parse_option_parameters(const char *param,
     char value[256];
     char *param_delim, *value_delim;
     char next_delim;
+    int i;
 
     if (list == NULL) {
         return NULL;
@@ -434,6 +409,10 @@ QEMUOptionParameter *parse_option_parameters(const char *param,
 
     if (dest == NULL) {
         dest = allocated = append_option_parameters(NULL, list);
+    }
+
+    for (i = 0; dest[i].name; i++) {
+        dest[i].assigned = false;
     }
 
     while (*param) {
@@ -623,6 +602,20 @@ static const QemuOptDesc *find_desc_by_name(const QemuOptDesc *desc,
     return NULL;
 }
 
+int qemu_opt_unset(QemuOpts *opts, const char *name)
+{
+    QemuOpt *opt = qemu_opt_find(opts, name);
+
+    assert(opts_accepts_any(opts));
+
+    if (opt == NULL) {
+        return -1;
+    } else {
+        qemu_opt_del(opt);
+        return 0;
+    }
+}
+
 static void opt_set(QemuOpts *opts, const char *name, const char *value,
                     bool prepend, Error **errp)
 {
@@ -736,16 +729,12 @@ QemuOpts *qemu_opts_find(QemuOptsList *list, const char *id)
     QemuOpts *opts;
 
     QTAILQ_FOREACH(opts, &list->head, next) {
-        if (!opts->id) {
-            if (!id) {
-                return opts;
-            }
-            continue;
+        if (!opts->id && !id) {
+            return opts;
         }
-        if (strcmp(opts->id, id) != 0) {
-            continue;
+        if (opts->id && id && !strcmp(opts->id, id)) {
+            return opts;
         }
-        return opts;
     }
     return NULL;
 }
@@ -843,6 +832,12 @@ int qemu_opts_set(QemuOptsList *list, const char *id,
 const char *qemu_opts_id(QemuOpts *opts)
 {
     return opts->id;
+}
+
+/* The id string will be g_free()d by qemu_opts_del */
+void qemu_opts_set_id(QemuOpts *opts, char *id)
+{
+    opts->id = id;
 }
 
 void qemu_opts_del(QemuOpts *opts)
@@ -948,15 +943,16 @@ static QemuOpts *opts_parse(QemuOptsList *list, const char *params,
         get_opt_value(value, sizeof(value), p+4);
         id = value;
     }
-    if (defaults) {
-        if (!id && !QTAILQ_EMPTY(&list->head)) {
-            opts = qemu_opts_find(list, NULL);
-        } else {
-            opts = qemu_opts_create(list, id, 0, &local_err);
-        }
-    } else {
-        opts = qemu_opts_create(list, id, 1, &local_err);
-    }
+
+    /*
+     * This code doesn't work for defaults && !list->merge_lists: when
+     * params has no id=, and list has an element with !opts->id, it
+     * appends a new element instead of returning the existing opts.
+     * However, we got no use for this case.  Guard against possible
+     * (if unlikely) future misuse:
+     */
+    assert(!defaults || list->merge_lists);
+    opts = qemu_opts_create(list, id, !defaults, &local_err);
     if (opts == NULL) {
         if (error_is_set(&local_err)) {
             qerror_report_err(local_err);

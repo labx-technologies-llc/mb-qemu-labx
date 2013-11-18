@@ -34,10 +34,7 @@
 #include "exec/cpu-defs.h"
 #define TARGET_PAGE_BITS 12
 
-/* Actually 64-bits, limited by the memory API to 62 bits.  We
- * never use that much.
- */
-#define TARGET_PHYS_ADDR_SPACE_BITS 62
+#define TARGET_PHYS_ADDR_SPACE_BITS 64
 #define TARGET_VIRT_ADDR_SPACE_BITS 64
 
 #include "exec/cpu-all.h"
@@ -151,16 +148,7 @@ typedef struct CPUS390XState {
 } CPUS390XState;
 
 #include "cpu-qom.h"
-
-#if defined(CONFIG_USER_ONLY)
-static inline void cpu_clone_regs(CPUS390XState *env, target_ulong newsp)
-{
-    if (newsp) {
-        env->regs[15] = newsp;
-    }
-    env->regs[2] = 0;
-}
-#endif
+#include <sysemu/kvm.h>
 
 /* distinguish between 24 bit and 31 bit addressing */
 #define HIGH_ORDER_BIT 0x80000000
@@ -241,6 +229,8 @@ static inline void cpu_clone_regs(CPUS390XState *env, target_ulong newsp)
 #undef PSW_MASK_CC
 #undef PSW_MASK_PM
 #undef PSW_MASK_64
+#undef PSW_MASK_32
+#undef PSW_MASK_ESA_ADDR
 
 #define PSW_MASK_PER            0x4000000000000000ULL
 #define PSW_MASK_DAT            0x0400000000000000ULL
@@ -256,6 +246,7 @@ static inline void cpu_clone_regs(CPUS390XState *env, target_ulong newsp)
 #define PSW_MASK_PM             0x00000F0000000000ULL
 #define PSW_MASK_64             0x0000000100000000ULL
 #define PSW_MASK_32             0x0000000080000000ULL
+#define PSW_MASK_ESA_ADDR       0x000000007fffffffULL
 
 #undef PSW_ASC_PRIMARY
 #undef PSW_ASC_ACCREG
@@ -413,6 +404,7 @@ void cpu_unlock(void);
 typedef struct SubchDev SubchDev;
 
 #ifndef CONFIG_USER_ONLY
+extern void io_subsystem_reset(void);
 SubchDev *css_find_subch(uint8_t m, uint8_t cssid, uint8_t ssid,
                          uint16_t schid);
 bool css_subch_visible(SubchDev *sch);
@@ -517,12 +509,6 @@ static inline bool css_present(uint8_t cssid)
     return false;
 }
 #endif
-
-static inline void cpu_set_tls(CPUS390XState *env, target_ulong newtls)
-{
-    env->aregs[0] = newtls >> 32;
-    env->aregs[1] = newtls & 0xffffffffULL;
-}
 
 #define cpu_init(model) (&cpu_s390x_init(model)->env)
 #define cpu_exec cpu_s390x_exec
@@ -705,6 +691,14 @@ static const char *cc_names[] = {
 static inline const char *cc_name(int cc_op)
 {
     return cc_names[cc_op];
+}
+
+static inline void setcc(S390CPU *cpu, uint64_t cc)
+{
+    CPUS390XState *env = &cpu->env;
+
+    env->psw.mask &= ~(3ull << 44);
+    env->psw.mask |= (cc & 3) << 44;
 }
 
 typedef struct LowCore
@@ -1060,22 +1054,18 @@ static inline bool cpu_has_work(CPUState *cpu)
         (env->psw.mask & PSW_MASK_EXT);
 }
 
-static inline void cpu_pc_from_tb(CPUS390XState *env, TranslationBlock* tb)
-{
-    env->psw.addr = tb->pc;
-}
-
 /* fpu_helper.c */
 uint32_t set_cc_nz_f32(float32 v);
 uint32_t set_cc_nz_f64(float64 v);
 uint32_t set_cc_nz_f128(float128 v);
 
 /* misc_helper.c */
+#ifndef CONFIG_USER_ONLY
+void handle_diag_308(CPUS390XState *env, uint64_t r1, uint64_t r3);
+#endif
 void program_interrupt(CPUS390XState *env, uint32_t code, int ilen);
 void QEMU_NORETURN runtime_exception(CPUS390XState *env, int excp,
                                      uintptr_t retaddr);
-
-#include <sysemu/kvm.h>
 
 #ifdef CONFIG_KVM
 void kvm_s390_io_interrupt(S390CPU *cpu, uint16_t subchannel_id,
@@ -1084,6 +1074,9 @@ void kvm_s390_io_interrupt(S390CPU *cpu, uint16_t subchannel_id,
 void kvm_s390_crw_mchk(S390CPU *cpu);
 void kvm_s390_enable_css_support(S390CPU *cpu);
 int kvm_s390_get_registers_partial(CPUState *cpu);
+int kvm_s390_assign_subch_ioeventfd(EventNotifier *notifier, uint32_t sch,
+                                    int vq, bool assign);
+int kvm_s390_cpu_restart(S390CPU *cpu);
 #else
 static inline void kvm_s390_io_interrupt(S390CPU *cpu,
                                         uint16_t subchannel_id,
@@ -1102,7 +1095,25 @@ static inline int kvm_s390_get_registers_partial(CPUState *cpu)
 {
     return -ENOSYS;
 }
+static inline int kvm_s390_assign_subch_ioeventfd(EventNotifier *notifier,
+                                                  uint32_t sch, int vq,
+                                                  bool assign)
+{
+    return -ENOSYS;
+}
+static inline int kvm_s390_cpu_restart(S390CPU *cpu)
+{
+    return -ENOSYS;
+}
 #endif
+
+static inline int s390_cpu_restart(S390CPU *cpu)
+{
+    if (kvm_enabled()) {
+        return kvm_s390_cpu_restart(cpu);
+    }
+    return -ENOSYS;
+}
 
 static inline void s390_io_interrupt(S390CPU *cpu,
                                      uint16_t subchannel_id,
@@ -1125,6 +1136,17 @@ static inline void s390_crw_mchk(S390CPU *cpu)
         kvm_s390_crw_mchk(cpu);
     } else {
         cpu_inject_crw_mchk(cpu);
+    }
+}
+
+static inline int s390_assign_subch_ioeventfd(EventNotifier *notifier,
+                                              uint32_t sch_id, int vq,
+                                              bool assign)
+{
+    if (kvm_enabled()) {
+        return kvm_s390_assign_subch_ioeventfd(notifier, sch_id, vq, assign);
+    } else {
+        return -ENOSYS;
     }
 }
 

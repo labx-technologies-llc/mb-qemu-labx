@@ -75,12 +75,6 @@ void helper_memalign(CPUNios2State *env, uint32_t addr, uint32_t dr, uint32_t wr
     }
 }
 
-void cpu_unassigned_access(CPUNios2State *env1, hwaddr addr,
-                           int is_write, int is_exec, int is_asi, int size)
-{
-    qemu_log("unassigned access to %"HWADDR_PRIX"\n", addr);
-}
-
 uint32_t helper_divs(uint32_t a, uint32_t b)
 {
     return (int32_t)a / (int32_t)b;

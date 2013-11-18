@@ -22,6 +22,10 @@
 #include "hw/sysbus.h"
 #include "sysemu/sysemu.h"
 
+#define TYPE_LABX_REDUNDANCY_SWITCH "labx.redundancy-switch"
+#define LABX_REDUNDANCY_SWITCH(obj) \
+    OBJECT_CHECK(LabXRedundancySwitch, (obj), TYPE_LABX_REDUNDANCY_SWITCH)
+
 typedef struct LabXRedundancySwitch {
     SysBusDevice busdev;
 
@@ -123,7 +127,7 @@ static const MemoryRegionOps switch_regs_ops = {
 
 static int labx_redundancy_switch_init(SysBusDevice *dev)
 {
-    LabXRedundancySwitch *p = FROM_SYSBUS(typeof(*p), dev);
+    LabXRedundancySwitch *p = LABX_REDUNDANCY_SWITCH(dev);
 
     /* Initialize defaults */
 
@@ -131,7 +135,7 @@ static int labx_redundancy_switch_init(SysBusDevice *dev)
     sysbus_init_irq(dev, &p->irq);
 
     /* Set up memory regions */
-    memory_region_init_io(&p->mmio_switch_regs,          &switch_regs_ops, p,
+    memory_region_init_io(&p->mmio_switch_regs,          OBJECT(p), &switch_regs_ops, p,
                           "labx,redundancy-switch-regs", 0x10 * 4);
 
     sysbus_init_mmio(dev, &p->mmio_switch_regs);
@@ -156,7 +160,7 @@ static void labx_redundancy_switch_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo labx_redundancy_switch_info = {
-    .name          = "labx.redundancy-switch",
+    .name          = TYPE_LABX_REDUNDANCY_SWITCH,
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(LabXRedundancySwitch),
     .class_init    = labx_redundancy_switch_class_init,

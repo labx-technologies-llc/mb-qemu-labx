@@ -476,3 +476,75 @@ static void qdict_destroy_obj(QObject *obj)
 
     g_free(qdict);
 }
+
+static void qdict_do_flatten(QDict *qdict, QDict *target, const char *prefix)
+{
+    QObject *value;
+    const QDictEntry *entry, *next;
+    const char *new_key;
+    bool delete;
+
+    entry = qdict_first(qdict);
+
+    while (entry != NULL) {
+
+        next = qdict_next(qdict, entry);
+        value = qdict_entry_value(entry);
+        new_key = NULL;
+        delete = false;
+
+        if (prefix) {
+            qobject_incref(value);
+            new_key = g_strdup_printf("%s.%s", prefix, entry->key);
+            qdict_put_obj(target, new_key, value);
+            delete = true;
+        }
+
+        if (qobject_type(value) == QTYPE_QDICT) {
+            qdict_do_flatten(qobject_to_qdict(value), target,
+                             new_key ? new_key : entry->key);
+            delete = true;
+        }
+
+        if (delete) {
+            qdict_del(qdict, entry->key);
+
+            /* Restart loop after modifying the iterated QDict */
+            entry = qdict_first(qdict);
+            continue;
+        }
+
+        entry = next;
+    }
+}
+
+/**
+ * qdict_flatten(): For each nested QDict with key x, all fields with key y
+ * are moved to this QDict and their key is renamed to "x.y". This operation
+ * is applied recursively for nested QDicts.
+ */
+void qdict_flatten(QDict *qdict)
+{
+    qdict_do_flatten(qdict, qdict, NULL);
+}
+
+/* extract all the src QDict entries starting by start into dst */
+void qdict_extract_subqdict(QDict *src, QDict **dst, const char *start)
+
+{
+    const QDictEntry *entry, *next;
+    const char *p;
+
+    *dst = qdict_new();
+    entry = qdict_first(src);
+
+    while (entry != NULL) {
+        next = qdict_next(src, entry);
+        if (strstart(entry->key, start, &p)) {
+            qobject_incref(entry->value);
+            qdict_put_obj(*dst, p, entry->value);
+            qdict_del(src, entry->key);
+        }
+        entry = next;
+    }
+}

@@ -65,7 +65,7 @@ int graphic_depth = 8;
 #else
 int graphic_width = 800;
 int graphic_height = 600;
-int graphic_depth = 15;
+int graphic_depth = 32;
 #endif
 
 
@@ -106,6 +106,9 @@ int graphic_depth = 15;
 #endif
 
 const uint32_t arch_type = QEMU_ARCH;
+static bool mig_throttle_on;
+static int dirty_rate_high_cnt;
+static void check_guest_throttling(void);
 
 /***********************************************************/
 /* ram save/restore */
@@ -117,6 +120,7 @@ const uint32_t arch_type = QEMU_ARCH;
 #define RAM_SAVE_FLAG_EOS      0x10
 #define RAM_SAVE_FLAG_CONTINUE 0x20
 #define RAM_SAVE_FLAG_XBZRLE   0x40
+/* 0x80 is reserved in migration.h start with 0x100 next */
 
 
 static struct defconfig_file {
@@ -125,7 +129,7 @@ static struct defconfig_file {
     bool userconfig;
 } default_config_files[] = {
     { CONFIG_QEMU_CONFDIR "/qemu.conf",                   true },
-    { CONFIG_QEMU_CONFDIR "/target-" TARGET_ARCH ".conf", true },
+    { CONFIG_QEMU_CONFDIR "/target-" TARGET_NAME ".conf", true },
     { NULL }, /* end of list */
 };
 
@@ -148,10 +152,9 @@ int qemu_read_default_config_files(bool userconfig)
     return 0;
 }
 
-static inline bool is_zero_page(uint8_t *p)
+static inline bool is_zero_range(uint8_t *p, uint64_t size)
 {
-    return buffer_find_nonzero_offset(p, TARGET_PAGE_SIZE) ==
-        TARGET_PAGE_SIZE;
+    return buffer_find_nonzero_offset(p, size) == size;
 }
 
 /* struct contains XBZRLE cache and a static page
@@ -340,7 +343,8 @@ ram_addr_t migration_bitmap_find_and_reset_dirty(MemoryRegion *mr,
 {
     unsigned long base = mr->ram_addr >> TARGET_PAGE_BITS;
     unsigned long nr = base + (start >> TARGET_PAGE_BITS);
-    unsigned long size = base + (int128_get64(mr->size) >> TARGET_PAGE_BITS);
+    uint64_t mr_size = TARGET_PAGE_ALIGN(memory_region_size(mr));
+    unsigned long size = base + (mr_size >> TARGET_PAGE_BITS);
 
     unsigned long next;
 
@@ -380,11 +384,17 @@ static void migration_bitmap_sync(void)
     uint64_t num_dirty_pages_init = migration_dirty_pages;
     MigrationState *s = migrate_get_current();
     static int64_t start_time;
+    static int64_t bytes_xfer_prev;
     static int64_t num_dirty_pages_period;
     int64_t end_time;
+    int64_t bytes_xfer_now;
+
+    if (!bytes_xfer_prev) {
+        bytes_xfer_prev = ram_bytes_transferred();
+    }
 
     if (!start_time) {
-        start_time = qemu_get_clock_ms(rt_clock);
+        start_time = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
     }
 
     trace_migration_bitmap_sync_start();
@@ -402,10 +412,29 @@ static void migration_bitmap_sync(void)
     trace_migration_bitmap_sync_end(migration_dirty_pages
                                     - num_dirty_pages_init);
     num_dirty_pages_period += migration_dirty_pages - num_dirty_pages_init;
-    end_time = qemu_get_clock_ms(rt_clock);
+    end_time = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
 
     /* more than 1 second = 1000 millisecons */
     if (end_time > start_time + 1000) {
+        if (migrate_auto_converge()) {
+            /* The following detection logic can be refined later. For now:
+               Check to see if the dirtied bytes is 50% more than the approx.
+               amount of bytes that just got transferred since the last time we
+               were in this routine. If that happens >N times (for now N==4)
+               we turn on the throttle down logic */
+            bytes_xfer_now = ram_bytes_transferred();
+            if (s->dirty_pages_rate &&
+               (num_dirty_pages_period * TARGET_PAGE_SIZE >
+                   (bytes_xfer_now - bytes_xfer_prev)/2) &&
+               (dirty_rate_high_cnt++ > 4)) {
+                    trace_migration_throttle();
+                    mig_throttle_on = true;
+                    dirty_rate_high_cnt = 0;
+             }
+             bytes_xfer_prev = bytes_xfer_now;
+        } else {
+             mig_throttle_on = false;
+        }
         s->dirty_pages_rate = num_dirty_pages_period * 1000
             / (end_time - start_time);
         s->dirty_bytes_rate = s->dirty_pages_rate * TARGET_PAGE_SIZE;
@@ -449,6 +478,7 @@ static int ram_save_block(QEMUFile *f, bool last_stage)
                 ram_bulk_stage = false;
             }
         } else {
+            int ret;
             uint8_t *p;
             int cont = (block == last_sent_block) ?
                 RAM_SAVE_FLAG_CONTINUE : 0;
@@ -457,17 +487,23 @@ static int ram_save_block(QEMUFile *f, bool last_stage)
 
             /* In doubt sent page as normal */
             bytes_sent = -1;
-            if (is_zero_page(p)) {
-                acct_info.dup_pages++;
-                if (!ram_bulk_stage) {
-                    bytes_sent = save_block_hdr(f, block, offset, cont,
-                                                RAM_SAVE_FLAG_COMPRESS);
-                    qemu_put_byte(f, 0);
-                    bytes_sent++;
-                } else {
-                    acct_info.skipped_pages++;
-                    bytes_sent = 0;
+            ret = ram_control_save_page(f, block->offset,
+                               offset, TARGET_PAGE_SIZE, &bytes_sent);
+
+            if (ret != RAM_SAVE_CONTROL_NOT_SUPP) {
+                if (ret != RAM_SAVE_CONTROL_DELAYED) {
+                    if (bytes_sent > 0) {
+                        acct_info.norm_pages++;
+                    } else if (bytes_sent == 0) {
+                        acct_info.dup_pages++;
+                    }
                 }
+            } else if (is_zero_range(p, TARGET_PAGE_SIZE)) {
+                acct_info.dup_pages++;
+                bytes_sent = save_block_hdr(f, block, offset, cont,
+                                            RAM_SAVE_FLAG_COMPRESS);
+                qemu_put_byte(f, 0);
+                bytes_sent++;
             } else if (!ram_bulk_stage && migrate_use_xbzrle()) {
                 current_addr = block->offset + offset;
                 bytes_sent = save_xbzrle_page(f, p, current_addr, block,
@@ -499,6 +535,18 @@ static int ram_save_block(QEMUFile *f, bool last_stage)
 }
 
 static uint64_t bytes_transferred;
+
+void acct_update_position(QEMUFile *f, size_t size, bool zero)
+{
+    uint64_t pages = size / TARGET_PAGE_SIZE;
+    if (zero) {
+        acct_info.dup_pages += pages;
+    } else {
+        acct_info.norm_pages += pages;
+        bytes_transferred += size;
+        qemu_update_position(f, size);
+    }
+}
 
 static ram_addr_t ram_save_remaining(void)
 {
@@ -568,6 +616,8 @@ static int ram_save_setup(QEMUFile *f, void *opaque)
     migration_bitmap = bitmap_new(ram_pages);
     bitmap_set(migration_bitmap, 0, ram_pages);
     migration_dirty_pages = ram_pages;
+    mig_throttle_on = false;
+    dirty_rate_high_cnt = 0;
 
     if (migrate_use_xbzrle()) {
         XBZRLE.cache = cache_init(migrate_xbzrle_cache_size() /
@@ -600,6 +650,10 @@ static int ram_save_setup(QEMUFile *f, void *opaque)
     }
 
     qemu_mutex_unlock_ramlist();
+
+    ram_control_before_iterate(f, RAM_CONTROL_SETUP);
+    ram_control_after_iterate(f, RAM_CONTROL_SETUP);
+
     qemu_put_be64(f, RAM_SAVE_FLAG_EOS);
 
     return 0;
@@ -618,7 +672,9 @@ static int ram_save_iterate(QEMUFile *f, void *opaque)
         reset_ram_globals();
     }
 
-    t0 = qemu_get_clock_ns(rt_clock);
+    ram_control_before_iterate(f, RAM_CONTROL_ROUND);
+
+    t0 = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
     i = 0;
     while ((ret = qemu_file_rate_limit(f)) == 0) {
         int bytes_sent;
@@ -630,13 +686,14 @@ static int ram_save_iterate(QEMUFile *f, void *opaque)
         }
         total_sent += bytes_sent;
         acct_info.iterations++;
+        check_guest_throttling();
         /* we want to check in the 1st loop, just in case it was the 1st time
            and we had to sync the dirty bitmap.
            qemu_get_clock_ns() is a bit expensive, so we only check each some
            iterations
         */
         if ((i & 63) == 0) {
-            uint64_t t1 = (qemu_get_clock_ns(rt_clock) - t0) / 1000000;
+            uint64_t t1 = (qemu_clock_get_ns(QEMU_CLOCK_REALTIME) - t0) / 1000000;
             if (t1 > MAX_WAIT) {
                 DPRINTF("big wait: %" PRIu64 " milliseconds, %d iterations\n",
                         t1, i);
@@ -648,14 +705,25 @@ static int ram_save_iterate(QEMUFile *f, void *opaque)
 
     qemu_mutex_unlock_ramlist();
 
+    /*
+     * Must occur before EOS (or any QEMUFile operation)
+     * because of RDMA protocol.
+     */
+    ram_control_after_iterate(f, RAM_CONTROL_ROUND);
+
+    bytes_transferred += total_sent;
+
+    /*
+     * Do not count these 8 bytes into total_sent, so that we can
+     * return 0 if no page had been dirtied.
+     */
+    qemu_put_be64(f, RAM_SAVE_FLAG_EOS);
+    bytes_transferred += 8;
+
+    ret = qemu_file_get_error(f);
     if (ret < 0) {
-        bytes_transferred += total_sent;
         return ret;
     }
-
-    qemu_put_be64(f, RAM_SAVE_FLAG_EOS);
-    total_sent += 8;
-    bytes_transferred += total_sent;
 
     return total_sent;
 }
@@ -664,6 +732,8 @@ static int ram_save_complete(QEMUFile *f, void *opaque)
 {
     qemu_mutex_lock_ramlist();
     migration_bitmap_sync();
+
+    ram_control_before_iterate(f, RAM_CONTROL_FINISH);
 
     /* try transferring iterative blocks of memory */
 
@@ -678,6 +748,8 @@ static int ram_save_complete(QEMUFile *f, void *opaque)
         }
         bytes_transferred += bytes_sent;
     }
+
+    ram_control_after_iterate(f, RAM_CONTROL_FINISH);
     migration_end();
 
     qemu_mutex_unlock_ramlist();
@@ -772,6 +844,25 @@ static inline void *host_from_stream_offset(QEMUFile *f,
     return NULL;
 }
 
+/*
+ * If a page (or a whole RDMA chunk) has been
+ * determined to be zero, then zap it.
+ */
+void ram_handle_compressed(void *host, uint8_t ch, uint64_t size)
+{
+    if (ch != 0 || !is_zero_range(host, size)) {
+        memset(host, ch, size);
+#ifndef _WIN32
+        if (ch == 0 && (!kvm_enabled() || kvm_has_sync_mmu())) {
+            size = size & ~(getpagesize() - 1);
+            if (size > 0) {
+                qemu_madvise(host, size, QEMU_MADV_DONTNEED);
+            }
+        }
+#endif
+    }
+}
+
 static int ram_load(QEMUFile *f, void *opaque, int version_id)
 {
     ram_addr_t addr;
@@ -810,6 +901,10 @@ static int ram_load(QEMUFile *f, void *opaque, int version_id)
                     QTAILQ_FOREACH(block, &ram_list.blocks, next) {
                         if (!strncmp(id, block->idstr, sizeof(id))) {
                             if (block->length != length) {
+                                fprintf(stderr,
+                                        "Length mismatch: %s: " RAM_ADDR_FMT
+                                        " in != " RAM_ADDR_FMT "\n", id, length,
+                                        block->length);
                                 ret =  -EINVAL;
                                 goto done;
                             }
@@ -839,14 +934,7 @@ static int ram_load(QEMUFile *f, void *opaque, int version_id)
             }
 
             ch = qemu_get_byte(f);
-            memset(host, ch, TARGET_PAGE_SIZE);
-#ifndef _WIN32
-            if (ch == 0 &&
-                (!kvm_enabled() || kvm_has_sync_mmu()) &&
-                getpagesize() <= TARGET_PAGE_SIZE) {
-                qemu_madvise(host, TARGET_PAGE_SIZE, QEMU_MADV_DONTNEED);
-            }
-#endif
+            ram_handle_compressed(host, ch, TARGET_PAGE_SIZE);
         } else if (flags & RAM_SAVE_FLAG_PAGE) {
             void *host;
 
@@ -866,6 +954,8 @@ static int ram_load(QEMUFile *f, void *opaque, int version_id)
                 ret = -EINVAL;
                 goto done;
             }
+        } else if (flags & RAM_SAVE_FLAG_HOOK) {
+            ram_control_load_hook(f, flags);
         }
         error = qemu_file_get_error(f);
         if (error) {
@@ -1030,9 +1120,6 @@ int qemu_uuid_parse(const char *str, uint8_t *uuid)
     if (ret != 16) {
         return -1;
     }
-#ifdef TARGET_I386
-    smbios_add_field(1, offsetof(struct smbios_type_1, uuid), 16, uuid);
-#endif
     return 0;
 }
 
@@ -1043,21 +1130,18 @@ void do_acpitable_option(const QemuOpts *opts)
 
     acpi_table_add(opts, &err);
     if (err) {
-        fprintf(stderr, "Wrong acpi table provided: %s\n",
-                error_get_pretty(err));
+        error_report("Wrong acpi table provided: %s",
+                     error_get_pretty(err));
         error_free(err);
         exit(1);
     }
 #endif
 }
 
-void do_smbios_option(const char *optarg)
+void do_smbios_option(QemuOpts *opts)
 {
 #ifdef TARGET_I386
-    if (smbios_entry_add(optarg) < 0) {
-        fprintf(stderr, "Wrong smbios provided\n");
-        exit(1);
-    }
+    smbios_entry_add(opts);
 #endif
 }
 
@@ -1096,7 +1180,56 @@ TargetInfo *qmp_query_target(Error **errp)
 {
     TargetInfo *info = g_malloc0(sizeof(*info));
 
-    info->arch = TARGET_TYPE;
+    info->arch = g_strdup(TARGET_NAME);
 
     return info;
+}
+
+/* Stub function that's gets run on the vcpu when its brought out of the
+   VM to run inside qemu via async_run_on_cpu()*/
+static void mig_sleep_cpu(void *opq)
+{
+    qemu_mutex_unlock_iothread();
+    g_usleep(30*1000);
+    qemu_mutex_lock_iothread();
+}
+
+/* To reduce the dirty rate explicitly disallow the VCPUs from spending
+   much time in the VM. The migration thread will try to catchup.
+   Workload will experience a performance drop.
+*/
+static void mig_throttle_guest_down(void)
+{
+    CPUState *cpu;
+
+    qemu_mutex_lock_iothread();
+    CPU_FOREACH(cpu) {
+        async_run_on_cpu(cpu, mig_sleep_cpu, NULL);
+    }
+    qemu_mutex_unlock_iothread();
+}
+
+static void check_guest_throttling(void)
+{
+    static int64_t t0;
+    int64_t        t1;
+
+    if (!mig_throttle_on) {
+        return;
+    }
+
+    if (!t0)  {
+        t0 = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
+        return;
+    }
+
+    t1 = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
+
+    /* If it has been more than 40 ms since the last time the guest
+     * was throttled then do it again.
+     */
+    if (40 < (t1-t0)/1000000) {
+        mig_throttle_guest_down();
+        t0 = t1;
+    }
 }

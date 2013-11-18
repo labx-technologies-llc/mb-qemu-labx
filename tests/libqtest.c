@@ -30,6 +30,8 @@
 
 #include "qemu/compiler.h"
 #include "qemu/osdep.h"
+#include "qapi/qmp/json-streamer.h"
+#include "qapi/qmp/json-parser.h"
 
 #define MAX_IRQ 256
 
@@ -151,8 +153,8 @@ QTestState *qtest_init(const char *extra_args)
     }
 
     /* Read the QMP greeting and then do the handshake */
-    qtest_qmp(s, "");
-    qtest_qmp(s, "{ 'execute': 'qmp_capabilities' }");
+    qtest_qmp_discard_response(s, "");
+    qtest_qmp_discard_response(s, "{ 'execute': 'qmp_capabilities' }");
 
     if (getenv("QTEST_STOP")) {
         kill(qtest_qemu_pid(s), SIGSTOP);
@@ -171,12 +173,16 @@ void qtest_quit(QTestState *s)
         waitpid(pid, &status, 0);
     }
 
+    close(s->fd);
+    close(s->qmp_fd);
+    g_string_free(s->rx, true);
     unlink(s->pid_file);
     unlink(s->socket_path);
     unlink(s->qmp_socket_path);
     g_free(s->pid_file);
     g_free(s->socket_path);
     g_free(s->qmp_socket_path);
+    g_free(s);
 }
 
 static void socket_sendf(int fd, const char *fmt, va_list ap)
@@ -287,16 +293,38 @@ redo:
     return words;
 }
 
-void qtest_qmpv(QTestState *s, const char *fmt, va_list ap)
+typedef struct {
+    JSONMessageParser parser;
+    QDict *response;
+} QMPResponseParser;
+
+static void qmp_response(JSONMessageParser *parser, QList *tokens)
 {
-    bool has_reply = false;
-    int nesting = 0;
+    QMPResponseParser *qmp = container_of(parser, QMPResponseParser, parser);
+    QObject *obj;
+
+    obj = json_parser_parse(tokens, NULL);
+    if (!obj) {
+        fprintf(stderr, "QMP JSON response parsing failed\n");
+        exit(1);
+    }
+
+    g_assert(qobject_type(obj) == QTYPE_QDICT);
+    g_assert(!qmp->response);
+    qmp->response = (QDict *)obj;
+}
+
+QDict *qtest_qmpv(QTestState *s, const char *fmt, va_list ap)
+{
+    QMPResponseParser qmp;
 
     /* Send QMP request */
     socket_sendf(s->qmp_fd, fmt, ap);
 
     /* Receive reply */
-    while (!has_reply || nesting > 0) {
+    qmp.response = NULL;
+    json_message_parser_init(&qmp.parser, qmp_response);
+    while (!qmp.response) {
         ssize_t len;
         char c;
 
@@ -310,25 +338,39 @@ void qtest_qmpv(QTestState *s, const char *fmt, va_list ap)
             exit(1);
         }
 
-        switch (c) {
-        case '{':
-            nesting++;
-            has_reply = true;
-            break;
-        case '}':
-            nesting--;
-            break;
-        }
+        json_message_parser_feed(&qmp.parser, &c, 1);
     }
+    json_message_parser_destroy(&qmp.parser);
+
+    return qmp.response;
 }
 
-void qtest_qmp(QTestState *s, const char *fmt, ...)
+QDict *qtest_qmp(QTestState *s, const char *fmt, ...)
 {
     va_list ap;
+    QDict *response;
 
     va_start(ap, fmt);
-    qtest_qmpv(s, fmt, ap);
+    response = qtest_qmpv(s, fmt, ap);
     va_end(ap);
+    return response;
+}
+
+void qtest_qmpv_discard_response(QTestState *s, const char *fmt, va_list ap)
+{
+    QDict *response = qtest_qmpv(s, fmt, ap);
+    QDECREF(response);
+}
+
+void qtest_qmp_discard_response(QTestState *s, const char *fmt, ...)
+{
+    va_list ap;
+    QDict *response;
+
+    va_start(ap, fmt);
+    response = qtest_qmpv(s, fmt, ap);
+    va_end(ap);
+    QDECREF(response);
 }
 
 const char *qtest_get_arch(void)
